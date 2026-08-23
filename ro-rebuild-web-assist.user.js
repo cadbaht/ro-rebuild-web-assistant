@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.180.1
+// @version      4.180.2
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.180.1';
+  const VERSION = '4.180.2';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.180.2', d: '2026-08-21', items: [
+      '🌀⚡ กดวาร์ปสุ่มรัว ๆ ได้แล้ว! — ผู้ใช้ทดสอบจริง: ระบบในเกมวาร์ปสุ่มได้ 2-3 ครั้ง/วิ',
+      '   → วาร์ปสุ่มในแมปเดิม (-999) ยิงทันทีทุกครั้ง ไม่เข้าคิว 3 วิ',
+      '   กฎ gap 3 วิ ยังใช้เฉพาะวาร์ปข้ามแมป/พิกัดของระบบ (ขาย/ฝาก/กลับฟาร์ม/บัพ) —',
+      '   กรณีที่เคยเจอจริงคือข้ามแมปต่อเนื่องใน 3 วิ แล้วตัวหลังโดนดรอป ไม่ใช่สุ่มในแมปเดิม',
+    ]},
     { v: '4.180.1', d: '2026-08-21', items: [
       '🌀 กดวาร์ปสุ่มรัว ๆ แล้วเหมือนต้องรอ? — คือ server รับ teleport ห่างกัน ≥3 วิ',
       '   (ยิงถี่กว่านั้นโดนดรอปเงียบ — เคยทำระบบขาย/ฝากค้างมาแล้ว) serializer จึงคิวไว้ยิงให้เอง',
@@ -2241,10 +2247,15 @@
   function sendTeleport(mapName, x, y) {
     if (!activeWS || activeWS.readyState !== 1) return false;
     if (!mapName) return false;
-    if (nowMs() - lastTeleportSentAt < TELEPORT_MIN_GAP_MS) {
+    // ★★ วาร์ปสุ่มในแมปเดิม (x=y=-999 + ชื่อแมปปัจจุบัน) → ยิงทันทีทุกครั้ง ไม่ต้องคิว!
+    //   ทดสอบจริงจากผู้ใช้: ระบบในเกมวาร์ปสุ่มรัว ๆ ได้ 2-3 ครั้ง/วิ — กฎ gap 3 วิ ที่เคยเจอใช้กับ
+    //   "วาร์ปข้ามแมปต่อเนื่อง" เท่านั้น (กลับฟาร์ม→ฝาก→สุ่ม ใน 3 วิ → ตัวหลังโดนดรอปขณะเปลี่ยนแมป)
+    //   → เลี่ยงคิวเฉพาะ same-map random · วาร์ปพิกัด/ข้ามแมปของระบบ (ขาย/ฝาก/กลับฟาร์ม) ยังคุมตามเดิม
+    const isSameMapRandom = (x === -999 && y === -999 && mapName === currentMap);
+    if (!isSameMapRandom && nowMs() - lastTeleportSentAt < TELEPORT_MIN_GAP_MS) {
       pendingTeleport = { mapName, x, y };   // ★ intent ล่าสุดชนะ — รอ flush (ไม่ทิ้งเงียบ ๆ แบบ server)
       const waitS = Math.max(1, Math.ceil((lastTeleportSentAt + TELEPORT_MIN_GAP_MS - nowMs()) / 1000));
-      log('🌀 teleport คิวไว้ — จะยิงในอีก ~' + waitS + ' วิ (server รับ teleport ห่างกัน ≥3 วิ · กดรัว ๆ ก็เร็วกว่านี้ไม่ได้) →', mapName);
+      log('🌀 teleport คิวไว้ — จะยิงในอีก ~' + waitS + ' วิ (วาร์ปข้ามแมปคุมห่าง ≥3 วิ · วาร์ปสุ่มในแมปเดิมยิงทันที) →', mapName);
       return true;
     }
     return actuallySendTeleport(mapName, x, y);
