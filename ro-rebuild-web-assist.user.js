@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.180.0
+// @version      4.180.1
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,14 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.180.0';
+  const VERSION = '4.180.1';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.180.1', d: '2026-08-21', items: [
+      '🌀 กดวาร์ปสุ่มรัว ๆ แล้วเหมือนต้องรอ? — คือ server รับ teleport ห่างกัน ≥3 วิ',
+      '   (ยิงถี่กว่านั้นโดนดรอปเงียบ — เคยทำระบบขาย/ฝากค้างมาแล้ว) serializer จึงคิวไว้ยิงให้เอง',
+      '   → ตอนนี้ตอนถูกคิว log บอกชัด: "จะยิงในอีก ~N วิ" แทนข้อความ dbg ที่ไปโผล่แค่ console',
+    ]},
     { v: '4.180.0', d: '2026-08-21', items: [
       '😀 ใหม่! รีแอ็กชั่นข้อความแชท — ในห้องแชท UI script และ remote monitor:',
       '   ปุ่ม 🙂+ ท้ายข้อความ → เลือกอีโมจิ (👍❤️😂😮😢🔥🎉🙏) กดได้ทั้งข้อตัวเองและคนอื่น',
@@ -2238,7 +2243,8 @@
     if (!mapName) return false;
     if (nowMs() - lastTeleportSentAt < TELEPORT_MIN_GAP_MS) {
       pendingTeleport = { mapName, x, y };   // ★ intent ล่าสุดชนะ — รอ flush (ไม่ทิ้งเงียบ ๆ แบบ server)
-      dbg('🌀 teleport คิวไว้ก่อน (ห่างล่าสุดไม่ถึง 3s) →', mapName);
+      const waitS = Math.max(1, Math.ceil((lastTeleportSentAt + TELEPORT_MIN_GAP_MS - nowMs()) / 1000));
+      log('🌀 teleport คิวไว้ — จะยิงในอีก ~' + waitS + ' วิ (server รับ teleport ห่างกัน ≥3 วิ · กดรัว ๆ ก็เร็วกว่านี้ไม่ได้) →', mapName);
       return true;
     }
     return actuallySendTeleport(mapName, x, y);
