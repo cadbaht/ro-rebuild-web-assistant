@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.180.2
+// @version      4.180.3
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
+// @match        *://*.gfix-ro.com/*
 // @run-at       document-start
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js
@@ -116,9 +117,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.180.2';
+  const VERSION = '4.180.3';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.180.3', d: '2026-08-24', items: [
+      '⚔️ ตั้ง "ดีเลย์หลังสู้เสร็จ/เก็บของเสร็จ" ได้จาก UI แล้ว (เดิมแก้ได้แค่ผ่านคอนโซล)',
+      '   ช่องใหม่ใน Sub-tab Combat (ใต้ช่อง abandon) — 0-10000ms · กด "ใช้ค่า combat" แล้วบันทึกถาวร',
+      '   = เวลารอก่อนหาเป้าใหม่หลังสู้จบ/เก็บของครบ (default 800ms — กันหันไปตีตัวใหม่ทันที ดูเป็นบอท)',
+      '   ★ ASSIST.setPostCombatDelay(ms) ตอนนี้บันทึกถาวรเหมือน setting อื่น (เดิมเปลี่ยนแล้วหายเมื่อปิดหน้า)',
+      '   + รองรับโดเมนใหม่ gfix-ro.com (@match)',
+    ]},
     { v: '4.180.2', d: '2026-08-21', items: [
       '🌀⚡ กดวาร์ปสุ่มรัว ๆ ได้แล้ว! — ผู้ใช้ทดสอบจริง: ระบบในเกมวาร์ปสุ่มได้ 2-3 ครั้ง/วิ',
       '   → วาร์ปสุ่มในแมปเดิม (-999) ยิงทันทีทุกครั้ง ไม่เข้าคิว 3 วิ',
@@ -6618,7 +6626,7 @@
     // ★ ปรับ re-issue/abandon timing (pending spam)
     setAttackReissue(ms) { CFG.attackReIssueMs = ms; log('⚔️ re-issue attack ทุก', ms + 'ms'); },
     setAttackAbandon(ms) { CFG.attackAbandonMs = ms; log('⚔️ abandon ถ้า server เงียบ', ms + 'ms'); },
-    setPostCombatDelay(ms) { CFG.postCombatDelayMs = ms; log('⚔️ รอ', ms + 'ms หลังสู้เสร็จ/เก็บของเสร็จ'); },
+    setPostCombatDelay(ms) { CFG.postCombatDelayMs = Math.max(0, ms); saveConfigDebounced(); log('⚔️ รอ', CFG.postCombatDelayMs + 'ms หลังสู้เสร็จ/เก็บของเสร็จ'); },
     // toggle helpers สำหรับ UI
     toggleAntiKS(on) { CFG.antiKS = !!on; log('⚔️ antiKS =', CFG.antiKS); },
     toggleAvoidPlayers(on) { CFG.avoidOtherPlayers = !!on; log('⚔️ avoidOtherPlayers =', CFG.avoidOtherPlayers); },
@@ -7696,6 +7704,7 @@
             <div class="field"><label>ไล่ตามมอนสูงสุด (ช่อง) — ไกลกว่านี้ abandon</label><input type="number" id="__assist_maxchase" min="5" max="100" placeholder="40"></div>
             <div class="field"><label>abandon มอนถ้าตีแล้ว server เงียบครบ N ครั้ง (attackPendingMax 1-10)</label><input type="number" id="__assist_pendmax" min="1" max="10" step="1"></div>
             <div class="field"><label>รอเงียบขั้นต่ำก่อน abandon (ms) — นับจากตีครั้งแรก (attackAbandonMs 1000-30000)</label><input type="number" id="__assist_abandonms" min="1000" max="30000" step="500"></div>
+            <div class="field"><label>ดีเลย์หลังสู้เสร็จ/เก็บของเสร็จ (ms) — รอก่อนหาเป้าใหม่ 0 = หาทันที (กันดูเป็นบอท)</label><input type="number" id="__assist_postcombatdelay" min="0" max="10000" step="100"></div>
             <div class="btns">
               <button id="__assist_t_antiks" class="on">antiKS</button>
               <button id="__assist_t_avoidp" class="on">avoidPlayers</button>
@@ -8308,12 +8317,16 @@
       // ★ attackAbandonMs — รอเงียบขั้นต่ำก่อน abandon (นับจากตีครั้งแรก)
       const aab = parseInt(root.querySelector('#__assist_abandonms')?.value, 10);
       if (!isNaN(aab) && aab >= 1000 && aab <= 30000) { CFG.attackAbandonMs = aab; log('⚔️ abandon ถ้าเงียบเกิน', aab + 'ms'); saveConfigDebounced(); }
+      // ★ postCombatDelayMs — รอหลังสู้เสร็จ/เก็บของเสร็จ ก่อนหาเป้าใหม่
+      const pcd = parseInt(root.querySelector('#__assist_postcombatdelay')?.value, 10);
+      if (!isNaN(pcd) && pcd >= 0 && pcd <= 10000) { CFG.postCombatDelayMs = pcd; log('⚔️ รอ', pcd + 'ms หลังสู้เสร็จ/เก็บของเสร็จ'); saveConfigDebounced(); }
     });
     // ★ populate inputs ครั้งเดียว
     const _maq = root.querySelector('#__assist_maxacq'); if (_maq) _maq.value = CFG.maxAcquireDistance;
     const _mch = root.querySelector('#__assist_maxchase'); if (_mch) _mch.value = CFG.maxChaseDistance;
     const _apm = root.querySelector('#__assist_pendmax'); if (_apm) _apm.value = CFG.attackPendingMax;
     const _aab = root.querySelector('#__assist_abandonms'); if (_aab) _aab.value = CFG.attackAbandonMs;
+    const _pcd = root.querySelector('#__assist_postcombatdelay'); if (_pcd) _pcd.value = CFG.postCombatDelayMs;
     const _es = root.querySelector('#__assist_engagesec'); if (_es) _es.value = CFG.maxEngageSec;
     const _esl = root.querySelector('#__assist_engageslow'); if (_esl) _esl.value = CFG.maxEngageSecSlow;
     // ★ populate noMonsterWarpSec ครั้งเดียว
@@ -10238,6 +10251,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncInput('#__assist_whitelist', CFG.targetWhitelist.join(','));
     syncInput('#__assist_blacklist', CFG.targetBlacklist.join(','));
     syncInput('#__assist_attackrange', CFG.rangedAttackRange > 0 ? CFG.rangedAttackRange : CFG.attackRange);
+    syncInput('#__assist_postcombatdelay', CFG.postCombatDelayMs);
     syncInput('#__assist_fleemob', CFG.fleeOnMobCount);
     syncInput('#__assist_fleeaggro', CFG.fleeOnAggroCount);
     // rest config sync
