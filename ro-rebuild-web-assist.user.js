@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.180.3
+// @version      4.181.0
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @match        *://*.gfix-ro.com/*
@@ -117,9 +117,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.180.3';
+  const VERSION = '4.181.0';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.181.0', d: '2026-08-24', items: [
+      '🌀⚡ วาร์ปหามอนต่ำกว่า 3 วิได้แล้ว! (เดิมถูกบังคับขั้นต่ำ 3 วิเสมอ)',
+      '   ตั้ง 0 = วาร์ปทันทีที่ไม่เจอมอน — ตรงตามที่ label เขียนไว้แล้วจริง ๆ',
+      '   คุมความถี่ด้วยคูลดาวน์ ≥3 วิระหว่างวาร์ปเหมือนเดิม (กันยิงรัว)',
+      '   ค่า 3 ขึ้นไป (รวม default 30) พฤติกรรมเหมือนเดิมทุกอย่าง',
+    ]},
     { v: '4.180.3', d: '2026-08-24', items: [
       '⚔️ ตั้ง "ดีเลย์หลังสู้เสร็จ/เก็บของเสร็จ" ได้จาก UI แล้ว (เดิมแก้ได้แค่ผ่านคอนโซล)',
       '   ช่องใหม่ใน Sub-tab Combat (ใต้ช่อง abandon) — 0-10000ms · กด "ใช้ค่า combat" แล้วบันทึกถาวร',
@@ -5587,8 +5593,9 @@
       // ไม่เจอมอน
       if (!noMonsterSince) noMonsterSince = now;
       const noMonSec = (now - noMonsterSince) / 1000;
-      // ★★ ขั้นต่ำ 3 วิ — ให้เวลา acquireTarget หามอนใหม่ก่อนวาร์ป (กันวาร์ปทันทีตอนเพิ่ง abandon)
-      const effectiveWarpSec = Math.max(CFG.noMonsterWarpSec, 3);
+      // ★★ เดิมบังคับขั้นต่ำ 3 วิ (ให้เวลา acquireTarget หามอนใหม่ก่อนวาร์ป) — ผู้ใช้บางกลุ่มอยากได้ 0-2 วิ
+      //   ตอนนี้ตามค่าที่ตั้งเป๊ะ (0 = วาร์ปทันทีที่ไม่เจอมอน) · กัน spam ด้วย cooldown lastWarpFindAt ≥3 วิ อยู่แล้ว
+      const effectiveWarpSec = Math.max(CFG.noMonsterWarpSec, 0);
       // warp-find — มี cooldown กัน spam (วาร์ป fail ก็ต้องรอ ไม่ยิงทุก tick)
       // ★★ ห้ามวาร์ปถ้า player.x == null (ตำแหน่งค้าง/ไม่รู้ตำแหน่ง → วาร์ปไปก็ไม่รู้ว่าได้ผลไหม)
       if (CFG.warpFindEnabled && noMonSec >= effectiveWarpSec && now - lastWarpFindAt > 3000 && player.x != null
@@ -7715,7 +7722,7 @@
               <button id="__assist_t_warpfind" class="off">🌀 วาร์ปหามอน</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
             </div>
-            <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีหลังตีมอนเสร็จ</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
+            <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
             <div class="field"><label>เลิกตีมอนถ้าสู้นานเกิน (วินาที) — หันไปตีตัวอื่น</label><input type="number" id="__assist_engagesec" min="5" max="600" placeholder="40"></div>
             <div class="btns"><button id="__assist_t_stepaside" class="on">🚶 เดินหลีกหลัง abandon</button></div>
