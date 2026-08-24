@@ -1,10 +1,9 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.181.0
+// @version      4.182.0
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
-// @match        *://*.gfix-ro.com/*
 // @run-at       document-start
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js
@@ -117,9 +116,25 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.181.0';
+  const VERSION = '4.182.0';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.182.0', d: '2026-08-24', items: [
+      '🪄 ใหม่! โหมดเวทย์ (ปิด "⚔️ ตีปกติ" ใน Sub-tab Combat) — สำหรับนักเวทย์ร่ายสกิลโจมตีจากไกล',
+      '   ปิดแล้ว: ไม่ส่งการตีปกติเลย → server ไม่เดินตัวละครเข้าไปปะทะ (ยืนร่ายจากไกลได้)',
+      '   เดินเข้าหามอนแค่พอระยะร่าย = maxDistance มากสุดของสกิลโจมตีที่เปิดอยู่',
+      '   (ไม่ได้ตั้ง maxDistance สกิลไหนเลย = เดินเข้าเท่าระยะค้นหาเดิม) · SP หมดพักผ่าน auto-rest ตามปกติ',
+      '   ★ อย่าลืมตั้ง "ครั้ง/มอน" (maxUsesPerTarget) ของสกิลให้สูงพอ เช่น 99 — default 1 = ร่ายครั้งเดียวต่อมอนแล้วยืนเฉย',
+      '   ต้องตั้งสกิลโจมตี (targeted เช่น Fire Bolt / ground เช่น Storm Gust) ใน Sub-tab Skills ก่อน',
+      '   API: ASSIST.toggleNormalAttack(false)',
+      '🌐 เอา @match โดเมน gfix-ro.com ออก (ที่เพิ่มเข้าไปใน v4.180.3)',
+    ]},
+    { v: '4.181.1', d: '2026-08-24', items: [
+      '♻️ แก้ "มอนอยู่รอบตัวแต่บอทบอกไม่เจอมอน → วาร์ปหนี" — มอนที่ยืนนิ่งโดน 1b ลบจาก radar',
+      '   (ไม่มี 0x07/0x0f มายืนยันใน 2s) พอขยับกลับมา 0x07 สร้างใหม่เป็นผี kind=0 → ตีไม่ได้ตลอดไป',
+      '   → ตอนนี้ sweeper จำสถานะ (kind/sub/name) ไว้ 60s — id เดิมขยับกลับมา = คืนเป็นมอนทันที',
+      '   ปลอดภัยเท่าเดิม: เฉพาะ id ที่ SPAWN เคยยืนยัน + ตรวจ beacon ผู้เล่นกันไว้อีกชั้น (id ใหม่ไม่รู้จัก = ผีตามเดิม)',
+    ]},
     { v: '4.181.0', d: '2026-08-24', items: [
       '🌀⚡ วาร์ปหามอนต่ำกว่า 3 วิได้แล้ว! (เดิมถูกบังคับขั้นต่ำ 3 วิเสมอ)',
       '   ตั้ง 0 = วาร์ปทันทีที่ไม่เจอมอน — ตรงตามที่ label เขียนไว้แล้วจริง ๆ',
@@ -1026,7 +1041,7 @@
     'skillEnabled', 'skills', 'disabledSkillIds', 'buffOthersEnabled',
     'lootEnabled', 'lootDelayAfterDropMs', 'lootUseKillPos', 'pickRadiusKill', 'lootRespectOthers', 'filter', 'sendThrottleMs', 'maxAttempts',
     'warpLootEnabled',
-    'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'warpDanceEnabled', 'warpDanceMode', 'warpDanceDistance', 'warpDanceThrottleMs', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
+    'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'normalAttackEnabled', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'warpDanceEnabled', 'warpDanceMode', 'warpDanceDistance', 'warpDanceThrottleMs', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
     'maxAcquireDistance', 'searchRadii', 'maxChaseDistance', 'attackPendingMax', 'attackAbandonMs', 'antiKS', 'avoidOtherPlayers', 'targetLowestHpFirst',
     'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
     'wanderEnabled', 'warpFindEnabled', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
@@ -1457,6 +1472,7 @@
     targetWhitelist: [],          // [] = ตีมอน kind=1 ทุกตัว; ['Poring', 4000] = เฉพาะ (รองรับชื่อ + sprite id)
     targetBlacklist: [],          // ไม่ตีมอนเหล่านี้ (ชื่อหรือ sprite id)
     fightBackBlacklisted: true,   // ★ โดนมอนใน blacklist ตี → ตีกลับไหม? (false = เคารพ blacklist เด็ดขาด แม้โดนตี)
+    normalAttackEnabled: true,    // ★★ โหมดเวทย์: ปิด = ไม่ส่ง ATTACK เลย (ใช้แต่สกิล — นักเวทย์ร่ายไกล ไม่โดนลากเข้าปะทะ)
     // ★★ WARP DANCE — ตี 1 ครั้งแล้ววาร์ปไปช่องรอบตัวมอน (มอนงง หาเราไม่เจอ → เราตีฝ่ายเดียว)
     warpDanceEnabled: false,
     warpDanceMode: 'cycle',       // 'cycle' = เรียงวน 8 ทิศ / 'random' = สุ่มทิศ
@@ -2440,7 +2456,16 @@
         //   ★ อาจเป็น "มอน" ที่เดินเข้ามาจากนอกจอ/มอนมากินของ (SPAWN ยังไม่มาถึง)
         //   → tag _src='move' และห้ามนับเป็นผู้เล่นใน flee (เคยแอบดิสเป็น player → หนีผี)
         //   ถ้าเป็น player จริง เดี๋ยว beacon 0x3c flag=1 จะยืนยันให้ (_src='beacon')
-        else { entities.set(id, { id, kind: 0, x, y, alive: true, _lastSeenAt: nowMs(), name: '', _src: 'move' }); }
+        //   ★★ ยกเว้น: id ที่ sweeper เพิ่งลบ (โดน 1b หลอกขณะยืนนิ่ง) → คืนสถานะเดิมจาก SPAWN แทนผี kind=0
+        else {
+          const rd = recentlyDespawned.get(id);
+          const rdOk = rd && nowMs() < rd.expireAt && !(rd.kind === 1 && isBeaconPlayer(id, nowMs()));
+          if (rdOk) {
+            recentlyDespawned.delete(id);
+            entities.set(id, { id, kind: rd.kind, sub: rd.sub, name: rd.name, x, y, alive: true, _lastSeenAt: nowMs(), _src: 'restore', ...(rd.isBoss ? { _isBoss: true } : {}), ...(rd.isMiniBoss ? { _isMiniBoss: true } : {}) });
+            if (rd.kind === 1) dbg('♻️ คืนสถานะมอน', rd.name || id.toString(16), '(โดน 1b ลบไปแล้วกลับมาเคลื่อนที่ — ไม่เป็นผี)');
+          } else { entities.set(id, { id, kind: 0, x, y, alive: true, _lastSeenAt: nowMs(), name: '', _src: 'move' }); }
+        }
       }
     }
     // 0x0b ATTACK_RESULT: ถ้าตัวเราเป็นคนตี → กำลังสู้
@@ -3551,7 +3576,14 @@
         if (id !== playerId && id !== 0 && id !== 0xffffffff && !isStaleId(id, nowMs()) && !isBeaconPlayer(id, nowMs())) {
           const e = entities.get(id);
           if (e) { e.x = x; e.y = y; e._lastSeenAt = nowMs(); }
-          else { entities.set(id, { id, kind: 1, x, y, alive: true, _lastSeenAt: nowMs() }); }
+          else {
+            // ★ id ที่ sweeper เพิ่งลบ → คืน sub/name ด้วย (kind=1 อยู่แล้ว แต่ไร้ sub จะตีได้แค่ ≤12 ช่อง)
+            const rd = recentlyDespawned.get(id);
+            if (rd && nowMs() < rd.expireAt && !(rd.kind === 1 && isBeaconPlayer(id, nowMs()))) {
+              recentlyDespawned.delete(id);
+              entities.set(id, { id, kind: rd.kind, sub: rd.sub, name: rd.name, x, y, alive: true, _lastSeenAt: nowMs(), _src: 'restore', ...(rd.isBoss ? { _isBoss: true } : {}), ...(rd.isMiniBoss ? { _isMiniBoss: true } : {}) });
+            } else { entities.set(id, { id, kind: 1, x, y, alive: true, _lastSeenAt: nowMs() }); }
+          }
         } else if (id === playerId) { player.x = x; player.y = y; }
       }
     }
@@ -4328,6 +4360,11 @@
   // ---------- entity tracker ----------
   //  kind: 0=player, 1=monster, 2=NPC (จาก SPAWN)
   const entities = new Map();    // id -> {id,kind,sub,name,x,y,hp,hpMax,alive,_lastEngagedByOtherAt,_lastDamageAt}
+  // ★★ recentlyDespawned — จำ entity ที่ sweeper เพิ่งลบ (เก็บ kind/sub/name ไว้ชั่วคราว)
+  //   ปัญหา: มอนยืนนิ่งโดน 1b mark → ไม่มี 0x07/0x0f มายืนยันใน 2s → sweeper ลบทิ้ง
+  //   ทั้งที่ยังอยู่บนจอ → พอขยับ 0x07 สร้างใหม่เป็น kind=0 ผี → หาไม่เจอ ("มอนอยู่รอบตัวแต่บอทบอกไม่เจอมอน")
+  //   แก้: ขยับกลับมา → คืนสถานะที่ SPAWN เคยยืนยัน (ไม่ใช่การเดา id ใหม่ — ปลอดภัยเท่าเดิม)
+  const recentlyDespawned = new Map();   // id -> {kind, sub, name, isBoss, isMiniBoss, expireAt}
   const monsterAggro = new Map(); // monsterId -> timestamp (มอนจับเราเป็นเป้า)
   const stalePlayerIds = new Map(); // oldPlayerId -> expireAt (กัน phantom entity จาก ID เก่า, 5 นาที)
   function isStaleId(id, now) {
@@ -4594,6 +4631,22 @@
       activeWS.send(b);
     }
     return true;
+  }
+  // ★★ ระยะร่ายสกิล — ใช้ตอนปิดตีปกติ (โหมดเวทย์): เดินเข้าหามอนแค่พอระยะนี้ ไม่เข้าปะทะ
+  //   = maxDistance มากสุดของสกิลโจมตีที่เปิดอยู่ (targeted/ground เท่านั้น — self/ally/buff ไม่นับ)
+  //   ไม่มีสกิลไหนตั้ง maxDistance → คืน 0 (caller ใช้ maxAcquireDistance แทน — เดินเข้าเท่าเดิม)
+  function getCastRange() {
+    let r = 0;
+    const disabled = Array.isArray(CFG.disabledSkillIds) ? CFG.disabledSkillIds : [];
+    for (const s of (CFG.skills || [])) {
+      if (!s || s.skillId == null || s.buffMode) continue;
+      if (disabled.includes(s.skillId)) continue;
+      if (!(s.targeted || s.ground)) continue;           // เฉพาะสกิลที่เล็งเป้า/พื้นที่
+      if (s.selfCast || s.ally) continue;
+      const md = Number(s.maxDistance) || 0;
+      if (md > r) r = md;
+    }
+    return r;
   }
   // ★ Auto-Skill tracking (mirror bot.js:48-56)
   const lastSkillUse = new Map();        // skillId → timestamp (cooldown)
@@ -4946,11 +4999,14 @@
     for (const [id, e] of entities) {
       if (!e._despawnPendingAt) continue;
       if (nowS - e._despawnPendingAt > 2000) {
+        // ★ จำสถานะไว้ 60s — ถ้า id นี้ขยับกลับมา (1b หลอก/ยืนนิ่งนาน) จะได้คืนเป็นมอน ไม่ใช่ผี kind=0
+        recentlyDespawned.set(id, { kind: e.kind, sub: e.sub, name: e.name, isBoss: e._isBoss, isMiniBoss: e._isMiniBoss, expireAt: nowS + 60000 });
         entities.delete(id);
         if (e._isMiniBoss || e._isBoss) { bossAlertedIds.delete(id); log((e._isBoss ? '👑 Boss' : '👹 Mini Boss') + ' ตาย — จะ alert ใหม่เมื่อเกิดใหม่'); }
         if (target && target.id === id) { abandonTarget('despawn', false); target = null; }
       }
     }
+    for (const [rid, rd] of recentlyDespawned) { if (nowS >= rd.expireAt) recentlyDespawned.delete(rid); }
   }, 1000);
   const autoRefreshWatchdog = setInterval(() => {
     if (!CFG.autoRefreshEnabled) return;
@@ -5487,13 +5543,23 @@
     // === 3. Attack ===
     //   ★ server ทำ walk-and-attack เอง: ส่ง ATTACK ในระยะ maxAcquireDistance → server เดินตัวละครเข้าไปตี
     //     dist > maxAcquireDistance → บอทเดินเข้าไปเอง (MOVE) จนถึง ≤maxAcquireDistance แล้วค่อยส่ง ATTACK
+    //   ★★ โหมดเวทย์ (ปิด normalAttackEnabled) — ไม่ส่ง ATTACK เลย: server ไม่เดินเข้าปะทะ
+    //     ดาเมจมาจากสกิล (section 2.8) · เดินเข้าแค่พอระยะร่าย = max(maxDistance ของสกิลโจมตี)
     if (target) {
       const m = entities.get(target.id);
       if (m && player.x != null && m.x != null && m.y != null) {
         const dist = Math.hypot(m.x - player.x, m.y - player.y);
         target.lastDist = dist;
+        const _skillOnly = CFG.normalAttackEnabled === false;
+        const _engageRange = _skillOnly ? (getCastRange() || CFG.maxAcquireDistance) : CFG.maxAcquireDistance;
         // ในระยะ acquire → ส่ง ATTACK ตรงๆ (server เดินเข้าไปตีเอง)
-        if (dist <= CFG.maxAcquireDistance) {
+        if (dist <= _engageRange) {
+          // ★★ โหมดเวทย์: ยืนระยะร่าย — ไม่ส่งตีปกติ ไม่วาร์ปหามอน (pending ไม่มีความหมาย)
+          //   engage จับเวลาตอนถึงระยะ + ดาเมจสกิลต่ออายุ _lastDamageAt → abandon ยังทำงานพอดี
+          if (_skillOnly) {
+            if (!target.engageAt) target.engageAt = now;
+            return;
+          }
           // (ลบ fallback เดินเข้า — server walk-and-attack ทำงานจริง แค่ reset ไม่ทำงานชั่วคราว)
           // ★ ถ้า pending สูง + server เงียบนาน + เปิด warpToMonster → วาร์ปไปหามอน (แทน abandon)
           if (CFG.warpToMonster && target.pendingAttacks >= 4 && target.firstAttackAt && (now - target.firstAttackAt > 8000)
@@ -6636,6 +6702,11 @@
     setPostCombatDelay(ms) { CFG.postCombatDelayMs = Math.max(0, ms); saveConfigDebounced(); log('⚔️ รอ', CFG.postCombatDelayMs + 'ms หลังสู้เสร็จ/เก็บของเสร็จ'); },
     // toggle helpers สำหรับ UI
     toggleAntiKS(on) { CFG.antiKS = !!on; log('⚔️ antiKS =', CFG.antiKS); },
+    // ★★ โหมดเวทย์ — ปิดตีปกติ: ใช้แต่สกิลโจมตี + เดินแค่พอระยะร่าย (กันโดนลากเข้าปะทะ)
+    toggleNormalAttack(on) {
+      CFG.normalAttackEnabled = !!on; saveConfigDebounced();
+      log(on ? '⚔️ ตีปกติ: เปิด (สลับสกิล+ตีปกติ)' : '🪄 โหมดเวทย์: ปิดตีปกติ — ใช้แต่สกิลโจมตี เดินแค่พอระยะร่าย (เช็ค "ครั้ง/มอน" ของสกิลให้สูงพอ เช่น 99 — ค่า default 1 = ร่างครั้งเดียวต่อมอน)');
+    },
     toggleAvoidPlayers(on) { CFG.avoidOtherPlayers = !!on; log('⚔️ avoidOtherPlayers =', CFG.avoidOtherPlayers); },
     toggleLowestHpFirst(on) { CFG.targetLowestHpFirst = !!on; log('⚔️ targetLowestHpFirst =', CFG.targetLowestHpFirst); },
     toggleWander(on) { CFG.wanderEnabled = !!on; log('⚔️ wander =', CFG.wanderEnabled); },
@@ -7716,6 +7787,7 @@
               <button id="__assist_t_antiks" class="on">antiKS</button>
               <button id="__assist_t_avoidp" class="on">avoidPlayers</button>
               <button id="__assist_t_lowhp" class="on">lowestHP</button>
+              <button id="__assist_t_normalatk" class="on" title="ปิด = โหมดเวทย์: ไม่ส่งการตีปกติ ใช้แต่สกิลโจมตี และเดินเข้าแค่พอระยะร่ายสกิล (ตาม maxDistance ที่ตั้งใน Sub-tab Skills) — เหมาะกับนักเวทย์">⚔️ ตีปกติ</button>
             </div>
             <div class="btns">
               <button id="__assist_t_wander" class="on">🚶 เดินหามอน</button>
@@ -8677,6 +8749,7 @@
     tBtn('#__assist_t_antiks', (v) => ASSIST.toggleAntiKS(v), 'antiKS');
     tBtn('#__assist_t_avoidp', (v) => ASSIST.toggleAvoidPlayers(v), 'avoidOtherPlayers');
     tBtn('#__assist_t_lowhp', (v) => ASSIST.toggleLowestHpFirst(v), 'targetLowestHpFirst');
+    tBtn('#__assist_t_normalatk', (v) => ASSIST.toggleNormalAttack(v), 'normalAttackEnabled');
     tBtn('#__assist_t_wander', (v) => ASSIST.toggleWander(v), 'wanderEnabled');
     tBtn('#__assist_t_warpfind', (v) => ASSIST.toggleWarpFind(v), 'warpFindEnabled');
     tBtn('#__assist_t_guard', (v) => ASSIST.toggleGuard(v), 'guardEnabled');
@@ -10284,6 +10357,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncInput('#__assist_fleemonsters', (CFG.fleeMonsters || []).join(','));
     syncInput('#__assist_fleemonsterradius', CFG.fleeMonsterRadius);
     syncToggle('#__assist_t_antiks', CFG.antiKS);
+    syncToggle('#__assist_t_normalatk', CFG.normalAttackEnabled !== false);   // ★ โหมดเวทย์ (default เปิดตีปกติ)
     syncInput('#__assist_pickradiuskill', CFG.pickRadiusKill);
     syncToggle('#__assist_t_lootkillpos', CFG.lootUseKillPos);
     syncToggle('#__assist_t_avoidp', CFG.avoidOtherPlayers);
