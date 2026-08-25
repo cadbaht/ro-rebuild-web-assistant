@@ -24,6 +24,8 @@
 | ระบบ | ทำอะไร | Default |
 |---|---|---|
 | **⚔️ Auto-Combat** | Progressive search, เป้าใกล้สุด/HP ต่ำสุด, claim + anti-KS, กันแย่ง, abandon/stuck handling, มอนช้า (เห็ด) ยืดเวลา, **Warp Dance** (ตีแล้ววาร์ปรอบมอน — นักเวท/นักธนู) | OFF |
+| **🪄 โหมดเวทย์** | ปิด "⚔️ ตีปกติ" = ไม่ส่ง ATTACK เลย (server ไม่เดินเข้าปะทะ) — ใช้แต่สกิลโจมตี เดินแค่พอระยะร่ายตาม maxDistance ของสกิล | ON (ตีปกติ) |
+| **🗺️ GAT Wander** | เดินหามอนตาม **ตารางเดินได้จริง** จากไฟล์ `.gat` ของแมป (168 แผนที่) — A* เลี่ยงกำแพง/น้ำ + กวาดพื้นที่ตามทิศแบบคน + chain ล่วงหน้าไม่หยุดยืน | ON (เมื่อแมปมีข้อมูล) |
 | **🏃 Flee Players** | เจอผู้เล่นเข้ารัศมี → วาร์ปหนี (เปลี่ยนแมป / แมปเดิม) + cooldown — กันโดนจับว่าบอท | OFF |
 | **🛡️ Guard Mode** | ยืนประจำตำแหน่ง — **ไม่หามอนเอง** ตีกลับเฉพาะมอนที่มาตี (มอนยิงไกลก็เดินเข้าไปตี) ฆ่าเสร็จกลับจุดเดิม + วาร์ปกลับถ้าตกแมป — ฐานของ**บอทบัพ** | OFF |
 
@@ -75,9 +77,11 @@ node relay-server.js        # ค่า default wss ที่จะรัน (de
 
 | ไฟล์ | หน้าที่ |
 |---|---|
-| `ro-rebuild-web-assist.user.js` | ตัวช่วยหลัก (~9,000 บรรทัด) |
+| `ro-rebuild-web-assist.user.js` | ตัวช่วยหลัก (~10,900 บรรทัด) |
 | `relay-server.js` | relay กลาง (monitor + Telegram + แชท + upload) |
 | `remote-monitor.html` | หน้า monitor ระยะไกล |
+| `maps-gat/` | ตารางเดินได้ 168 แผนที่ (RLE ~3.3MB) — แปลงจาก `.gat` ของเกม ใช้กับ GAT Wander (script ดึงเอง + cache localStorage) |
+| `scripts/gat2json.js` | ตัวแปลง `.gat` → `maps-gat/<map>.json` — ได้แมปใหม่มาแล้วรัน `node scripts/gat2json.js <โฟลเดอร์ .gat>` แล้ว commit |
 | `db/Item/` | item DB v2 — 6 CSV (2,579 รายการ) + 6 desc + EquipmentGroups.csv |
 
 ---
@@ -91,6 +95,10 @@ ASSIST.status() / help() / config()
 ASSIST.combatOn() / combatOff()
 ASSIST.setTargetWhitelist('Poring', 'Lunatic')   // ว่าง = ทุกมอน
 ASSIST.setRanged(8)                              // นักธนู
+ASSIST.toggleNormalAttack(false)                 // โหมดเวทย์: ใช้แต่สกิล ไม่ตีปกติ
+
+// GAT Wander (เดินหามอนตามตารางเดินได้)
+ASSIST.gatStatus()                               // ดูแมปที่โหลด + calibration + %เดินได้
 
 // Guard (บอทบัพยืนประจำจุด)
 ASSIST.toggleGuard(true)
@@ -124,6 +132,19 @@ ASSIST.getInventory() / exportAll() / importAll(json)
 
 ### Teleport Serializer
 Server รับคำสั่งวาร์ป (0x40) ห่างกัน ~3 วินาที — ยิงถี่ตัวหลังถูก**ดรอปเงียบ** (เคยทำระบบขาย/ฝากค้างเป็นนาที) → สคริปต์จัดคิว intent ล่าสุดชนะ (last-wins) แล้ว flush เมื่อครบกำหนดทุกกรณี
+
+### 🗺️ GAT Wander — เดินหามอนตามตารางเดินได้จริง
+
+ไฟล์ `.gat` ของเกม (magic `GRAT` 1.2) เก็บข้อมูลต่อช่องแผนที่: ความสูง 4 มุม + **type** (`0` = เดินได้, อื่น ๆ = กันเดิน/น้ำ) — คือ ground truth เดียวกับที่ server ใช้ตัดสินการเดิน
+
+- **ข้อมูล**: `maps-gat/` 168 แผนที่ (RLE compact) — เข้าแมปไหน script ดึงจาก GitHub เองแล้ว cache localStorage (โหลดครั้งเดียวต่อเครื่อง) · `moc_fild01` ฝังในตัวสคริปต์เป็นตัวสำรอง
+- **การเดิน**: สุ่มเป้า 25-70 ช่องในพื้นที่เดินได้ → **A\*** (8 ทิศ กันตัดมุมกำแพง) หาเส้นทาง → เดินด้วย stride ยาวสุดที่เส้นตรงโล่ง
+- **เหมือนคน**: กวาดพื้นที่ตามทิศหลัก 8 ทิศ (60-150 ช่องต่อทิศ) แล้วเลี้ยว 45-135° ไม่ย้อนกลับ 180° · **chain ล่วงหน้า** — เหลือ ≤10 ช่องถึงเป้าก็ต่อขาใหม่ทันที ไม่มีจังหวะหยุดยืน
+- **แกน y calibration อัตโนมัติ**: เก็บสถิติตำแหน่งจริง 20 ตัวอย่าง เทียบปกติ/กลับด้าน แล้วล็อกเอง
+- **ลำดับ wander**: GAT (ground truth) → nav ที่เรียนรู้จากการเล่น → สุ่มทิศ
+- ทุกคำสั่งเดิน **clamp ≤16 ช่อง** จากตัว (game cap จริง — คลิกเกินโดน server ตัด = fingerprint บอท)
+
+ตัวอย่างวิธีเพิ่มแผนที่ใหม่: เอาไฟล์ `.gat` มาแล้วรัน `node scripts/gat2json.js <โฟลเดอร์>` → commit โฟลเดอร์ `maps-gat/` จบ
 
 ### Auto-Skill — 6 โหมด
 
