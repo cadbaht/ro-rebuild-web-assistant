@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.182.0
+// @version      4.183.0
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,19 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.182.0';
+  const VERSION = '4.183.0';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.183.0', d: '2026-08-25', items: [
+      '🗺️✨ ใหม่! GAT wander — เดินหามอนตาม "ตารางเดินได้" จากไฟล์ .gat ของแมป (ground truth จาก server)',
+      '   อ่านค่า type ต่อช่อง (0=เดินได้) → สุ่มเป้า 25-70 ช่องในพื้นที่เดินได้ → หาทางด้วย A* → เดินตามจุดเลี้ยว',
+      '   เดินต่อเนื่องแบบคน: chain ล่วงหน้า — ยังไม่ถึงเป้า (เหลือ ≤10 ช่อง) ก็ต่อขาใหม่ทันที ไม่หยุดยืน',
+      '   กวาดพื้นที่ตามทิศ: มุ่งทิศหลัก 8 ทิศ 60-150 ช่อง แล้วเลี้ยว 45-135° (ไม่ย้อนกลับ 180°) เหมือนกวาดหามอนจริง',
+      '   moc_fild01 ฝังมาในตัว · อีก 168 แผนที่ (ฟิลด์/ดัน/เมือง) เก็บใน repo โฟลเดอร์ maps-gat — เข้าแมปไหน script ดึงเอง + cache localStorage',
+      '   ปุ่ม "เดินตาม GAT" ใน Sub-tab Nav (✅ = แมปนี้มีข้อมูล) · สั่งลำดับ: GAT → nav ที่เรียนรู้ → สุ่มทิศ',
+      '   แกน y calibration อัตโนมัติ (เก็บสถิติตำแหน่งจริง 20 ตัวอย่าง) · API: ASSIST.gatStatus()',
+      '📏 ทุกคำสั่งเดิน clamp ≤16 ช่องจากตัว (game cap จริง — คลิกเกินโดนตัด · เดิมบางจุดสั่ง 20) กัน fingerprint บอท',
+    ]},
     { v: '4.182.0', d: '2026-08-24', items: [
       '🪄 ใหม่! โหมดเวทย์ (ปิด "⚔️ ตีปกติ" ใน Sub-tab Combat) — สำหรับนักเวทย์ร่ายสกิลโจมตีจากไกล',
       '   ปิดแล้ว: ไม่ส่งการตีปกติเลย → server ไม่เดินตัวละครเข้าไปปะทะ (ยืนร่ายจากไกลได้)',
@@ -1049,7 +1059,7 @@
     'sellEnabled', 'sellNpcName', 'sellNpcMap', 'sellNpcX', 'sellNpcY', 'sellIntervalMin', 'sellOnFull', 'sellItemIds',
     'storageEnabled', 'kafraName', 'kafraMap', 'kafraMapX', 'kafraMapY', 'kafraChoice', 'depositOnFull', 'depositAfterSell', 'depositItemIds',
     'farmMap', 'farmMapX', 'farmMapY', 'warpBackToFarm', 'farmMaps', 'farmRotateOnDeath', 'farmMapIdx', 'fleeFromPlayers', 'fleeMode', 'fleeMaps', 'fleePlayerRadius', 'fleeWarpCooldownSec',
-    'navRecording', 'navMergeRadius', 'navWanderUseNav', 'navWanderMode',
+    'navRecording', 'navMergeRadius', 'navWanderUseNav', 'navWanderMode', 'gatWanderEnabled',
     'itemNames',
   ];
   function saveConfig() {
@@ -1367,6 +1377,7 @@
     navRecording: false,          // ★ default OFF — เปิดเพื่อบันทึกตอนเดินเก็บข้อมูล
     navMergeRadius: 3,            // จุดที่อยู่ใกล้กัน <= N ช่อง = รวมเป็น node เดียว (dedup)
     navWanderUseNav: true,        // wander ใช้ nav แทนสุ่ม (ถ้ามีข้อมูลแมปนั้น)
+    gatWanderEnabled: true,       // ★★ wander ใช้ตารางเดินได้ GAT ก่อน (ground truth — มีข้อมูลแมปนั้นเท่านั้น)
     navWanderMode: 'patrol',      // ★ 'patrol' = เดินตามลำดับ route ครบแล้วย้อนกลับ, 'graph' = wander สุ่มตาม graph
 
     // ---------- AUTO-REST (★ default OFF — นั่งพักเสี่ยงถ้ามีมอนรอบตัว) ----------
@@ -1498,7 +1509,7 @@
     maxAcquireDistance: 30,       // ★ เลือกเป้า + ส่ง ATTACK ได้ในระยะนี้ (cap สูงสุด)
     searchRadii: [1,3,5, 10, 15, 20, 30], // ★ progressive search — ค้นจากรัศมีเล็กก่อน ถ้าเจอใช้เลย (mirror bot.js:3944)
     maxChaseDistance: 40,         // ★ เดินไล่ตามมอนได้สูงสุด N ช่อง (ไกลกว่านี้ abandon หาตัวอื่น)
-    walkStepDistance: 20,         // ★ สั่งเดินทีละ N ช่อง (game click-walk cap ~20)
+    walkStepDistance: 16,         // ★ สั่งเดินทีละ N ช่อง (game click-walk cap 16 — เกินนี้ server ตัด + คนคลิกไม่ได้)
     maxWalkDistance: 15,          // (legacy — ใช้น้อย เพราะ server walk-and-attack เอง)
     combatTickMs: 200,            // tick loop (มี jitter ±25% เหมือนบอทหลัก)
     postCombatDelayMs: 800,      // ★ รอ N ms หลังสู้เสร็จ/เก็บของเสร็จ ก่อนทำอย่างอื่น (ดูเป็นธรรมชาติ)
@@ -4677,8 +4688,16 @@
     skillSaveTimer = setTimeout(saveSkillTimes, 1000);
   }
   // MOVE OUT (click-move): [07][x:i16][y:i16] (signed)
+  // ★ game cap: คลิกสั่งเดินได้ไกลสุด ~16 ช่องจากตัว (คลิก 20 → เดินแค่ 16 — ยืนยันจากผู้ใช้ทดสอบจริง)
+  //   คำสั่งเกิน 16 = ผู้เล่นสั่งไม่ได้ (fingerprint บอท) → clamp ฝั่งเรา สั่งเป็นจุดบนเส้นตรงเดิมระยะ 16 พอดี
+  const MOVE_MAX_DIST = 16;
   function sendMove(x, y) {
     if (!activeWS || activeWS.readyState !== 1) return false;
+    if (player.x != null && player.y != null) {
+      const dx = x - player.x, dy = y - player.y;
+      const d = Math.hypot(dx, dy);
+      if (d > MOVE_MAX_DIST) { x = player.x + dx / d * MOVE_MAX_DIST; y = player.y + dy / d * MOVE_MAX_DIST; }
+    }
     const b = new Uint8Array(5);
     b[0] = 0x07;
     writeI16LE(b, 1, Math.round(x));
@@ -5709,11 +5728,16 @@
       //   ★ ถ้าเปิด navWanderUseNav และมีข้อมูลแมป → ใช้ waypoint graph (เดินต่อเนื่อง stateful)
       //   ★ navWander เป็น stateful: track target + arrival → เดินต่อทันทีไม่รอ cooldown
       //     ใช้ cooldown สั้น 1s แทน wanderCooldownMs (3s) เพื่อความต่อเนื่อง
-      const navCooldown = (CFG.navWanderUseNav && navHasData()) ? 1000 : CFG.wanderCooldownMs;
+      //   ★★ GAT wander มีลำดับก่อน: มีตารางเดินได้ของแมป → เดินตามพื้นที่จริง (A*) ก่อน แล้วค่อย fallback nav ที่เรียนรู้
+      const gatActive = CFG.gatWanderEnabled !== false && currentMap && gatCache.has(currentMap);
+      const navCooldown = ((CFG.navWanderUseNav && navHasData()) || gatActive) ? 1000 : CFG.wanderCooldownMs;
       if (CFG.wanderEnabled && now - lastWanderAt > navCooldown && player.x != null) {
         lastWanderAt = now;
         let moved = false;
-        if (CFG.navWanderUseNav) {
+        if (gatActive && gatWanderStep(now)) {
+          moved = true;   // ★ GAT ก่อน — ground truth ครบทั้งแมป ไม่ต้องรอเรียนรู้
+        }
+        else if (CFG.navWanderUseNav) {
           // ★ เลือก mode: patrol (เดินตามลำดับ route) หรือ graph (wander สุ่ม)
           const wp = CFG.navWanderMode === 'patrol' ? navPatrol() : navWander();
           if (wp) {
@@ -5776,6 +5800,217 @@
       log('🚶 Remote walk: @(', Math.round(tx), Math.round(ty), ') เหลือ', dist.toFixed(0), 'ช่อง');
     }
   }, 1000);
+
+  // ============================================================
+  //  ★★ GAT WALKABILITY — ตารางเดินได้ ground truth จากไฟล์ .gat ของแมป
+  //    format: GRAT 1.2 · w×h · cell 20B = ความสูง4มุม + type(u32) · type 0=เดินได้
+  //    moc_fild01 ฝังในตัว (RLE) · แมปอื่นดึงจาก GitHub maps-gat/<map>.json + cache localStorage
+  //    ใช้กับ gatWander — เดินหามอนแบบธรรมชาติ รู้จุดเดินได้ทั้งแมปตั้งแต่วินาทีแรก (ไม่ต้องเรียนรู้)
+  // ============================================================
+  const GAT_KEY_PREFIX = 'roAssistGat_';
+  const GAT_EMBED = { moc_fild01: { w: 400, h: 400, rle: '1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x45,0x86,1x159,0x61,1x48,0x1,1x45,0x84,1x161,0x60,1x49,0x1,1x46,0x78,1x1,0x2,1x163,0x48,1x1,0x10,1x50,0x1,1x46,0x74,1x1,0x3,1x1,0x1,1x163,0x49,1x1,0x10,1x50,0x1,1x46,0x7,1x2,0x70,1x164,0x60,1x50,0x1,1x46,0x7,1x2,0x70,1x163,0x49,1x1,0x10,1x51,0x1,1x46,0x8,1x2,0x66,1x1,0x1,1x58,0x15,1x91,0x60,1x51,0x1,1x46,0x6,1x4,0x68,1x58,0x17,1x88,0x52,1x2,0x8,1x50,0x1,1x46,0x6,1x2,0x68,1x1,0x1,1x58,0x6,1x1,0x5,1x1,0x1,1x2,0x1,1x86,0x10,1x1,0x54,1x49,0x1,1x45,0x10,1x2,0x67,1x58,0x8,1x2,0x2,1x1,0x1,1x2,0x2,1x83,0x67,1x49,0x1,1x45,0x10,1x2,0x67,1x23,5x5,1x2,0x12,1x17,0x7,1x2,0x4,1x2,0x2,1x54,0x8,1x20,0x10,1x1,0x57,1x49,0x1,1x44,0x80,1x23,5x7,0x5,1x1,0x6,1x19,0x2,1x1,0x8,1x2,0x3,1x52,0x10,1x18,0x70,1x48,0x1,1x44,0x79,1x24,5x7,0x2,1x2,0x8,1x21,0x3,1x2,0x4,1x2,0x4,1x51,0x10,1x18,0x71,1x47,0x1,1x43,0x78,1x24,0x2,5x8,0x11,1x22,0x2,1x2,0x4,1x2,0x7,1x48,0x11,1x16,0x75,1x44,0x1,1x41,0x3,1x1,0x74,1x26,0x2,5x9,0x10,1x22,0x8,1x2,0x14,1x40,0x12,1x16,0x78,1x41,0x1,1x39,0x2,1x2,0x1,1x1,0x73,1x27,0x2,5x10,0x10,1x22,0x7,1x2,0x8,1x2,0x4,1x39,0x14,1x14,0x80,1x40,0x1,1x33,0x8,1x2,0x74,1x27,0x3,5x11,0x9,1x22,0x17,1x2,0x2,1x1,0x2,1x36,0x17,1x10,0x83,1x40,0x1,1x31,0x86,1x26,0x6,5x10,0x9,1x22,0x15,1x1,0x7,1x34,0x22,1x6,0x85,1x39,0x1,1x30,0x15,1x2,0x70,1x24,0x6,1x1,0x2,5x10,0x8,1x22,0x2,1x1,0x2,1x2,0x17,1x32,0x14,1x1,0x99,1x39,0x1,1x29,0x87,1x23,0x8,1x1,0x6,5x7,0x8,1x21,0x2,1x1,0x2,1x2,0x18,1x30,0x116,1x38,0x1,1x28,0x88,1x22,0x16,5x7,0x9,1x20,0x26,1x9,0x1,1x19,0x12,1x1,0x93,1x2,0x4,1x2,0x3,1x37,0x1,1x27,0x90,1x20,0x11,1x2,0x2,5x8,0x13,1x17,0x27,1x6,0x3,1x19,0x12,1x1,0x2,1x1,0x90,1x2,0x12,1x34,0x1,1x25,0x93,1x19,0x8,1x1,0x5,5x8,0x15,1x16,0x36,1x18,0x16,1x1,0x93,1x2,0x16,1x27,0x1,1x23,0x95,1x18,0x12,5x10,0x17,1x16,0x29,1x1,0x4,1x18,0x111,1x2,0x16,1x27,0x1,1x22,0x13,1x2,0x81,1x18,0x12,5x9,0x18,1x15,0x34,1x17,0x117,1x1,0x13,1x27,0x1,1x22,0x11,1x7,0x79,1x16,0x12,5x9,0x20,1x13,0x34,5x1,1x15,0x19,1x1,0x113,1x27,0x1,1x22,0x9,1x10,0x79,1x14,0x13,5x8,0x21,1x12,0x32,1x1,0x1,5x8,0x28,1x1,0x36,1x1,0x71,1x32,0x1,1x22,0x8,1x12,0x81,1x10,0x44,1x10,0x2,1x2,0x6,1x2,0x23,5x8,0x65,1x1,0x61,1x2,0x6,1x34,0x1,1x22,0x7,1x13,0x15,1x2,0x20,5x1,0x98,1x7,0x4,1x2,0x6,1x2,0x23,5x8,0x5,1x2,0x126,1x36,0x1,1x22,0x7,1x14,0x138,1x2,0x39,5x8,0x5,1x1,0x126,1x37,0x1,1x22,0x7,1x14,0x17,1x2,0x160,5x8,0x131,1x38,0x1,1x22,0x6,1x16,0x35,1x3,0x55,1x1,0x84,5x11,0x4,1x2,0x122,1x38,0x1,1x49,0x9,1x1,0x78,1x1,0x85,5x12,0x125,1x39,0x1,1x51,0x174,5x11,0x124,1x39,0x1,1x53,0x173,5x10,0x124,1x39,0x1,1x54,0x6,1x1,0x166,5x10,0x123,1x39,0x1,1x54,0x66,5x1,0x31,5x2,0x74,5x9,0x123,1x39,0x1,1x54,0x65,1x2,0x26,5x8,0x74,5x9,0x123,1x38,0x1,1x55,0x64,1x2,0x27,5x8,0x74,5x26,0x106,1x37,0x1,1x56,0x92,5x9,0x45,1x1,0x28,5x27,0x72,5x1,0x31,1x37,0x1,1x65,0x80,1x1,0x3,5x9,0x74,5x27,0x70,1x1,0x32,1x37,0x1,1x68,0x79,1x1,0x2,5x9,0x74,5x27,0x101,1x38,0x1,1x69,0x78,1x1,0x4,5x8,0x74,5x26,0x101,1x1,0x2,1x35,0x1,1x70,0x83,5x8,0x5,1x1,0x64,1x2,0x2,5x25,0x107,1x32,0x1,1x70,0x84,5x8,0x44,1x2,0x23,1x2,0x3,5x25,0x115,1x23,0x1,1x71,0x83,5x8,0x1,1x2,0x41,1x2,0x21,1x1,0x7,5x25,0x15,1x1,0x98,1x23,0x1,1x71,0x83,5x15,1x2,0x61,1x2,0x2,1x2,0x13,1x1,0x2,5x8,0x15,1x1,0x98,1x23,0x1,1x72,0x82,5x17,0x37,5x1,0x21,1x1,0x5,1x2,0x15,5x8,0x15,1x2,0x98,1x23,0x1,1x72,0x83,5x17,0x33,5x1,0x24,1x1,0x21,5x9,0x15,1x2,0x98,1x23,0x1,1x71,0x85,5x17,0x78,5x10,0x115,1x23,0x1,1x71,0x85,5x18,0x76,5x10,0x116,1x23,0x1,1x71,0x86,5x18,0x74,5x11,0x116,1x23,0x1,1x70,0x88,5x18,0x72,5x10,0x117,1x24,0x1,1x69,0x89,5x19,0x70,5x10,0x106,1x1,0x9,1x26,0x1,1x67,0x15,1x2,0x86,5x8,0x68,5x8,0x117,1x28,0x1,1x65,0x16,1x1,0x1,1x2,0x86,5x8,0x67,5x8,0x111,1x1,0x4,1x29,0x1,1x38,0x8,1x18,0x108,5x8,0x66,5x8,0x115,1x30,0x1,1x38,0x9,1x17,0x97,1x1,0x1,1x2,0x7,5x9,0x65,5x8,0x110,1x2,0x3,1x30,0x1,1x38,0x9,1x16,0x109,5x10,0x64,5x8,0x4,1x2,0x101,1x2,0x1,1x2,0x3,1x30,0x1,1x38,0x10,1x15,0x110,5x10,1x1,0x59,1x2,0x1,5x8,0x4,1x2,0x109,1x30,0x1,1x38,0x10,1x14,0x102,1x2,0x8,5x9,0x5,1x2,0x53,1x2,0x1,5x8,0x107,1x38,0x1,1x38,0x7,1x1,0x3,1x12,0x116,5x7,0x4,1x2,0x56,5x8,0x105,1x40,0x1,1x38,0x13,1x8,0x2,1x2,0x115,5x7,0x61,5x8,0x103,1x42,0x1,1x37,0x16,1x5,0x3,1x2,0x115,5x8,1x2,0x2,1x1,0x43,5x19,0x103,1x43,0x1,1x36,0x10,1x2,0x130,5x8,1x2,0x2,1x9,0x6,1x2,0x27,5x19,0x102,1x44,0x1,1x35,0x11,1x2,0x2,1x1,0x127,1x24,0x32,5x18,0x103,1x44,0x1,1x33,0x140,1x30,0x32,5x17,0x101,1x1,0x1,1x44,0x1,1x31,0x30,1x1,0x109,1x33,0x32,5x15,0x102,1x46,0x1,1x30,0x139,1x35,0x34,5x10,0x106,1x45,0x1,1x30,0x138,1x37,0x34,5x8,0x107,1x45,0x1,1x30,0x138,1x37,0x148,1x46,0x1,1x30,0x4,1x2,0x131,1x39,0x147,1x46,0x1,1x30,0x137,1x44,0x145,1x43,0x1,1x30,0x2,1x2,0x132,1x48,0x143,1x42,0x1,1x30,0x2,1x2,0x131,1x50,0x143,1x41,0x1,1x30,0x32,1x1,0x2,1x1,0x97,1x53,0x145,1x38,0x1,1x30,0x32,1x1,0x98,1x55,0x146,1x37,0x1,1x30,0x33,1x1,0x96,1x57,0x33,1x2,0x110,1x37,0x1,1x29,0x131,1x57,0x68,1x1,0x53,5x1,0x22,1x37,0x1,1x29,0x33,1x1,0x86,1x2,0x8,1x59,0x12,5x9,0x98,1x2,0x23,1x37,0x1,1x28,0x37,1x1,0x92,1x60,0x11,5x9,0x45,5x2,0x77,1x37,0x1,1x27,0x131,1x60,0x9,5x11,0x111,1x2,0x11,1x37,0x1,1x25,0x133,1x62,0x6,5x11,0x112,1x2,0x11,1x37,0x1,1x23,0x136,1x59,0x4,1x1,0x2,5x11,0x126,1x37,0x1,1x22,0x12,1x1,0x124,1x59,0x1,1x1,0x2,1x1,0x1,5x9,0x118,1x1,0x9,1x38,0x1,1x22,0x9,1x2,0x127,1x58,0x1,1x4,5x7,0x6,1x2,0x2,1x1,0x18,1x2,0x86,1x1,0x11,1x40,0x1,1x22,0x10,1x1,0x61,1x1,0x65,1x65,5x5,0x10,1x1,0x18,1x2,0x1,1x2,0x68,1x1,0x24,1x42,0x1,1x22,0x139,1x82,0x113,1x43,0x1,1x31,0x131,1x82,0x87,1x1,0x23,1x44,0x1,1x34,0x36,5x2,0x93,1x80,0x86,1x1,0x23,1x44,0x1,1x35,0x130,1x80,0x110,1x44,0x1,1x36,0x135,1x75,0x108,1x45,0x1,1x36,0x135,1x75,0x99,1x54,0x1,1x37,0x135,1x74,0x97,1x56,0x1,1x37,0x135,1x74,0x95,1x58,0x1,1x38,0x135,1x73,0x94,1x59,0x1,1x38,0x135,1x73,0x93,1x60,0x1,1x38,0x139,1x69,0x24,5x1,0x68,1x60,0x1,1x37,0x141,1x68,0x93,1x60,0x1,1x37,0x137,1x2,0x2,1x68,0x22,1x1,0x69,1x61,0x1,1x36,0x138,1x2,0x2,1x68,0x92,1x61,0x1,1x35,0x143,1x67,0x93,1x61,0x1,1x33,0x145,1x66,0x94,1x61,0x1,1x31,0x147,1x65,0x96,1x60,0x1,1x30,0x149,1x62,0x98,1x60,0x1,1x30,0x150,1x60,0x100,1x59,0x1,1x30,0x5,1x1,0x144,1x59,0x101,1x59,0x1,1x30,0x4,1x2,0x145,1x57,0x103,1x58,0x1,1x30,0x153,1x55,0x104,1x57,0x1,1x30,0x155,1x52,0x108,1x54,0x1,1x39,0x34,5x2,0x119,1x43,0x108,1x54,0x1,1x42,0x31,5x2,0x119,1x42,0x109,1x54,0x1,1x43,0x30,5x2,0x118,1x43,0x109,1x54,0x1,1x44,0x147,1x44,0x113,1x51,0x1,1x44,0x145,1x44,0x115,1x51,0x1,1x45,0x143,1x42,0x119,1x50,0x1,1x45,0x142,1x29,0x133,1x50,0x1,1x46,0x141,1x32,0x3,1x2,0x126,1x49,0x1,1x53,0x131,1x2,0x1,1x33,0x2,1x2,0x136,1x39,0x1,1x56,0x130,1x35,0x2,1x1,0x49,5x1,0x79,1x1,0x6,1x39,0x1,1x57,0x125,1x2,0x2,1x36,0x1,1x2,0x128,1x1,0x2,1x2,0x2,1x39,0x1,1x58,0x124,1x2,0x2,1x39,0x47,1x2,0x82,1x2,0x2,1x39,0x1,1x58,0x128,1x37,0x138,1x38,0x1,1x59,0x127,1x37,0x139,1x37,0x1,1x59,0x13,1x2,0x112,1x37,0x139,1x37,0x1,1x60,0x10,1x1,0x115,1x37,0x140,1x36,0x1,1x60,0x13,1x1,0x112,1x37,0x141,1x35,0x1,1x60,0x13,1x1,0x112,1x37,0x15,1x1,0x126,1x34,0x1,1x60,0x10,1x1,0x115,1x36,0x16,1x1,0x126,1x1,0x2,1x31,0x1,1x60,0x10,1x1,0x115,1x35,0x147,1x31,0x1,1x60,0x126,1x32,0x150,1x31,0x1,1x59,0x127,1x31,0x152,1x30,0x1,1x59,0x128,1x25,0x158,1x29,0x1,1x58,0x130,1x24,0x144,1x2,0x12,1x29,0x1,1x58,0x131,1x23,0x144,1x2,0x14,1x27,0x1,1x57,0x135,1x20,0x161,1x26,0x1,1x55,0x135,1x2,0x1,1x19,0x143,1x2,0x23,1x19,0x1,1x53,0x141,1x18,0x143,1x2,0x23,1x19,0x1,1x52,0x119,1x2,0x22,1x16,0x52,5x1,0x116,1x19,0x1,1x51,0x144,1x16,0x169,1x19,0x1,1x51,0x121,1x2,0x22,1x14,0x52,1x2,0x116,1x19,0x1,1x51,0x145,1x13,0x96,5x1,0x74,1x19,0x1,1x50,0x132,1x1,0x14,1x10,0x2,1x2,0x93,1x1,0x75,1x19,0x1,1x49,0x151,1x7,0x173,1x19,0x1,1x47,0x49,1x1,0x283,1x19,0x1,1x45,0x51,1x1,0x283,1x19,0x1,1x31,0x349,1x19,0x1,1x30,0x107,1x2,0x241,1x19,0x1,1x29,0x66,1x2,0x283,1x19,0x1,1x29,0x66,1x2,0x283,1x19,0x1,1x28,0x352,1x19,0x1,1x27,0x6,1x1,0x2,1x1,0x343,1x19,0x1,1x25,0x4,1x1,0x350,1x19,0x1,1x24,0x5,1x1,0x350,1x19,0x1,1x23,0x48,1x1,0x308,1x19,0x1,1x22,0x358,1x19,0x1,1x22,0x7,1x2,0x135,1x2,0x180,1x2,0x30,1x19,0x1,1x22,0x7,1x2,0x135,1x2,0x63,1x2,0x1,1x1,0x113,1x2,0x30,1x19,0x1,1x22,0x198,1x1,0x13,1x1,0x138,1x26,0x1,1x22,0x207,1x2,0x115,1x1,0x25,1x27,0x1,1x22,0x210,1x2,0x112,1x1,0x24,1x28,0x1,1x22,0x8,1x1,0x339,1x29,0x1,1x27,0x16,1x4,0x323,1x29,0x1,1x29,0x8,1x1,0x4,1x7,0x159,1x2,0x159,1x30,0x1,1x31,0x9,1x11,0x157,1x2,0x159,1x30,0x1,1x32,0x7,1x13,0x159,1x1,0x156,1x31,0x1,1x32,0x3,1x1,0x2,1x14,0x125,1x2,0x80,5x1,0x108,1x31,0x1,1x33,0x2,1x1,0x1,1x16,0x140,1x2,0x20,1x1,0x43,1x2,0x105,1x33,0x1,1x33,0x4,1x16,0x132,1x2,0x6,1x2,0x23,1x2,0x39,1x2,0x103,1x35,0x1,1x34,0x2,1x18,0x124,1x1,0x184,1x36,0x1,1x54,0x120,1x1,0x3,1x2,0x182,1x37,0x1,1x54,0x307,1x38,0x1,1x54,0x121,1x1,0x41,1x1,0x143,1x38,0x1,1x54,0x121,1x1,0x4,1x1,0x36,1x2,0x141,1x39,0x1,1x54,0x264,1x2,0x19,1x2,0x14,1x1,0x4,1x39,0x1,1x54,0x139,1x2,0x8,1x2,0x7,1x2,0x104,1x2,0x1,1x2,0x14,1x7,0x16,1x39,0x1,1x54,0x139,1x2,0x8,1x2,0x7,1x2,0x1,1x1,0x11,5x1,0x93,1x2,0x1,1x2,0x9,1x10,0x13,1x41,0x1,1x54,0x127,1x2,0x43,1x2,0x106,1x12,0x12,1x41,0x1,1x55,0x127,1x1,0x150,1x13,0x14,1x39,0x1,1x58,0x151,1x2,0x3,1x2,0x105,1x2,0x10,1x14,0x10,1x2,0x1,1x39,0x1,1x59,0x274,1x15,0x12,1x39,0x1,1x60,0x35,5x1,0x236,1x16,0x10,1x41,0x1,1x60,0x33,1x2,0x237,1x16,0x8,1x43,0x1,1x61,0x130,1x1,0x140,1x16,0x7,1x44,0x1,1x62,0x270,1x16,0x6,1x45,0x1,1x62,0x127,1x2,0x17,1x2,0x122,1x16,0x5,1x46,0x1,1x62,0x143,1x1,0x126,1x16,0x5,1x46,0x1,1x62,0x270,1x16,0x4,1x47,0x1,1x62,0x129,1x1,0x16,1x1,0x123,1x16,0x4,1x47,0x1,1x62,0x141,1x2,0x127,1x16,0x5,1x46,0x1,1x64,0x139,1x2,0x127,1x16,0x5,1x46,0x1,1x66,0x267,1x14,0x7,1x45,0x1,1x67,0x266,1x14,0x8,1x44,0x1,1x68,0x266,1x13,0x9,1x43,0x1,1x68,0x266,1x12,0x11,1x42,0x1,1x69,0x266,1x10,0x14,1x40,0x1,1x69,0x268,1x6,0x26,1x30,0x1,1x70,0x9,1x1,0x259,1x2,0x28,1x30,0x1,1x40,0x6,1x24,0x279,1x2,0x1,1x1,0x16,1x30,0x1,1x39,0x8,1x22,0x278,1x6,0x17,1x29,0x1,1x28,5x5,1x7,0x7,1x22,0x277,1x8,0x17,1x28,0x1,1x28,5x7,1x1,0x12,1x21,0x276,1x10,0x17,1x27,0x1,1x28,5x6,0x8,1x2,0x4,1x20,0x276,1x12,0x13,1x2,0x2,1x26,0x1,1x27,5x4,0x11,1x2,0x5,1x18,0x122,5x1,0x153,1x14,0x12,1x2,0x4,1x24,0x1,1x27,5x3,0x16,1x1,0x3,1x15,0x122,1x2,0x154,1x14,0x19,1x23,0x1,1x27,5x2,0x24,1x10,0x124,1x2,0x153,1x16,0x14,1x1,0x3,1x23,0x1,1x27,5x2,0x15,1x1,0x19,1x2,0x275,1x17,0x13,1x2,0x3,1x23,0x1,1x27,5x2,0x18,1x1,0x6,1x1,0x5,1x2,0x277,1x19,0x18,1x23,0x1,1x27,5x3,0x19,1x2,0x3,1x1,0x8,1x2,0x272,1x21,0x8,1x33,0x1,1x28,5x3,0x18,1x2,0x12,1x2,0x272,1x21,0x7,1x34,0x1,1x28,5x3,0x21,1x1,0x283,1x22,0x6,1x35,0x1,1x27,5x3,0x305,1x23,0x5,1x36,0x1,1x27,5x3,0x305,1x23,0x4,1x37,0x1,1x26,5x3,0x305,1x24,0x3,1x38,0x1,1x26,5x2,0x18,1x2,0x286,1x24,0x3,1x38,0x1,1x26,5x2,0x18,1x2,0x287,1x22,0x3,1x39,0x1,1x26,5x2,0x12,1x1,0x19,1x1,0x274,1x22,0x3,1x39,0x1,1x26,5x2,0x31,1x2,0x233,1x1,0x41,1x20,0x5,1x38,0x1,1x25,5x2,0x298,1x1,0x11,1x18,0x6,1x38,0x1,1x24,5x3,0x13,1x1,0x252,1x2,0x43,1x16,0x8,1x37,0x1,1x24,5x3,0x312,1x14,0x10,1x36,0x1,1x23,5x4,0x183,1x1,0x109,1x1,0x20,1x10,0x13,1x35,0x1,1x23,5x3,0x326,1x1,0x12,1x34,0x1,1x22,5x4,0x184,5x1,0x111,1x1,0x44,1x32,0x1,1x22,5x11,1x1,0x79,1x3,0x112,5x1,0x139,1x31,0x1,1x22,0x125,1x2,0x4,1x2,0x213,1x31,0x1,1x22,0x119,1x2,0x4,1x2,0x4,1x2,0x83,1x1,0x82,1x1,0x46,1x31,0x1,1x22,0x110,1x2,0x2,1x2,0x3,1x2,0x4,1x2,0x4,1x2,0x4,1x2,0x77,1x1,0x125,1x1,0x4,1x30,0x1,1x22,5x11,1x1,0x94,1x2,0x2,1x2,0x2,1x2,0x21,1x2,0x4,1x2,0x202,1x30,0x1,1x22,5x4,0x99,1x2,0x1,1x2,0x35,1x2,0x2,1x2,0x4,1x3,0x146,1x1,0x45,1x29,0x1,1x22,5x4,0x99,1x2,0x42,1x2,0x67,1x1,0x132,1x28,0x1,1x22,5x4,0x148,5x1,0x190,1x1,0x6,1x27,0x1,1x22,5x4,0x347,1x26,0x1,1x23,5x3,0x349,1x24,0x1,1x23,5x3,0x336,1x1,0x4,1x1,0x8,1x23,0x1,1x23,5x3,0x12,1x2,0x85,1x2,0x42,1x2,0x51,1x1,0x142,1x5,0x6,1x23,0x1,1x25,5x2,0x11,1x2,0x85,1x2,0x1,1x2,0x35,1x2,0x2,1x2,0x51,1x1,0x136,1x2,0x3,1x8,0x4,1x23,0x1,1x25,5x4,0x99,1x2,0x2,1x2,0x2,1x2,0x21,1x2,0x4,1x2,0x72,1x1,0x123,1x10,0x3,1x23,0x1,1x25,5x4,0x103,1x2,0x2,1x2,0x3,1x2,0x4,1x2,0x4,1x2,0x4,1x2,0x201,1x12,0x2,1x23,0x1,1x25,5x2,0x9,1x3,0x102,1x2,0x4,1x2,0x4,1x2,0x72,1x2,0x132,1x14,0x1,1x23,0x1,1x25,5x2,0x6,1x6,0x108,1x2,0x4,1x2,0x72,1x2,0x132,1x14,0x1,1x23,0x1,1x24,5x3,0x6,1x5,0x199,1x1,0x122,1x39,0x1,1x24,5x2,0x6,1x3,0x11,1x1,0x312,1x40,0x1,1x24,5x2,0x6,1x1,0x194,1x1,0x99,1x2,0x28,1x42,0x1,1x24,5x2,0x301,1x2,0x27,1x43,0x1,1x24,5x3,0x15,1x2,0x2,1x2,0x307,1x44,0x1,1x25,5x2,0x15,1x2,0x2,1x2,0x2,1x1,0x303,1x45,0x1,1x26,5x2,0x7,5x2,0x288,1x2,0x26,1x46,0x1,1x26,5x3,0x5,5x3,0x10,1x2,0x13,1x2,0x289,1x46,0x1,1x28,5x3,0x3,5x3,0x4,1x2,0x4,1x2,0x10,1x2,0x1,1x2,0x256,1x2,0x30,1x47,0x1,1x28,5x8,1x5,0x5,1x4,0x149,5x1,0x152,1x47,0x1,1x29,5x5,1x8,0x2,1x7,0x147,1x1,0x124,1x2,0x28,1x46,0x1,1x42,0x1,1x9,0x146,1x1,0x124,1x2,0x28,1x46,0x1,1x53,0x301,1x45,0x1,1x53,0x302,1x44,0x1,1x54,0x302,1x43,0x1,1x55,0x298,1x1,0x3,1x42,0x1,1x55,0x76,5x2,0x227,1x39,0x1,1x57,0x68,5x8,0x222,1x2,0x10,1x32,0x1,1x59,0x66,5x2,0x8,1x2,0x218,1x2,0x8,1x34,0x1,1x60,0x65,5x2,0x8,1x2,0x227,1x35,0x1,1x61,0x64,5x2,0x8,1x2,0x134,5x2,0x89,1x37,0x1,1x61,0x64,5x2,0x144,5x2,0x88,1x38,0x1,1x61,0x3,1x2,0x295,1x38,0x1,1x62,0x2,1x2,0x60,5x3,0x231,1x39,0x1,1x62,0x64,5x6,0x225,1x1,0x2,1x39,0x1,1x62,0x298,1x39,0x1,1x62,0x298,1x39,0x1,1x61,0x5,1x2,0x292,1x39,0x1,1x61,0x299,1x39,0x1,1x60,0x78,5x2,0x217,1x2,0x1,1x39,0x1,1x59,0x3,1x2,0x73,1x3,0x221,1x38,0x1,1x58,0x4,1x2,0x298,1x37,0x1,1x56,0x306,1x37,0x1,1x38,0x172,1x1,0x152,1x36,0x1,1x37,0x327,1x35,0x1,1x37,0x314,1x1,0x13,1x34,0x1,1x36,0x312,1x2,0x13,1x2,0x2,1x32,0x1,1x35,0x313,1x2,0x9,1x1,0x3,1x2,0x4,1x30,0x1,1x34,0x321,1x2,0x12,1x30,0x1,1x33,0x322,1x2,0x13,1x29,0x1,1x31,0x13,1x1,0x321,1x2,0x2,1x29,0x1,1x30,0x9,1x1,0x1,1x2,0x328,1x28,0x1,1x30,0x342,1x27,0x1,1x30,0x53,1x2,0x288,1x26,0x1,1x30,0x345,1x24,0x1,1x30,0x55,5x1,0x290,1x23,0x1,1x30,0x3,1x1,0x337,1x2,0x3,1x23,0x1,1x30,0x3,1x1,0x340,1x25,0x1,1x30,0x259,1x1,5x1,0x82,1x26,0x1,1x31,0x341,1x27,0x1,1x32,0x339,1x28,0x1,1x34,0x36,1x2,0x295,1x2,0x1,1x29,0x1,1x35,0x35,1x2,0x298,1x29,0x1,1x36,0x3,1x1,0x329,1x30,0x1,1x37,0x331,1x31,0x1,1x37,0x3,1x1,0x326,1x32,0x1,1x37,0x199,1x1,0x128,1x34,0x1,1x38,0x326,1x35,0x1,1x38,0x325,1x36,0x1,1x38,0x308,1x2,0x14,1x37,0x1,1x38,0x146,5x1,0x22,1x2,0x124,1x1,0x12,1x2,0x13,1x38,0x1,1x38,0x169,1x2,0x20,1x2,0x6,1x2,0x122,1x38,0x1,1x38,0x10,1x1,0x132,1x2,0x46,1x2,0x6,1x2,0x9,1x1,0x111,1x39,0x1,1x38,0x7,1x1,0x289,1x1,0x24,1x39,0x1,1x38,0x261,1x1,0x34,1x2,0x12,1x1,0x11,1x39,0x1,1x39,0x206,1x1,0x53,1x1,0x60,1x39,0x1,1x41,0x10,1x1,0x193,1x1,0x98,1x1,0x15,1x39,0x1,1x42,0x6,1x1,0x58,1x1,0x25,5x1,0x114,1x1,0x111,1x39,0x1,1x43,0x61,1x2,0x27,5x1,0x86,1x2,0x2,1x2,0x134,1x39,0x1,1x44,0x60,1x2,0x114,1x2,0x2,1x2,0x9,1x1,0x65,1x2,0x57,1x39,0x1,1x45,0x7,1x1,0x36,1x2,0x11,1x2,0x131,1x1,0x57,1x2,0x65,1x39,0x1,1x45,0x248,1x2,0x65,1x39,0x1,1x46,0x196,1x2,0x117,1x38,0x1,1x46,0x4,1x1,0x310,1x38,0x1,1x46,0x48,1x2,0x122,1x1,0x9,1x1,0x133,1x37,0x1,1x46,0x49,1x2,0x121,1x1,0x9,1x1,0x134,1x36,0x1,1x46,0x49,1x2,0x35,1x2,0x97,1x2,0x128,1x2,0x1,1x35,0x1,1x46,0x319,1x34,0x1,1x46,0x57,1x1,0x263,1x32,0x1,1x46,0x22,1x1,0x34,1x1,0x253,1x2,0x9,1x31,0x1,1x45,0x4,1x1,0x18,1x1,0x20,1x2,0x9,1x2,0x152,1x2,0x45,1x1,0x66,1x31,0x1,1x45,0x44,1x2,0x9,1x2,0x152,1x2,0x106,1x1,0x5,1x31,0x1,1x44,0x41,1x2,0x73,1x1,0x207,1x31,0x1,1x43,0x24,1x1,0x17,1x2,0x5,1x2,0x46,1x2,0x139,1x2,0x85,1x31,0x1,1x42,0x98,1x1,0x1,1x2,0x82,1x2,0x23,1x1,0x116,1x31,0x1,1x40,0x48,1x2,0x136,1x2,0x140,1x31,0x1,1x39,0x100,1x1,0x140,1x1,0x84,1x1,0x2,1x31,0x1,1x30,0x335,1x1,0x2,1x31,0x1,1x30,0x339,1x30,0x1,1x30,0x8,1x2,0x329,1x30,0x1,1x30,0x8,1x2,0x329,1x30,0x1,1x30,0x289,1x10,0x40,1x30,0x1,1x30,0x5,1x1,0x281,1x14,0x41,1x27,0x1,1x30,0x9,1x1,0x276,1x16,0x41,1x26,0x1,1x30,0x9,1x1,0x275,1x18,0x42,1x24,0x1,1x30,0x71,1x2,0x211,1x20,0x42,1x23,0x1,1x29,0x4,1x1,0x144,1x2,0x133,1x22,0x41,1x23,0x1,1x29,0x69,1x2,0x81,1x2,0x130,1x22,0x41,1x23,0x1,1x29,0x69,1x2,0x3,1x1,0x70,1x1,0x1,1x2,0x3,1x2,0x11,1x2,0x116,1x24,0x40,1x23,0x1,1x28,0x146,1x10,0x10,1x2,0x116,1x29,0x35,1x23,0x1,1x27,0x146,1x14,0x125,1x31,0x33,1x23,0x1,1x26,0x63,1x18,0x65,1x16,0x110,1x2,0x12,1x33,0x1,1x1,0x2,1x2,0x21,1x2,0x2,1x23,0x1,1x24,0x56,1x2,0x5,1x21,0x63,1x18,0x112,1x2,0x9,1x33,0x4,1x2,0x25,1x23,0x1,1x23,0x57,1x2,0x3,1x25,0x60,1x20,0x81,1x2,0x28,1x2,0x9,1x33,0x31,1x23,0x1,1x23,0x61,1x27,0x58,1x22,0x77,1x2,0x42,1x34,0x7,1x2,0x18,1x26,0x1,1x22,0x61,1x29,0x57,1x22,0x77,1x2,0x4,1x9,0x14,1x2,0x4,1x44,0x6,1x2,0x17,1x27,0x1,1x22,0x7,1x1,0x53,1x30,0x55,1x24,0x79,1x14,0x12,1x2,0x2,1x47,0x1,1x2,0x20,1x28,0x1,1x23,0x40,1x1,0x10,1x1,0x2,1x2,0x3,1x31,0x30,1x2,0x23,1x29,0x72,1x17,0x14,1x48,0x22,1x29,0x1,1x25,0x55,1x34,0x3,1x2,0x27,1x1,0x21,1x31,0x70,1x18,0x12,1x49,0x6,1x1,0x14,1x30,0x1,1x26,0x34,1x2,0x11,1x42,0x3,1x1,0x20,1x9,0x20,1x32,0x68,1x20,0x10,1x50,0x21,1x30,0x1,1x27,0x33,1x2,0x3,1x1,0x5,1x46,0x17,1x1,0x2,1x12,0x16,1x36,0x66,1x22,0x8,1x51,0x20,1x31,0x1,1x28,0x37,1x2,0x3,1x48,0x18,1x14,0x13,1x1,0x3,1x35,0x65,1x22,0x8,1x58,0x13,1x31,0x1,1x29,0x40,1x50,0x14,1x18,0x12,1x1,0x2,1x36,0x64,1x24,0x6,1x60,0x12,1x31,0x1,1x29,0x33,1x1,0x5,1x52,0x13,1x19,0x11,1x40,0x62,1x93,0x10,1x31,0x1,1x30,0x37,1x54,0x10,1x1,0x1,1x20,0x10,1x41,0x59,1x96,0x9,1x31,0x1,1x37,0x29,1x55,0x10,1x1,0x1,1x20,0x9,1x50,0x2,1x2,0x3,1x2,0x41,1x98,0x8,1x31,0x1,1x39,0x26,1x57,0x10,1x22,0x7,1x52,0x1,1x2,0x3,1x2,0x40,1x99,0x5,1x1,0x2,1x31,0x1,1x40,0x7,1x2,0x15,1x90,0x7,1x53,0x46,1x101,0x7,1x31,0x1,1x41,0x22,1x91,0x6,1x55,0x42,1x2,0x1,1x139,0x1,1x42,0x20,1x154,0x43,1x140,0x1,1x43,0x18,1x156,0x2,1x1,0x31,1x1,0x6,1x141,0x1,1x44,0x4,1x2,0x10,1x157,0x6,1x1,0x31,1x1,0x2,1x141,0x1,1x46,0x2,1x2,0x9,1x159,0x5,1x1,0x34,1x141,0x1,1x52,0x7,1x159,0x40,1x141,0x1,1x53,0x5,1x162,0x38,1x141,0x1,1x54,0x4,1x162,0x38,1x141,0x1,1x55,0x3,1x341,0x1,1x55,0x3,1x341,0x1,1x56,0x3,1x340,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x1,1x399,0x401' } };
+  const gatCache = new Map();       // mapName -> {w, h, cells: Uint8Array} (cells=0 เดินได้)
+  const gatFetchTried = new Set();
+  function gatDecode(w, h, rle) {
+    const cells = new Uint8Array(w * h);
+    let i = 0;
+    for (const part of rle.split(',')) {
+      const xi = part.indexOf('x');
+      cells.fill(+part.slice(0, xi), i, i + (+part.slice(xi + 1)));
+      i += +part.slice(xi + 1);
+    }
+    return cells;
+  }
+  function gatRegister(mapName, d) {
+    if (!mapName || !d || !d.w || !d.h || !d.rle) return;
+    try { gatCache.set(mapName, { w: d.w, h: d.h, cells: gatDecode(d.w, d.h, d.rle) }); } catch (e) {}
+  }
+  for (const m of Object.keys(GAT_EMBED)) gatRegister(m, GAT_EMBED[m]);
+  async function gatLoad(mapName) {
+    if (!mapName || gatCache.has(mapName) || gatFetchTried.has(mapName)) return;
+    gatFetchTried.add(mapName);
+    try {
+      const raw = localStorage.getItem(GAT_KEY_PREFIX + mapName);
+      if (raw) { gatRegister(mapName, JSON.parse(raw)); return; }
+      const res = await fetch(GITHUB_RAW.replace('ro-rebuild-web-assist.user.js', 'maps-gat/' + mapName + '.json'));
+      if (!res.ok) return;
+      const d = await res.json();
+      gatRegister(mapName, d);
+      try { localStorage.setItem(GAT_KEY_PREFIX + mapName, JSON.stringify(d)); } catch (e) {}
+      log('🗺️ GAT:', mapName, 'โหลดแล้ว (' + d.w + '×' + d.h + ')');
+    } catch (e) {}
+  }
+  setInterval(() => { if (currentMap && !gatCache.has(currentMap)) gatLoad(currentMap); }, 5000);
+  // ★ calibration แกน y — ตำแหน่งที่ยืน/เดินอยู่จริงต้องเป็นช่องเดินได้เสมอ
+  //   เก็บสถิติทั้งแบบปกติ/flip-y 20 ตัวอย่าง แล้วล็อกข้างที่ถูก (tie = ปกติ)
+  let gatFlipY = false, gatFlipLocked = false, gatCalN = 0, gatCalNormal = 0, gatCalFlip = 0;
+  setInterval(() => {
+    if (!currentMap || player.x == null) return;
+    const g = gatCache.get(currentMap);
+    if (!g) return;
+    const gx = Math.round(player.x), gy = Math.round(player.y);
+    if (gx < 0 || gy < 0 || gx >= g.w || gy >= g.h) return;
+    if (g.cells[gy * g.w + gx] === 0) gatCalNormal++;
+    if (g.cells[(g.h - 1 - gy) * g.w + gx] === 0) gatCalFlip++;
+    gatCalN++;
+    if (gatCalN >= 20 && !gatFlipLocked) {
+      gatFlipLocked = true;
+      gatFlipY = gatCalFlip > gatCalNormal;
+      log('🗺️ GAT calibration:', gatFlipY ? 'แกน y กลับด้าน' : 'พิกัดตรงปกติ', '(ตำแหน่งตรงช่องเดินได้', Math.max(gatCalNormal, gatCalFlip) + '/' + gatCalN + ')');
+    }
+  }, 2000);
+  function gatWalkable(x, y) {
+    const g = currentMap && gatCache.get(currentMap);
+    if (!g) return null;
+    const gx = Math.round(x), gy = Math.round(y);
+    if (gx < 0 || gy < 0 || gx >= g.w || gy >= g.h) return false;
+    return g.cells[(gatFlipY ? g.h - 1 - gy : gy) * g.w + gx] === 0;
+  }
+  // เส้นตรงเดินได้ตลอดไหม (sample ทุกครึ่งช่อง) — ใช้เลือก stride ยาวธรรมชาติ
+  function gatLineWalkable(x0, y0, x1, y1) {
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2));
+    for (let i = 0; i <= n; i++) {
+      if (!gatWalkable(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n)) return false;
+    }
+    return true;
+  }
+  // ★ A* บนกริด — 8 ทิศ · เดินทแยงเฉพาะเมื่อแขนงทั้งสองเดินได้ (กันตัดมุมกำแพง)
+  //   คืน waypoints จุดเลี้ยวอย่างเดียว (ทิศเปลี่ยน) — เส้นทางสั้น ส่ง move น้อยครั้ง
+  function gatFindPath(tx, ty, maxExpand) {
+    const g = currentMap && gatCache.get(currentMap);
+    if (!g || player.x == null) return null;
+    maxExpand = maxExpand || 15000;
+    const sx = Math.round(player.x), sy = Math.round(player.y);
+    const W = g.w, H = g.h;
+    const walk = (x, y) => x >= 0 && y >= 0 && x < W && y < H && g.cells[(gatFlipY ? H - 1 - y : y) * W + x] === 0;
+    if (!walk(sx, sy) || !walk(tx, ty)) return null;
+    const idx = (x, y) => y * W + x;
+    const came = new Int32Array(W * H).fill(-1);
+    const gsc = new Float64Array(W * H).fill(Infinity);
+    const closed = new Uint8Array(W * H);
+    const heap = [];
+    const push = (f, i) => { heap.push([f, i]); let c = heap.length - 1; while (c > 0) { const p = (c - 1) >> 1; if (heap[p][0] <= heap[c][0]) break; const t = heap[p]; heap[p] = heap[c]; heap[c] = t; c = p; } };
+    const pop = () => { const top = heap[0]; const last = heap.pop(); if (heap.length) { heap[0] = last; let c = 0; for (;;) { let l = c * 2 + 1, r = l + 1, m = c; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === c) break; const t = heap[m]; heap[m] = heap[c]; heap[c] = t; c = m; } } return top; };
+    const DIRS = [[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[-1,-1,Math.SQRT2]];
+    const startI = idx(sx, sy), goalI = idx(tx, ty);
+    gsc[startI] = 0;
+    push(Math.hypot(tx - sx, ty - sy), startI);
+    let expanded = 0, found = false;
+    while (heap.length && expanded < maxExpand) {
+      const ci = pop()[1];
+      if (closed[ci]) continue;
+      closed[ci] = 1; expanded++;
+      if (ci === goalI) { found = true; break; }
+      const cx = ci % W, cy = (ci / W) | 0;
+      for (let di = 0; di < 8; di++) {
+        const dx = DIRS[di][0], dy = DIRS[di][1];
+        const nx = cx + dx, ny = cy + dy;
+        if (!walk(nx, ny)) continue;
+        if (dx && dy && (!walk(cx + dx, cy) || !walk(cx, cy + dy))) continue;
+        const ni = idx(nx, ny);
+        if (closed[ni]) continue;
+        const ng = gsc[ci] + DIRS[di][2];
+        if (ng < gsc[ni]) { gsc[ni] = ng; came[ni] = ci; push(ng + Math.hypot(tx - nx, ty - ny), ni); }
+      }
+    }
+    if (!found) return null;
+    const pts = [];
+    let cur = goalI;
+    while (cur !== -1) { pts.push({ x: cur % W, y: (cur / W) | 0 }); cur = came[cur]; }
+    pts.reverse();
+    const simp = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const p0 = simp[simp.length - 1], p1 = pts[i - 1], p2 = pts[i];
+      if ((p1.x - p0.x) * (p2.y - p1.y) - (p1.y - p0.y) * (p2.x - p1.x) !== 0) simp.push(p2);   // ทิศเปลี่ยน = จุดเลี้ยว
+    }
+    return simp;
+  }
+  // ★★ GAT wander — เดินหามอนตามพื้นที่เดินได้จริง: สุ่มเป้าใน 15-60 ช่อง → A* → เดินตามจุดเลี้ยว
+  //    ถึงเป้าแล้วเลือกใหม่ทันที (เดินต่อเนื่องเป็นธรรมชาติ) · stuck 6s / timeout 25s → เป้าใหม่
+  //    ★★ ทิศแบบคน: มุ่งทิศหลัก 8 ทิศไประยะหนึ่ง (60-150 ช่อง) แล้วค่อยเลี้ยว 45-135° (ไม่ย้อนกลับ 180°)
+  //      เหมือนกวาดพื้นที่ไปทางเดียวก่อน แล้วค่อยเปลี่ยนฝั่ง — ไม่สุ่มไปมาสับสน
+  let gatWTarget = null, gatWPath = null, gatWPathIdx = 0, gatWTargetAt = 0;
+  let gatWLastPos = null, gatWStuckSince = 0, gatWLastMoveAt = 0, gatWLogTag = '';
+  let gatWDir = null, gatWDirDist = 0;
+  function gatNewHeading() {
+    const old = gatWDir == null ? Math.floor(Math.random() * 8) : ((Math.round(gatWDir / (Math.PI / 4)) % 8) + 8) % 8;
+    const turn = [1, -1, 2, -2, 3, -3][Math.floor(Math.random() * 6)];   // เลี้ยว 45°/90°/135° — ไม่ย้อนกลับ
+    gatWDir = (((old + turn) % 8 + 8) % 8) * (Math.PI / 4);
+    gatWDirDist = 60 + Math.random() * 90;
+  }
+  function gatWanderReset() { gatWTarget = null; gatWPath = null; gatWPathIdx = 0; gatWLogTag = ''; }
+  function gatPickTarget() {
+    if (gatWDir == null || gatWDirDist <= 0) gatNewHeading();
+    for (let tries = 0; tries < 20; tries++) {
+      // 12 ครั้งแรก: กรวย ±40° รอบทิศหลัก ระยะ 25-70 ช่อง (กวาดแนว) · 8 ครั้งหลัง: สุ่มทุกทิศ (ทางตรงไปไม่ได้ → อ้อม)
+      const ang = tries < 12 ? gatWDir + (Math.random() * 2 - 1) * 0.7 : Math.random() * Math.PI * 2;
+      const r = 25 + Math.random() * 45;
+      const tx = Math.round(player.x + Math.cos(ang) * r), ty = Math.round(player.y + Math.sin(ang) * r);
+      if (!gatWalkable(tx, ty)) continue;
+      const path = gatFindPath(tx, ty);
+      if (path && path.length > 1) {
+        gatWTarget = { x: tx, y: ty }; gatWPath = path; gatWPathIdx = 0;
+        gatWTargetAt = nowMs(); gatWLogTag = '';
+        gatWDirDist -= r;
+        return true;
+      }
+    }
+    gatNewHeading();   // ทิศนี้ไปไม่ได้จริง → เปลี่ยนทิศ
+    return false;
+  }
+  function gatWanderStep(now) {
+    if (!currentMap || player.x == null || !gatCache.has(currentMap)) return false;
+    const ARRIVE = 2.5;
+    if (gatWLastPos) {
+      const pd2 = (player.x - gatWLastPos.x) * (player.x - gatWLastPos.x) + (player.y - gatWLastPos.y) * (player.y - gatWLastPos.y);
+      if (pd2 < 4 && gatWTarget) {
+        if (!gatWStuckSince) gatWStuckSince = now;
+        else if (now - gatWStuckSince > 6000) {
+          log('🗺️ GAT stuck 6s @(', Math.round(player.x), Math.round(player.y) + ') → เป้าใหม่ (จุดเลี้ยวค้าง?', gatWPathIdx + '/' + (gatWPath ? gatWPath.length : 0) + ')');
+          gatWanderReset(); gatWStuckSince = 0;
+        }
+      } else gatWStuckSince = 0;
+    }
+    gatWLastPos = { x: player.x, y: player.y };
+    if (gatWTarget) {
+      const d = Math.hypot(gatWTarget.x - player.x, gatWTarget.y - player.y);
+      // ★★ chain ล่วงหน้า — ยังไม่ถึงเป้า (เหลือ ≤10 ช่อง) ก็ต่อขาถัดไปทันที ไม่มีจังหวะหยุดยืน
+      //   timeout 25s (ติดอะไรไป) ก็ข้ามไปขาใหม่เหมือนกัน · เจอมอน = combat ตัดเข้ามาเอง
+      if (now - gatWTargetAt > 25000) log('🗺️ GAT timeout 25s @(', Math.round(player.x), Math.round(player.y) + ') เหลือระยะ', d.toFixed(0), 'ช่อง → ขาใหม่');
+      if (d <= 10 || now - gatWTargetAt > 25000) {
+        if (!gatPickTarget() && d <= ARRIVE) {
+          gatWanderReset();   // ถึงจริงแล้ว + หาทางต่อไม่ได้ → ยอมให้ fallback รอบนี้ (tick หน้าลองทิศใหม่)
+          return false;
+        }
+      }
+    }
+    if (!gatWTarget) { if (!gatPickTarget()) return false; }
+    if (now - gatWLastMoveAt < 900) return true;   // throttle การ re-issue move
+    while (gatWPathIdx < gatWPath.length - 1) {
+      const wp = gatWPath[gatWPathIdx];
+      if (Math.hypot(wp.x - player.x, wp.y - player.y) <= ARRIVE) gatWPathIdx++;
+      else break;
+    }
+    // stride ยาว: waypoint ไกลสุดที่ ≤16 ช่อง (game click cap) และเส้นตรงเดินได้ตลอด
+    let best = gatWPathIdx;
+    const maxD = MOVE_MAX_DIST;
+    for (let i = gatWPath.length - 1; i > best; i--) {
+      const wp = gatWPath[i];
+      if (Math.hypot(wp.x - player.x, wp.y - player.y) <= maxD && gatLineWalkable(player.x, player.y, wp.x, wp.y)) { best = i; break; }
+    }
+    const wp = gatWPath[best];
+    if (sendMove(wp.x, wp.y)) {
+      gatWLastMoveAt = now;
+      // ★ วินิจฉัย: ทุก stride ลง debug log (เห็นจังหวะสั่งเดินจริง ~1 วิ/ครั้ง) — log หลักเฉพาะเป้าเปลี่ยน
+      dbg('🗺️ GAT stride @(', Math.round(wp.x), Math.round(wp.y) + ') wp', best + 1 + '/' + gatWPath.length, 'player(', Math.round(player.x), Math.round(player.y) + ')');
+      const tag = Math.round(gatWTarget.x) + ',' + Math.round(gatWTarget.y);
+      if (tag !== gatWLogTag) {
+        gatWLogTag = tag;
+        log('🗺️ GAT เดินหามอน @(', Math.round(wp.x), Math.round(wp.y) + ') → เป้า(', tag + ') เส้นทาง', gatWPath.length, 'จุดเลี้ยว');
+      }
+    }
+    return true;
+  }
 
   // ============================================================
   //  NAVIGATION — บันทึกเส้นทางเดิน + สร้าง waypoint graph
@@ -6596,6 +6831,17 @@
     navRecordOff() { CFG.navRecording = false; log('🗺️ บันทึกเส้นทาง: OFF'); },
     navSetMergeRadius(r) { CFG.navMergeRadius = Math.max(1, Number(r) || 3); log('🗺️ รัศมีรวมจุด =', CFG.navMergeRadius, 'ช่อง'); },
     navToggleWander(on) { CFG.navWanderUseNav = !!on; log('🗺️ wander ใช้ nav =', CFG.navWanderUseNav); },
+    // ★ GAT — ดูสถานะตารางเดินได้ที่โหลดแล้ว + calibration แกน y
+    gatStatus() {
+      const maps = [...gatCache.entries()].map(([m, g]) => m + ' (' + g.w + '×' + g.h + ')').join(', ') || '(ยังไม่มี)';
+      let walkable = '';
+      if (currentMap && gatCache.has(currentMap)) {
+        const g = gatCache.get(currentMap);
+        let n = 0; for (let i = 0; i < g.cells.length; i++) if (g.cells[i] === 0) n++;
+        walkable = ' · แมปนี้เดินได้ ' + n + '/' + g.cells.length + ' ช่อง (' + (n / g.cells.length * 100).toFixed(0) + '%)';
+      }
+      log('🗺️ GAT:', maps, '· calibration:', gatFlipLocked ? (gatFlipY ? 'y-flip' : 'ปกติ') : 'ยังเก็บข้อมูล (' + gatCalN + '/20)', walkable);
+    },
     navGetStats(mapName) {
       const data = navLoadMap(mapName || currentMap);
       if (!data) return { maps: 0 };
@@ -7967,6 +8213,7 @@
             <div class="btns">
               <button id="__assist_navrecbtn" class="off">บันทึก: ?</button>
               <button id="__assist_navwanderbtn" class="on">เดินตาม nav</button>
+              <button id="__assist_gatwanderbtn" class="on" title="wander ใช้ตารางเดินได้จากไฟล์ .gat ของแมป (ground truth) ก่อน nav — เดินหามอนตามพื้นที่จริง ไม่ชนกำแพง (แมปที่มีข้อมูลเท่านั้น เช่น moc_fild01)">เดินตาม GAT</button>
             </div>
             <div class="field"><label>โหมดเดินตาม nav</label><select id="__assist_navmode"><option value="patrol">patrol (เดินตามลำดับ route ครบแล้วย้อนกลับ)</option><option value="graph">graph (wander สุ่มตามกราฟ)</option></select></div>
             <div class="field"><label>รัศมีรวมจุด (ช่อง) — จุดที่อยู่ใกล้กัน <= N ช่อง = รวม node เดียว</label><input type="number" id="__assist_navradius" min="1" max="20"></div>
@@ -8665,6 +8912,7 @@
     // ---- nav wires ----
     root.querySelector('#__assist_navrecbtn').addEventListener('click', () => CFG.navRecording ? ASSIST.navRecordOff() : ASSIST.navRecordOn());
     root.querySelector('#__assist_navwanderbtn').addEventListener('click', () => { CFG.navWanderUseNav = !CFG.navWanderUseNav; ASSIST.navToggleWander(CFG.navWanderUseNav); });
+    root.querySelector('#__assist_gatwanderbtn').addEventListener('click', () => { CFG.gatWanderEnabled = !(CFG.gatWanderEnabled !== false); saveConfigDebounced(); log('🗺️ GAT wander:', CFG.gatWanderEnabled !== false ? 'เปิด (เดินหามอนตามตาราง .gat)' : 'ปิด'); });
     root.querySelector('#__assist_navmode').addEventListener('change', e => { CFG.navWanderMode = e.target.value; navPatrolReset(); log('🗺️ nav mode =', CFG.navWanderMode); });
     root.querySelector('#__assist_applynav').addEventListener('click', () => {
       const r = parseInt(root.querySelector('#__assist_navradius').value, 10);
@@ -10409,6 +10657,11 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     const navRecBtn = root.querySelector('#__assist_navrecbtn');
     if (navRecBtn) { navRecBtn.textContent = 'บันทึก: ' + (CFG.navRecording ? 'ON 🔴' : 'OFF'); navRecBtn.className = CFG.navRecording ? 'on' : 'off'; }
     syncToggle('#__assist_navwanderbtn', CFG.navWanderUseNav);
+    syncToggle('#__assist_gatwanderbtn', CFG.gatWanderEnabled !== false);
+    { // ★ GAT wander status — ปุ่มบอกสถานะข้อมูลแมปปัจจุบัน (มี/ไม่มี)
+      const gb = root.querySelector('#__assist_gatwanderbtn');
+      if (gb) gb.textContent = 'เดินตาม GAT' + (currentMap && gatCache.has(currentMap) ? ' ✅' : '');
+    }
     const nm = root.querySelector('#__assist_navmode');
     if (nm && !isEditing(nm)) nm.value = CFG.navWanderMode;
     syncInput('#__assist_navradius', CFG.navMergeRadius);
