@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.183.0
+// @version      4.184.0
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,21 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.183.0';
+  const VERSION = '4.184.0';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.184.0', d: '2026-08-27', items: [
+      '🎬 แก้สกิลร่ายเวลา (นักเวทย์/นักบวช) ยิงทับกันจนบางตัวไม่ติด — ระบบ Cast Lock + เรียงคิวการร่าย',
+      '   พบ protocol ใหม่จาก capture: 0x18 = "เริ่มร่าย" (แนบเวลาร่ายจริง! Cold Lv5=1.44s, Fireball=0.82s)',
+      '   · 0x19 = เริ่มร่ายสกิลพื้น (Thunderstorm Lv5=2.11s) · 0x1d/0x0b = ร่ายเสร็จ+ดาเมจ → ปลดล็อกทันที',
+      '   ★ เรียนรู้เวลาร่ายรายสกิลจาก server แล้วบังคับคิวด้วยเวลา (persist ข้าม session)',
+      '     เคสจริง: Cold Bolt โดนยิงกลางการร่าย Fire Bolt → server ทิ้งเงียบ — SP ไม่หัก ไม่มีดาเมจ',
+      '   ไม่ต้องเซ็ต cooldown เยื้องกันเองแล้ว — สกิลหมุนเวียนครบทุกตัวตามเวลาร่ายจริง',
+      '🔧 แก้โหมดเวทย์ยืนเฉย: สกิลไม่ได้ตั้ง maxDistance → เดินเข้าถึง 9 ช่อง (ระยะเวทย์ทั่วไป) แทนยืนไกล ๆ',
+      '   และสกิลพื้นที่ (Thunderstorm ฯลฯ) ที่ตั้งโหมดผิดเป็น AoE → แก้ให้ส่งพิกัดมอนอัตโนมัติ',
+      '   (เคสจริง: ร่ายเสร็จ SP หมดแต่ไม่มีดาเมจ เพราะส่ง [1d][05] self แทน [1d][04] พื้น)',
+      '   log ตอนใช้สกิลแยกชัด: (พื้น) / (AoE รอบตัว) · debug: 📤 sendSkill บอกรูปแบบที่ส่งจริง',
+    ]},
     { v: '4.183.0', d: '2026-08-25', items: [
       '🗺️✨ ใหม่! GAT wander — เดินหามอนตาม "ตารางเดินได้" จากไฟล์ .gat ของแมป (ground truth จาก server)',
       '   อ่านค่า type ต่อช่อง (0=เดินได้) → สุ่มเป้า 25-70 ช่องในพื้นที่เดินได้ → หาทางด้วย A* → เดินตามจุดเลี้ยว',
@@ -3609,7 +3621,8 @@
       attacker = u32(u, 1); victimId = u32(u, 5);
       damage = u.length >= 21 ? u32(u, 17) : 0;   // damage optional (offset 17 ถ้ามี)
       // ★ markCombat เมื่อเราเป็นคนตี (ย้ายมาจาก handler เก่าบรรทัด 931)
-      if (u32(u, 1) === playerId) markCombat();
+      // ★★ attacker=เรา = ผลการร่าย/โจมตีออกมาแล้ว (รวม AoE สกิลพื้น เช่น Thunderstorm) → ปลดล็อก cast
+      if (u32(u, 1) === playerId) { markCombat(); castingUntil = 0; castingSkillId = null; }
       const now = nowMs();
       // ★★★ SUPER DEBUG — log ทุก 0x0b packet (ทุก 2s) เพื่อยืนยันว่า handler ทำงาน
       if (now - (lastDamageDebugAt || 0) > 2000) {
@@ -3805,15 +3818,50 @@
     //   ★ mirror world.js:988-1004 — aggro tracking (dstId=player)
     //   ★★ ไม่อัปเดต x/y (offset ไม่แน่นอน → เคยทำให้ตำแหน่งมอนเสีย → dist กระโดด)
     //      ตำแหน่งมอนอัปเดตจาก 0x07 MOVE / 0x06 SPAWN / 0x14 ENTITY_POS เท่านั้น
+    //   ★★★ srcId=เรา = "เริ่มร่าย" (cast start) — ถอดจาก capture: [skillId:1][level:1]@9-10 + castTime f32@16
+    //      (Cold Bolt Lv5=1.437s, Fireball Lv5=0.819s) → ต่ออายุ castingUntil ให้ตรงเวลาร่ายจริงของ server
     else if (op === 0x18 && u.length >= 11 && playerId != null) {
       const srcId = u32(u, 1), dstId = u32(u, 5);
       if (dstId === playerId) { monsterAggro.set(srcId, nowMs()); markCombat(); }
+      // ★ srcId=เรา = เริ่มร่าย — ต่ออายุ castingUntil ด้วยเวลาร่ายจริงจาก server
+      if (srcId === playerId && u.length >= 20) {
+        const ct = f32(u, 16);
+        if (ct > 0 && ct < 30) {
+          castingSkillId = u[9];
+          castingUntil = nowMs() + ct * 1000 + 300;
+          // ★ เรียนรู้เวลาร่าย (persist) — server บอกค่าปัจจุบันทุกครั้ง: DEX เพิ่ม/ใส่ของ/อัปเลเวลสกิล → อัปเดตเองทันที
+          if (castTimes.get(u[9]) !== ct) {
+            const _old = castTimes.get(u[9]);
+            castTimes.set(u[9], ct); saveCastTimes();
+            if (_old != null) log('🎬 เวลาร่ายเปลี่ยน: skill', u[9], _old.toFixed(2) + 's → ' + ct.toFixed(2) + 's (stat/อุปกรณ์/เลเวลสกิลเปลี่ยน?)');
+          }
+          dbg('🎬 เริ่มร่าย skill', u[9], 'Lv' + u[10], ct.toFixed(2) + 's → บล็อกสกิลถึง ' + (castingUntil - nowMs()) + 'ms');
+        }
+      }
+    }
+    // 0x19 CAST_START (ground): [19][srcId:4][x:2][y:2][skillId:1][level:1]...[castTime f32@17] — Thunderstorm เริ่มร่าย
+    else if (op === 0x19 && u.length >= 18 && playerId != null) {
+      if (u32(u, 1) === playerId) {
+        const ct = f32(u, 17);
+        if (ct > 0 && ct < 30) {
+          castingSkillId = u[9];
+          castingUntil = nowMs() + ct * 1000 + 300;
+          if (castTimes.get(u[9]) !== ct) {
+            const _old = castTimes.get(u[9]);
+            castTimes.set(u[9], ct); saveCastTimes();
+            if (_old != null) log('🎬 เวลาร่ายเปลี่ยน: skill', u[9], _old.toFixed(2) + 's → ' + ct.toFixed(2) + 's (stat/อุปกรณ์/เลเวลสกิลเปลี่ยน?)');
+          }
+          dbg('🎬 เริ่มร่าย (พื้น) skill', u[9], 'Lv' + u[10], ct.toFixed(2) + 's');
+        }
+      }
     }
     // 0x1d SKILL (IN): [1d][sub:1][srcId:4][dstId:4]... → antiKS
     //   ★ mirror world.js:234-246 — antiKS: player อื่น cast skill ใส่มอน
     //   ★★ ไม่อัปเดต x/y (offset ไม่แน่นอน — เหมือน 0x18)
     else if (op === 0x1d && u.length >= 10 && playerId != null) {
       const srcId = u32(u, 2), dstId = u32(u, 6);
+      // ★ srcId=เรา = ร่ายเสร็จ + ดาเมจออกแล้ว → ปลดล็อกสกิลถัดไปได้ทันที (ไม่ต้องรอ margin)
+      if (srcId === playerId) { castingUntil = 0; castingSkillId = null; }
       if (srcId !== playerId && dstId !== playerId && dstId !== 0) {
         const m = entities.get(dstId);
         if (m && m.kind === 1) m._lastEngagedByOtherAt = nowMs();
@@ -4641,6 +4689,13 @@
       b[4] = level & 0xff;
       activeWS.send(b);
     }
+    // ★ cast lock: ใช้เวลาร่ายที่เรียนรู้จาก server (0x18/0x19) — ยังไม่รู้ = provisional สั้น (สกิล instant)
+    //   สกิล instant → completion (0x1d/0x0b) มาปลดล็อกเองเร็ว ๆ / เวลาร่ายจริงจะยืดให้เองเมื่อ 0x18 มาถึง
+    lastSkillSentAt = nowMs();
+    lastSkillCastMs = (castTimes.get(skillId) || 0.3) * 1000 + 300;
+    castingUntil = nowMs() + lastSkillCastMs;
+    castingSkillId = skillId;
+    dbg('📤 sendSkill id', skillId, 'Lv', level, targetId != null ? '→ target ' + targetId.toString(16) : (groundX != null ? '→ พื้น (' + groundX + ',' + groundY + ')' : '→ self/AoE'));
     return true;
   }
   // ★★ ระยะร่ายสกิล — ใช้ตอนปิดตีปกติ (โหมดเวทย์): เดินเข้าหามอนแค่พอระยะนี้ ไม่เข้าปะทะ
@@ -4664,6 +4719,21 @@
   const skillUsesOnTarget = new Map();   // skillId → Map<targetId, count> (maxUsesPerTarget)
   const buffTargetUse = new Map();       // skillId → Map<playerId, lastAt> — delay บัพซ้ำต่อคน (buffMode)
   let buffSpResting = false;             // ★ hysteresis: SP% ต่ำ → พักบัพทั้งหมด จน SP ฟื้นถึง restUntilPercent ค่อยกลับมา
+  // ★★ CAST TRACKING — จับการร่ายจริงจาก server (ถอดจาก capture: Fire/Cold/Lightning Bolt, Fireball, Thunderstorm)
+  //   เริ่มร่าย targeted: 0x18 IN srcId=เรา · เริ่มร่าย ground: 0x19 IN srcId=เรา · เสร็จ: 0x1d IN srcId=เรา / 0x0b attacker=เรา
+  //   ระหว่างร่าย → ห้ามยิงสกิลใหม่ทับ (เดิมยิงรัวจนบางตัวไม่ติด เสีย cooldown เปล่า)
+  let castingUntil = 0;        // timestamp ที่คาดว่าร่ายเสร็จ (castTime จริง + margin 300ms)
+  let castingSkillId = null;   // skillId ที่กำลังร่าย (debug)
+  const groundModeFixWarned = new Set();   // ★ skillId ที่เตือน "โหมดพื้นถูกแก้ให้" แล้ว (กัน log ซ้ำ)
+  // ★★ เรียงคิวสกิลด้วยเวลาร่ายที่ "เรียนรู้" จาก server — 0x18/0x19 บอก castTime ทุกครั้งที่ร่าย
+  //   เคสจริง: สกิลกลางคิว (Cold Bolt) ถูกยิงกลางการร่ายตัวก่อนหน้า → server ทิ้งเงียบ
+  //   (log บอก "ใช้สกิล" แต่ SP ไม่ถูกหัก ไม่มีดาเมจ) → บังคับช่วงห่างตามเวลาร่ายจริง + persist ข้าม session
+  let lastSkillSentAt = 0, lastSkillCastMs = 0;
+  const castTimes = new Map();          // skillId → castTime (วินาที) — เรียนรู้จาก 0x18/0x19
+  const CAST_TIMES_KEY = 'roAssistCastTimes_v1';
+  function loadCastTimes() { try { const o = JSON.parse(localStorage.getItem(CAST_TIMES_KEY) || '{}'); for (const k of Object.keys(o)) castTimes.set(Number(k), Number(o[k]) || 0); } catch (e) {} }
+  function saveCastTimes() { try { const o = {}; for (const [k, v] of castTimes) o[k] = v; localStorage.setItem(CAST_TIMES_KEY, JSON.stringify(o)); } catch (e) {} }
+  loadCastTimes();
   // persist skill times ข้าม session
   const SKILL_TIMES_KEY = 'roAssistSkillTimes_v1';
   function loadSkillTimes() {
@@ -5484,6 +5554,15 @@
     //   mirror bot.js _maybeSkill:3440-3538 — ทีละสกิลต่อ tick
     //   mode: targeted (Bash/Charge), AoE (Magnum), self-cast (Quicken/Heal ตัวเอง)
     //   ★★ ไม่บังคับต้องมี target อีกแล้ว — สกิล self-cast (เช่น Heal เมื่อ HP ต่ำ) ใช้ได้แม้ยืนเฉย ๆ
+    //   ★★★ กำลังร่าย (castingUntil จาก 0x18/0x19 + castTime จริงของ server) → รอให้จบก่อน
+    //       แก้: หลายสกิลพร้อมกันเดิมยิงทับกันระหว่างร่าย → ตัวที่โดนทับไม่ติด เสีย cooldown เปล่า สกิลท้ายลิสต์ไม่มีทางได้ใช้
+    if (now < castingUntil) return;   // รอร่ายจบ — completion (0x1d/0x0b) จะปลดล็อกเอง
+    // ★★ คิวตามเวลา (กัน completion ปลด lock กลางคัน): ห่างจากสกิลล่าสุดไม่น้อยกว่าเวลาร่ายที่เรียนรู้ + margin
+    //   เคสจริง: Cold Bolt โดนยิงกลางการร่าย Fire Bolt → server ทิ้งเงียบ (SP ไม่หัก ไม่มีดาเมจ)
+    if (lastSkillSentAt && now - lastSkillSentAt < lastSkillCastMs) {
+      dbg('🎬 รอคิวร่าย — เพิ่งส่งสกิล ' + (now - lastSkillSentAt) + '/' + lastSkillCastMs + 'ms');
+      return;
+    }
     if (CFG.skillEnabled && CFG.skills && CFG.skills.length) {
       const mobCount = getMobAttackerCount();
       const curSP = sp.cur;
@@ -5536,10 +5615,21 @@
         }
         // ★ ผ่านเงื่อนไข → ใช้สกิล!
         //   ally → targetId = ตัวเราเอง (สกิล Ally ใช้กับตัวเอง: Heal/Blessing/Kyrie ฯลฯ)
+        // ★★ แก้สกิลพื้นที่ที่ถูกตั้งโหมดผิดเป็น "AoE รอบตัว" (preset บอกชัดว่าเป็น ground เช่น Thunderstorm)
+        //   ส่ง [1d][05] แทน [1d][04] → server รับ cast + หัก SP แต่ไม่มีพื้นที่เป้าหมาย = ไม่มีดาเมจ (เคสจริง)
+        let skillGround = !!skill.ground;
+        if (!skillGround && !skill.targeted && !skill.selfCast && !skill.ally && target
+            && GROUND_SKILL_IDS.has(skill.skillId)) {
+          skillGround = true;
+          if (!groundModeFixWarned.has(skill.skillId)) {
+            groundModeFixWarned.add(skill.skillId);
+            log('🔧 สกิล', skill.name || ('id=' + skill.skillId), 'เป็นแบบพื้นที่ (ตาม preset) → ส่งพิกัดมอนเป้าหมายให้ แทนโหมด AoE รอบตัว (แก้: ร่ายเสร็จ SP หมดแต่ไม่มีดาเมจ)');
+          }
+        }
         const skillTarget = skill.ally ? playerId : ((skill.targeted && !skill.selfCast && !skill.ground) ? target.id : null);
-        // ★ ground-targeted (Arrow Shower): ส่งพิกัดของมอนเป้าหมาย
+        // ★ ground-targeted (Arrow Shower/Thunderstorm): ส่งพิกัดของมอนเป้าหมาย
         let groundX = null, groundY = null;
-        if (skill.ground && target) {
+        if (skillGround && target) {
           const tm = entities.get(target.id);
           if (tm && tm.x != null) { groundX = Math.round(tm.x); groundY = Math.round(tm.y); }
         }
@@ -5552,7 +5642,7 @@
             skillUsesOnTarget.set(skill.skillId, tu);
           }
           const spInfo = curSP != null ? (curSPmax ? ` ${curSP}/${curSPmax}` : ` ${curSP}`) : ' ?';
-          const modeTag = skill.ally ? ' (ally→ตัวเอง)' : (skill.selfCast ? ' (self)' : (skill.targeted ? '' : ' (AoE)'));
+          const modeTag = skill.ally ? ' (ally→ตัวเอง)' : (skill.selfCast ? ' (self)' : (skill.targeted ? '' : (skillGround ? ' (พื้น)' : ' (AoE รอบตัว)')));
           log('✨ ใช้สกิล', skill.name || ('id=' + skill.skillId), modeTag, '(sp' + spInfo + ' mob=' + mobCount + ')');
           break;   // ทีละสกิลต่อ tick
         }
@@ -5570,7 +5660,9 @@
         const dist = Math.hypot(m.x - player.x, m.y - player.y);
         target.lastDist = dist;
         const _skillOnly = CFG.normalAttackEnabled === false;
-        const _engageRange = _skillOnly ? (getCastRange() || CFG.maxAcquireDistance) : CFG.maxAcquireDistance;
+        // ★ fallback ระยะร่าย: สกิลที่ตั้งไว้ไม่มี maxDistance เลย → เข้าใกล้ถึง 9 ช่อง (ระยะเวทย์ทั่วไป)
+        //   เดิมใช้ maxAcquireDistance (15-30) = ยืนห่างเฉย ๆ ทั้งที่สกิลยิงไม่ถึง (เคสจริง: ยืน 43s ไม่ทำอะไร)
+        const _engageRange = _skillOnly ? (getCastRange() || Math.min(CFG.maxAcquireDistance, 9)) : CFG.maxAcquireDistance;
         // ในระยะ acquire → ส่ง ATTACK ตรงๆ (server เดินเข้าไปตีเอง)
         if (dist <= _engageRange) {
           // ★★ โหมดเวทย์: ยืนระยะร่าย — ไม่ส่งตีปกติ ไม่วาร์ปหามอน (pending ไม่มีความหมาย)
@@ -7364,6 +7456,9 @@
     { name: "Power Thrust", skillId: 141, level: 5, selfCast: true, intervalMin: 4, spMin: 18, cooldownMs: 2000, job: "Blacksmith", desc: "ตัวเอง · SP 18/16/14/12/10 · ยังไม่ทดสอบ" },
     { name: "Maximize Power", skillId: 142, level: 5, selfCast: true, intervalMin: 4, spMin: 10, cooldownMs: 2000, job: "Blacksmith", desc: "ตัวเอง · SP 10/10/10/10/10 · ยังไม่ทดสอบ" },
   ];
+  // ★★ สกิลที่ preset ระบุว่าเป็น "พื้นที่" (ground) — ใช้กันผู้ใช้ตั้งโหมดผิด (เคสจริง: Thunderstorm ตั้งเป็น
+  //   AoE รอบตัว → ส่ง [1d][05] แทน [1d][04] → server รับ cast + หัก SP แต่ไม่มีพื้นที่เป้าหมาย = ไม่มีดาเมจ)
+  const GROUND_SKILL_IDS = new Set(SKILL_PRESETS.filter(p => p.ground).map(p => p.skillId));
   function skillPresetGroups() {
     const groups = {};
     for (const s of SKILL_PRESETS) { (groups[s.job] = groups[s.job] || []).push(s); }
