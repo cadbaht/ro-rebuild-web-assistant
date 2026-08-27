@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.186.0
+// @version      4.186.1
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.186.0';
+  const VERSION = '4.186.1';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.186.1', d: '2026-08-27', items: [
+      '🚑 แก้ regression บน rayrag (จาก 4.185.0): แถบ HP ไม่ตรับตัวละคร → ปั้มยารัวจนหมด',
+      '   สาเหตุ: ตัวเรียนรู้ statType ของ HP เดิมเรียนจาก "ค่าไม่เต็มตัวแรก" ที่เจอ — SP ไม่เต็มมาก่อน',
+      '   → HP ถูกแทนที่ด้วยค่า SP → ตกต่ำตลอด → heal ปั้มยาไม่หยุด',
+      '   ตอนนี้: เรียนรู้เฉพาะเมื่อ max ตรง anchor (hp.max จาก SPAWN) เท่านั้น · max ตรง sp.max = SP',
+    ]},
     { v: '4.186.0', d: '2026-08-27', items: [
       '💬 ใหม่! บัพตามคำขอ — ตั้ง "ต้องแชทคำขอ" ต่อสกิลบัพ (Sub-tab Skills)',
       '   ผู้เล่นต้องพิ่งแชทข้อความที่มีคำนั้นมาก่อน (ภายใน 60 วิ · ไม่สนตัวพิมพ์ · contains)',
@@ -2547,22 +2553,32 @@
       const cur = u32(u, 9), m = u32(u, 13);
       // ★★ statType routing (gfix-ro ส่งหลาย stat ใน 0x25 — เดิมเขียนทับ HP หมด):
       //   · รู้ type ของ HP แล้ว → ใช้ type นั้นเท่านั้น
-      //   · max ตรง sp.max (จาก 0x27) → เป็น SP → บันทึกเป็น SP
-      //   · ยังไม่รู้ type → เรียนรู้เฉพาะค่า "ไม่เต็ม" (SP มักค้างค่าเต็ม/คงที่ — กันฉกตำแหน่ง HP)
+      //   · ยังไม่รู้ type → เรียนรู้เฉพาะเมื่อ "max ตรง anchor" เท่านั้น:
+      //     - max ตรง sp.max (จาก 0x27) → เป็น SP → เก็บเป็น SP
+      //     - max ตรง hp.max (จาก SPAWN) + ค่าไม่เต็ม → เป็น HP → เรียนรู้
+      //   ★★★ regression ที่เจอจริงบน rayrag: เดิมเรียนจาก "ค่าไม่เต็มตัวแรก" ไม่มี anchor
+      //     → SP ไม่เต็ม (เกิดบ่อยกว่า) มาก่อน → HP ถูกแทนที่ด้วยค่า SP → แถบ HP ผิด → ปั้มยาจนหมด
       if (id === playerId && m > 0 && cur >= 0 && cur <= m) {
+        const hpKnown = hp.max != null && hp.max > 0;
+        const spKnown = sp.max != null && sp.max > 0;
         if (hpStatType != null) {
           if (st === hpStatType) applyStat(id, cur, m);
-          else if (sp.max > 0 && m === sp.max) { sp.cur = cur; }
+          else if (spKnown && m === sp.max) { sp.cur = cur; }
           else if (!statRouteLogged.has(st)) { statRouteLogged.add(st); dbg('ℹ️ 0x25 statType', st, '=', cur + '/' + m, '≠ HP (type', hpStatType + ') → ข้าม'); }
-        } else if (sp.max > 0 && m === sp.max && hp.cur != null && cur === m && hp.cur < hp.max) {
-          sp.cur = cur;   // หน้าตาเป็น SP เต็มขณะ HP ไม่เต็ม → SP แน่
-        } else if (cur < m || hp.cur == null) {
+        } else if (spKnown && m === sp.max && !(hpKnown && m === hp.max)) {
+          sp.cur = cur;   // max ตรง SP → เป็น SP (ไม่แตะ HP)
+        } else if (hpKnown && m === hp.max && (cur < m || hp.cur == null)) {
           hpStatType = st;
           applyStat(id, cur, m);
-          dbg('🧬 เรียนรู้ statType ของ HP =', st, '(' + cur + '/' + m + ')');
-        } else if (!statRouteLogged.has('full' + st)) {
-          statRouteLogged.add('full' + st);
-          dbg('⏳ 0x25 statType', st, 'เต็ม (' + cur + '/' + m + ') — รอค่าไม่เต็มก่อนยืนยันว่าเป็น HP');
+          dbg('🧬 เรียนรู้ statType ของ HP =', st, '(' + cur + '/' + m + ' · anchor hp.max=' + hp.max + ')');
+        } else if (!hpKnown && !spKnown && cur < m) {
+          // ไม่มี anchor เลย (ไม่เคยได้ SPAWN/0x27) — ยอมเรียนจากค่าไม่เต็ม (ทางเลือกสุดท้าย)
+          hpStatType = st;
+          applyStat(id, cur, m);
+          dbg('🧬 เรียนรู้ statType ของ HP =', st, '(' + cur + '/' + m + ' · ไม่มี anchor)');
+        } else if (!statRouteLogged.has('w' + st)) {
+          statRouteLogged.add('w' + st);
+          dbg('⏳ 0x25 statType', st, '=', cur + '/' + m, 'รอ anchor (hp.max=' + (hpKnown ? hp.max : '?') + ', sp.max=' + (spKnown ? sp.max : '?') + ')');
         }
       }
     }
