@@ -2602,5 +2602,33 @@
       "scaleY": -0.9657008947592671,
       "offsetY": 381.5279079676182
     }
+  },
+  "moc_fild12": {
+    "points": [
+      {
+        "tileX": 62,
+        "tileY": 175,
+        "pixelX": 78,
+        "pixelY": 208
+      },
+      {
+        "tileX": 112,
+        "tileY": 254,
+        "pixelX": 138,
+        "pixelY": 135
+      },
+      {
+        "tileX": 234,
+        "tileY": 329,
+        "pixelX": 274,
+        "pixelY": 64
+      }
+    ],
+    "transform": {
+      "scaleX": 1.1349003576903423,
+      "offsetX": 8.986884687446794,
+      "scaleY": -0.9349671182058344,
+      "offsetY": 371.9016918666742
+    }
   }
 }
