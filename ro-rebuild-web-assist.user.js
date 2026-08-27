@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.184.0
+// @version      4.185.0
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,21 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.184.0';
+  const VERSION = '4.185.0';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.185.0', d: '2026-08-27', items: [
+      '🩺 แก้ HP ? / ตายผิดปกติบน server gfix-ro — สามสาเหตุจากการวิเคราะห์ packet capture:',
+      '   1. ตำแหน่งดาเมจใน 0x0b ต่างกัน: rayrag @17 / gfix @18 → อ่านผิด = ดาเมจ×256 (โดน 19 กลายเป็น 4864!)',
+      '      → เรียนรู้ offset อัตโนมัติจากคู่ 0x17 + จำต่อ hostname (calibrate เสร็จใน ~2 วิแรก)',
+      '   2. นับดาเมจซ้ำ: gfix ส่งการตีเดียวกันทั้ง 0x0b และ 0x17 (ดาเมจเท่ากัน ห่าง ~0.5s) →',
+      '      HP ไหลเร็ว 2 เท่า จนชน 0 → ถูก reset เป็น "?" → heal ไม่ทำงาน → ตาย (ทั้ง HP เราและ HP มอน)',
+      '      → ตอนนี้นับครั้งเดียว (เทียบ victim+ดาเมจภายใน 900ms — rayrag ส่งอย่างเดียว ไม่มีผล)',
+      '   2. 0x25 STAT หลาย stat ปนกัน (gfix: type 5=HP, 32=ค่าอื่น/SP) เดิมเขียนทับ HP หมด',
+      '      → เรียนรู้ type ของ HP จริงจากค่าที่ไม่เต็ม + max ตรง sp.max ถือเป็น SP ไปเก็บที่ SP แทน',
+      '🗺️ แก้ toggle "วาร์ปกลับอัตโนมัติ" — ลูป retry "ยังอยู่แมปผิด" ไม่เคยเช็ค toggle',
+      '   (ปิดแล้วยังโดนดึงกลับเมื่อตาย respawn เมือง/หนีเปลี่ยนแมป) → ปิดได้จริง ฟาร์มแมปที่ไปติดได้',
+    ]},
     { v: '4.184.0', d: '2026-08-27', items: [
       '🎬 แก้สกิลร่ายเวลา (นักเวทย์/นักบวช) ยิงทับกันจนบางตัวไม่ติด — ระบบ Cast Lock + เรียงคิวการร่าย',
       '   พบ protocol ใหม่จาก capture: 0x18 = "เริ่มร่าย" (แนบเวลาร่ายจริง! Cold Lv5=1.44s, Fireball=0.82s)',
@@ -1732,7 +1744,43 @@
   //    (ก่อนหน้านี้ใช้เทคนิค "เก็บ max สูงสุด" → ผิด! ถ้า server ส่ง sub-stat ที่ max=6774 → ทับ hp.max
   //     → แสดง 549/6774 ทั้งที่ HP จริง 408)
   const hp = { cur: null, max: null };
+  let hpStatAt = 0;   // ★ timestamp ที่ server ส่งค่า HP มาล่าสุด (0x25/SPAWN เท่านั้น — ไม่รวม local ดาเมจ)
+                      //   ใช้คู่กับ heal: กันตัดสิน "ยาหมด" ตอน HP ค้างเพราะ server ยังไม่ส่งค่าใหม่ (gfix ส่งช้า)
   const sp = { cur: null, max: null };   // ★ SP สำหรับ autoSkill — ตรวจ spMin
+  // ★★ 0x25 STAT routing — server บางตัว (gfix-ro) ใช้ 0x25 ส่งหลาย stat ปนกัน (เช่น type 5=HP, 32=SP/อื่น)
+  //   เดิมเขียนทุก stat ลง HP หมด → HP โดนทับด้วยค่าแปลก (ค้างเต็ม/เพี้ยน) → เรียนรู้ type ของ HP จากค่าที่ "ไม่เต็ม"
+  let hpStatType = null;
+  const statRouteLogged = new Set();
+  // ★★ กันนับดาเมจซ้ำ — server บางตัว (gfix-ro) ส่งการตีเดียวกันทั้ง 0x0b และ 0x17 (ดาเมจเท่ากัน ห่าง ~0.5s)
+  //   นับซ้ำ = HP ไหลเร็ว 2 เท่า → ชน 0 → ถูก reset เป็น null ("HP ?") → heal ไม่ทำงาน → ตาย
+  //   key = victim + ดาเมจเท่ากัน ภายใน 900ms (rayrag ส่งอย่างเดียว → ไม่มีผลอะไร)
+  const recentDmgApplied = new Map();   // victimId → { dmg, at }
+  function dmgAlreadyApplied(victimId, damage) {
+    const r = recentDmgApplied.get(victimId);
+    const now = nowMs();
+    if (r && r.dmg === damage && now - r.at < 900) return true;   // ซ้ำ (0x0b/0x17 คู่เดียวกัน)
+    recentDmgApplied.set(victimId, { dmg: damage, at: now });
+    return false;
+  }
+  // ★★ 0x0b damage offset — rayrag ใส่ damage @17 / gfix-ro @18 (ต่างกัน 1 byte — เคสจริง: gfix อ่าน @17 ได้ 4864 แทนที่จะเป็น 19 = ×256)
+  //   เรียนรู้อัตโนมัติจากคู่ 0x17 ที่ส่งดาเมจจริงตามหลัง + persist ต่อ hostname (ข้าม session ไม่ต้องเรียนใหม่)
+  const OB_DMG_KEY = 'roAssistObDmg_' + (location.hostname || 'x');
+  let obDmgAt = 17;
+  try { const _v = parseInt(localStorage.getItem(OB_DMG_KEY) || '', 10); if (_v === 17 || _v === 18) obDmgAt = _v; } catch (e) {}
+  const last0bDmg = new Map();   // victimId → { d17, d18, at } — เก็บไว้ให้ 0x17 ที่มาทีหลังเทียบ calibrate
+  function obDmgCalibrate(victimId, trueDamage) {
+    const r = last0bDmg.get(victimId);
+    if (!r || nowMs() - r.at > 1500) return;
+    if (r.d17 === trueDamage && r.d18 !== trueDamage && obDmgAt !== 17) {
+      obDmgAt = 17;
+      try { localStorage.setItem(OB_DMG_KEY, '17'); } catch (e) {}
+      log('🔧 0x0b damage offset → 17 (ยืนยันจากคู่ 0x17 — server', location.hostname + ')');
+    } else if (r.d18 === trueDamage && r.d17 !== trueDamage && obDmgAt !== 18) {
+      obDmgAt = 18;
+      try { localStorage.setItem(OB_DMG_KEY, '18'); } catch (e) {}
+      log('🔧 0x0b damage offset → 18 (ยืนยันจากคู่ 0x17 — server', location.hostname + ')');
+    }
+  }
   function applyStat(id, cur, m) {
     if (id !== playerId) return;
     if (!(m > 0) || cur < 0 || cur > m) return;          // sanity check
@@ -1750,6 +1798,7 @@
     }
     hp.cur = cur;
     hp.max = m;
+    hpStatAt = now;
   }
   const hpPct = () => (hp.cur != null && hp.max > 0) ? (hp.cur / hp.max) * 100 : null;
   const spPct = () => (sp.cur != null && sp.max > 0) ? (sp.cur / sp.max) * 100 : null;
@@ -1829,19 +1878,26 @@
     if (isDead) return;                                   // ★ ตายอยู่ → ห้าม heal
     if (isResting) return;                                // ★ กำลังนั่งพัก → ข้าม heal (ใช้ regen แทน ประหยัดยา)
 
-    // ★ เช็คผลของ item ที่ใช้ครั้งก่อน (background — ไม่บล็อกการใช้ตัวถัดไป)
-    //   ถ้า HP ไม่ขยับ = หมด → mark exhausted (pickNext จะข้ามเอง)
-    //   แต่ไม่ return — ให้ด้านล่างใช้ยาตัวถัดไปได้เลยถ้า HP ยังต่ำ + ผ่าน delay
+    // ★ เช็คผลของ item ที่ใช้ครั้งก่อน — สรุปได้ก็ต่อเมื่อ "server ส่งค่า HP ใหม่มาแล้ว" เท่านั้น
+    //   ★★ กันกดยารัว (เคส gfix): server ส่ง 0x25 HP ช้า/เฉพาะตอนโดนดาเมจ → HP ค้างที่ค่าเดิม
+    //      เดิมตีความ "HP ไม่ขยับ = ยาหมด" ทันที → ไล่ mark ทุกขวดว่าหมด + ใช้ยาต่อเนื่องจนของหมดตะหงาด
     if (heal.pendingItemId != null && heal.pendingHpBefore != null &&
         now - heal.pendingCheckAt >= CFG.healItemEffectCheckMs) {
-      if (hp.cur <= heal.pendingHpBefore + 1) {
-        log('💊', nameOf(heal.pendingItemId), 'หมด (ใช้แล้ว HP ไม่ขยับ) → ใช้ตัวถัดไป');
-        heal.markExhausted(heal.pendingItemId, now);
-        heal.lastUseAt = 0;                              // ข้าม delay ให้ใช้ตัวถัดไปทันที
+      if (hp.cur > heal.pendingHpBefore + 1) {
+        // ★ ยาได้ผล — HP เพิ่มขึ้น
+        heal.pendingItemId = null; heal.pendingHpBefore = null; heal.pendingCheckAt = 0;
+      } else if (hpStatAt >= heal.pendingCheckAt || now - heal.pendingCheckAt > 5000) {
+        // ★ มี HP ใหม่จาก server แล้วแต่ไม่ขยับ (= ยาหมดจริง) หรือรอเกิน 5 วิ (ยอมแพ้ — เคลียร์ pending ไปรอบหน้า)
+        if (hpStatAt >= heal.pendingCheckAt) {
+          log('💊', nameOf(heal.pendingItemId), 'หมด (ใช้แล้ว HP ไม่ขยับ) → ใช้ตัวถัดไป');
+          heal.markExhausted(heal.pendingItemId, now);
+          heal.lastUseAt = 0;                            // ข้าม delay ให้ใช้ตัวถัดไปทันที
+        }
+        heal.pendingItemId = null; heal.pendingHpBefore = null; heal.pendingCheckAt = 0;
+      } else {
+        // ★★ ยังไม่มี HP ใหม่จาก server เลย — จบรอบนี้: ห้ามสรุปว่ายาหมด ห้ามใช้ตัวถัดไป (รอบหน้าค่อยเช็คอีก)
+        return;
       }
-      heal.pendingItemId = null;
-      heal.pendingHpBefore = null;
-      heal.pendingCheckAt = 0;
     }
 
     // เงื่อนไขการใช้ยา — ใช้ได้เลยถ้า HP ยังต่ำ + ผ่าน delay (ไม่ต้องรอ pending เคลียร์)
@@ -2445,8 +2501,28 @@
     //      playerId ต้องมาจาก SELECT_CHAR(0x03) หรือ SPAWN(flag=1) เท่านั้น
     if (op === 0x25 && u.length >= 18) {
       const id = u32(u, 1);
+      const st = u32(u, 5);
       const cur = u32(u, 9), m = u32(u, 13);
-      applyStat(id, cur, m);
+      // ★★ statType routing (gfix-ro ส่งหลาย stat ใน 0x25 — เดิมเขียนทับ HP หมด):
+      //   · รู้ type ของ HP แล้ว → ใช้ type นั้นเท่านั้น
+      //   · max ตรง sp.max (จาก 0x27) → เป็น SP → บันทึกเป็น SP
+      //   · ยังไม่รู้ type → เรียนรู้เฉพาะค่า "ไม่เต็ม" (SP มักค้างค่าเต็ม/คงที่ — กันฉกตำแหน่ง HP)
+      if (id === playerId && m > 0 && cur >= 0 && cur <= m) {
+        if (hpStatType != null) {
+          if (st === hpStatType) applyStat(id, cur, m);
+          else if (sp.max > 0 && m === sp.max) { sp.cur = cur; }
+          else if (!statRouteLogged.has(st)) { statRouteLogged.add(st); dbg('ℹ️ 0x25 statType', st, '=', cur + '/' + m, '≠ HP (type', hpStatType + ') → ข้าม'); }
+        } else if (sp.max > 0 && m === sp.max && hp.cur != null && cur === m && hp.cur < hp.max) {
+          sp.cur = cur;   // หน้าตาเป็น SP เต็มขณะ HP ไม่เต็ม → SP แน่
+        } else if (cur < m || hp.cur == null) {
+          hpStatType = st;
+          applyStat(id, cur, m);
+          dbg('🧬 เรียนรู้ statType ของ HP =', st, '(' + cur + '/' + m + ')');
+        } else if (!statRouteLogged.has('full' + st)) {
+          statRouteLogged.add('full' + st);
+          dbg('⏳ 0x25 statType', st, 'เต็ม (' + cur + '/' + m + ') — รอค่าไม่เต็มก่อนยืนยันว่าเป็น HP');
+        }
+      }
     }
     // 0x27 SP_UPDATE: SP ปัจจุบัน + max ของ player (regen ทุก 6s)
     //   ★ mirror world.js:468-477 — STAT (0x25) ส่งแค่ HP ไม่มี SP → SP ต้องอ่านจาก 0x27 เท่านั้น
@@ -3498,7 +3574,7 @@
             // ★★ ไม่เช็ค grace — SPAWN HP ผูก id===playerId จาก packet สด = เชื่อถือได้เสมอ
             //   (grace มีไว้กัน STAT เก่าของ ID อื่นเท่านั้น — applyStat เช็ค id อยู่แล้ว)
             if (sHp != null && sHpMax != null && sHpMax > 0) {
-              hp.cur = sHp; hp.max = sHpMax;
+              hp.cur = sHp; hp.max = sHpMax; hpStatAt = nowMs();
             }
           }
           // ★★★ DEBUG: SPAWN ตัวเรา — ★ พิมพ์หลัง apply แล้ว (ยืนยันค่าจริงใน object)
@@ -3619,7 +3695,10 @@
     else if (op === 0x0b && u.length >= 9 && playerId != null) {
       let attacker, victimId, damage;
       attacker = u32(u, 1); victimId = u32(u, 5);
-      damage = u.length >= 21 ? u32(u, 17) : 0;   // damage optional (offset 17 ถ้ามี)
+      damage = u.length >= 22 ? (obDmgAt === 17 ? u32(u, 17) : u32(u, 18)) : 0;   // ★ offset ตาม server (rayrag@17 / gfix@18)
+      if (u.length >= 22) last0bDmg.set(victimId, { d17: u32(u, 17), d18: u32(u, 18), at: nowMs() });
+      // ★ gfix-ro ส่งการตีเดียวกันทั้ง 0x0b + 0x17 → นับดาเมจครั้งเดียว (mark ตรงนี้ ใช้ทั้ง monster + player)
+      const dmgDup0b = damage > 0 && dmgAlreadyApplied(victimId, damage);
       // ★ markCombat เมื่อเราเป็นคนตี (ย้ายมาจาก handler เก่าบรรทัด 931)
       // ★★ attacker=เรา = ผลการร่าย/โจมตีออกมาแล้ว (รวม AoE สกิลพื้น เช่น Thunderstorm) → ปลดล็อก cast
       if (u32(u, 1) === playerId) { markCombat(); castingUntil = 0; castingSkillId = null; }
@@ -3648,7 +3727,7 @@
         let m = entities.get(victimId);
         if (!m) { m = { id: victimId, kind: 1, alive: true }; entities.set(victimId, m); }   // สร้างถ้าไม่มี
         m._lastDamageAt = now;
-        if (damage > 0 && m.hp != null && m.hpMax != null) m.hp = Math.max(0, m.hp - damage);
+        if (damage > 0 && !dmgDup0b && m.hp != null && m.hpMax != null) m.hp = Math.max(0, m.hp - damage);
         // ★ reset pending เฉพาะ damage > 0 (mirror bot.js:343) — miss (damage=0) ไม่ reset
         if (damage > 0 && target && target.id === victimId) { target.lastAttackResultAt = now; target.pendingAttacks = 0; target.firstAttackAt = 0; stuckAbandonCount = 0; stuckAbandonHistory = []; }
         markCombat();
@@ -3727,7 +3806,7 @@
         }
         // ★★ real-time HP tracking — ลด HP ทันทีจาก damage (แก้ heal ช้า!)
         //   เดิม: รอ server ส่ง STAT (1-2 วิ) → HP ค้างที่ค่าเก่า → heal ช้า
-        if (damage > 0 && hp.cur != null && hp.max > 0) {
+        if (damage > 0 && !dmgDup0b && hp.cur != null && hp.max > 0) {
           hp.cur = Math.max(0, hp.cur - damage);
           // ★★ HP=0 แต่ไม่ตาย → tracking ผิด → reset เป็น null (รอ STAT แก้)
           //   กันนั่งพักวนลูปเพราะ HP ค้างที่ 0%
@@ -3753,11 +3832,15 @@
     else if (op === 0x17 && u.length >= 9 && playerId != null) {
       const victimId = u32(u, 1);
       const damage = u32(u, 5);
+      // ★ calibrate 0x0b offset — 0x17 มาทีหลังพร้อมดาเมจจริง → เทียบ d17/d18 ที่เพิ่งเก็บไว้
+      if (damage > 0) obDmgCalibrate(victimId, damage);
+      // ★ gfix-ro ส่งการตีเดียวกันทั้ง 0x0b + 0x17 → นับดาเมจครั้งเดียว
+      const dmgDup17 = damage > 0 && dmgAlreadyApplied(victimId, damage);
       // ★★ DEBUG: player โดนดาเมจผ่าน 0x17 → log + ★★ ลด HP ทันที!
       if (victimId === playerId) {
         const nowD = nowMs();
         // ★★ real-time HP tracking — ลด HP ทันทีจาก damage (แก้ heal ช้า!)
-        if (damage > 0 && hp.cur != null && hp.max > 0) {
+        if (damage > 0 && !dmgDup17 && hp.cur != null && hp.max > 0) {
           hp.cur = Math.max(0, hp.cur - damage);
           if (hp.cur <= 0 && !isDead) { hp.cur = null; hp.max = null; }   // tracking ผิด → reset
         }
@@ -3776,7 +3859,7 @@
         // ★★ ลด HP มอนตาม damage (server นี้ส่ง damage ผ่าน 0x17 เท่านั้น — ไม่มี 0x0b)
         //   ต่างจากบอทหลักที่ไม่ลดใน 0x17 เพราะกัน double-count กับ 0x0b
         //   แต่ server rayrag ส่งแค่ 0x17 → ต้องลดที่นี่
-        if (damage > 0 && m.hp != null && m.hpMax != null) {
+        if (damage > 0 && !dmgDup17 && m.hp != null && m.hpMax != null) {
           m.hp = Math.max(0, m.hp - damage);
         }
         // ★★ heuristic: เราเป็นคนตีหรือคนอื่น?
@@ -5297,7 +5380,9 @@
         return;
       }
     }
-    else if (CFG.farmMap && currentMap && currentMap !== CFG.farmMap
+    //   ★★★ เช็ค warpBackToFarm ด้วย — เดิมลูป retry นี้ไม่เช็ค ทำให้ปิด toggle แล้วยังโดนดึงกลับ
+    //       ถ้าไปได้แมปอื่น (ตาย respawn เมือง/หนีเปลี่ยนแมป/วาร์ปมือ) — ปิดแล้ว = ฟาร์มแมปไหนก็ได้ที่ไปติด
+    else if (CFG.warpBackToFarm && CFG.farmMap && currentMap && currentMap !== CFG.farmMap
         && !(inSellRoutine && currentMap === CFG.sellNpcMap)
         && !(inStorageRoutine && currentMap === CFG.kafraMap)
         && !(typeof buffVisitState !== 'undefined' && buffVisitState !== 'IDLE' && currentMap === CFG.buffVisitMap)) {   // ★ ไปรับบัพ — อยู่แมปบัพอยู่
