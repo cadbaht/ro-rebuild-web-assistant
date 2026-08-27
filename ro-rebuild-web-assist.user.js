@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.186.1
+// @version      4.186.2
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.186.1';
+  const VERSION = '4.186.2';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.186.2', d: '2026-08-27', items: [
+      '🚑 แก้ HP ค้าง/ใช้ยารัวบน rayrag (ต่อจาก 4.186.1 ที่ยังไม่หาย)',
+      '   พบจาก debug จริง: rayrag ส่ง statType ใน 0x25 เปลี่ยนทุก packet (48,127,124,...) ไม่เสถียร',
+      '   → type-lock ตัด HP จริงทิ้งหมด (เห็นใน log: 521→696→820→1226 ถูกข้างหมด) → HP ค้าง → ปั้มยา',
+      '   ตอนนี้: ยึด max-anchor (ไม่ยึด type) + จำ type ที่ยืนยัน HP แล้ว + เห็น ≥3 type = ยอมรับหมด (rayrag)',
+      '   · ค่าเต็มจาก type ใหม่ = stat ขยะของ gfix → ยังข้ามเหมือนเดิม · heal delay floor 500ms',
+    ]},
     { v: '4.186.1', d: '2026-08-27', items: [
       '🚑 แก้ regression บน rayrag (จาก 4.185.0): แถบ HP ไม่ตรับตัวละคร → ปั้มยารัวจนหมด',
       '   สาเหตุ: ตัวเรียนรู้ statType ของ HP เดิมเรียนจาก "ค่าไม่เต็มตัวแรก" ที่เจอ — SP ไม่เต็มมาก่อน',
@@ -1768,9 +1775,14 @@
   let hpStatAt = 0;   // ★ timestamp ที่ server ส่งค่า HP มาล่าสุด (0x25/SPAWN เท่านั้น — ไม่รวม local ดาเมจ)
                       //   ใช้คู่กับ heal: กันตัดสิน "ยาหมด" ตอน HP ค้างเพราะ server ยังไม่ส่งค่าใหม่ (gfix ส่งช้า)
   const sp = { cur: null, max: null };   // ★ SP สำหรับ autoSkill — ตรวจ spMin
-  // ★★ 0x25 STAT routing — server บางตัว (gfix-ro) ใช้ 0x25 ส่งหลาย stat ปนกัน (เช่น type 5=HP, 32=SP/อื่น)
-  //   เดิมเขียนทุก stat ลง HP หมด → HP โดนทับด้วยค่าแปลก (ค้างเต็ม/เพี้ยน) → เรียนรู้ type ของ HP จากค่าที่ "ไม่เต็ม"
-  let hpStatType = null;
+  // ★★ 0x25 STAT routing — สองสไตล์ server (จาก capture จริงทั้งคู่):
+  //   · gfix-ro: statType เสถียรต่อ stat (6=HP) + ส่ง stat อื่นปน (มักค่าเต็ม 127/127)
+  //   · rayrag:  statType เปลี่ยนทุก packet (48,127,124,...) แต่ทุก packet คือ HP จริง!
+  //   → ห้าม lock ด้วย statType (เคย lock แล้ว rayrag ตายหมดทั้งกระดูน — HP ค้าง ปั้มยาหมดกระเป๋า)
+  //   กลยุทธ์: ยึด "max ตรง anchor" เป็นหลัก + จำ type ที่เคย apply เป็น HP (ยอมรับค่าเต็มด้วย)
+  //   + ถ้าเห็น HP จาก ≥3 type ต่างกัน = statType ไม่เสถียร → ยอมรับทุก type ที่ max ตรง (สไตล์ rayrag)
+  const hpAppliedTypes = new Set();   // statType ที่เคย apply เป็น HP แล้ว
+  let stat25Loose = false;            // true = statType ไม่เสถียร → ยอมรับทุก type ที่ max ตรง hp.max
   const statRouteLogged = new Set();
   // ★★ กันนับดาเมจซ้ำ — server บางตัว (gfix-ro) ส่งการตีเดียวกันทั้ง 0x0b และ 0x17 (ดาเมจเท่ากัน ห่าง ~0.5s)
   //   นับซ้ำ = HP ไหลเร็ว 2 เท่า → ชน 0 → ถูก reset เป็น null ("HP ?") → heal ไม่ทำงาน → ตาย
@@ -1944,7 +1956,7 @@
     const belowThreshold = pct < CFG.healAtPercent;
     const notFull = CFG.healAtMax ? (hp.cur < hp.max) : belowThreshold;
     if (!notFull) return;
-    if (now - heal.lastUseAt < CFG.healDelayMs) return;   // throttle ดีเลย์เท่านั้น
+    if (now - heal.lastUseAt < Math.max(CFG.healDelayMs, 500)) return;   // throttle — floor 500ms กันค่าตั้งต่ำไปเผาของทั้งกระเป๋า
 
     const id = heal.pickNext(now);
     if (id == null) {
@@ -2551,34 +2563,32 @@
       const id = u32(u, 1);
       const st = u32(u, 5);
       const cur = u32(u, 9), m = u32(u, 13);
-      // ★★ statType routing (gfix-ro ส่งหลาย stat ใน 0x25 — เดิมเขียนทับ HP หมด):
-      //   · รู้ type ของ HP แล้ว → ใช้ type นั้นเท่านั้น
-      //   · ยังไม่รู้ type → เรียนรู้เฉพาะเมื่อ "max ตรง anchor" เท่านั้น:
-      //     - max ตรง sp.max (จาก 0x27) → เป็น SP → เก็บเป็น SP
-      //     - max ตรง hp.max (จาก SPAWN) + ค่าไม่เต็ม → เป็น HP → เรียนรู้
-      //   ★★★ regression ที่เจอจริงบน rayrag: เดิมเรียนจาก "ค่าไม่เต็มตัวแรก" ไม่มี anchor
-      //     → SP ไม่เต็ม (เกิดบ่อยกว่า) มาก่อน → HP ถูกแทนที่ด้วยค่า SP → แถบ HP ผิด → ปั้มยาจนหมด
+      // ★★ statType routing — ยึด max-anchor เป็นหลัก ไม่ยึด statType (เปลี่ยนทุก packet บน rayrag):
+      //   · max ตรง sp.max (จาก 0x27) ล้วน ๆ → SP
+      //   · max ตรง hp.max + (เคย apply type นี้แล้ว / ค่าไม่เต็ม / stat25Loose) → HP
+      //   · เต็มจาก type ใหม่ = stat ขยะของ gfix (เต็มเสมอ) → ข้าม
+      //   · level-up (max โตขึ้น + cur ≥ เดิม) → ยอมรับเป็น HP ใหม่
       if (id === playerId && m > 0 && cur >= 0 && cur <= m) {
         const hpKnown = hp.max != null && hp.max > 0;
         const spKnown = sp.max != null && sp.max > 0;
-        if (hpStatType != null) {
-          if (st === hpStatType) applyStat(id, cur, m);
-          else if (spKnown && m === sp.max) { sp.cur = cur; }
-          else if (!statRouteLogged.has(st)) { statRouteLogged.add(st); dbg('ℹ️ 0x25 statType', st, '=', cur + '/' + m, '≠ HP (type', hpStatType + ') → ข้าม'); }
-        } else if (spKnown && m === sp.max && !(hpKnown && m === hp.max)) {
-          sp.cur = cur;   // max ตรง SP → เป็น SP (ไม่แตะ HP)
-        } else if (hpKnown && m === hp.max && (cur < m || hp.cur == null)) {
-          hpStatType = st;
+        const maxIsHp = hpKnown && m === hp.max;
+        const levelUpLike = hpKnown && m > hp.max && cur >= (hp.cur || 0) && !(spKnown && m === sp.max);
+        if (spKnown && m === sp.max && !maxIsHp) {
+          sp.cur = cur;   // SP (gfix)
+        } else if (stat25Loose && maxIsHp) {
           applyStat(id, cur, m);
-          dbg('🧬 เรียนรู้ statType ของ HP =', st, '(' + cur + '/' + m + ' · anchor hp.max=' + hp.max + ')');
-        } else if (!hpKnown && !spKnown && cur < m) {
-          // ไม่มี anchor เลย (ไม่เคยได้ SPAWN/0x27) — ยอมเรียนจากค่าไม่เต็ม (ทางเลือกสุดท้าย)
-          hpStatType = st;
+        } else if (hpAppliedTypes.has(st) && maxIsHp) {
+          applyStat(id, cur, m);   // type ที่เคยยืนยันเป็น HP แล้ว — ยอมรับทั้งค่าเต็ม
+        } else if ((maxIsHp || !hpKnown || levelUpLike) && (cur < m || hp.cur == null)) {
           applyStat(id, cur, m);
-          dbg('🧬 เรียนรู้ statType ของ HP =', st, '(' + cur + '/' + m + ' · ไม่มี anchor)');
-        } else if (!statRouteLogged.has('w' + st)) {
-          statRouteLogged.add('w' + st);
-          dbg('⏳ 0x25 statType', st, '=', cur + '/' + m, 'รอ anchor (hp.max=' + (hpKnown ? hp.max : '?') + ', sp.max=' + (spKnown ? sp.max : '?') + ')');
+          hpAppliedTypes.add(st);
+          if (!stat25Loose && hpAppliedTypes.size >= 3) {
+            stat25Loose = true;
+            dbg('🧬 0x25 statType ไม่เสถียร (เห็น HP จาก ≥3 type) → ยอมรับทุก type ที่ max ตรง hp.max (สไตล์ rayrag)');
+          }
+        } else if (!statRouteLogged.has('j' + st)) {
+          statRouteLogged.add('j' + st);
+          dbg('⏳ 0x25 statType', st, '=', cur + '/' + m, 'เต็ม+type ใหม่ — ข้าม (กัน stat ขยะ gfix)');
         }
       }
     }
