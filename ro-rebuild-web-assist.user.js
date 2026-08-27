@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.185.0
+// @version      4.186.0
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,22 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.185.0';
+  const VERSION = '4.186.0';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.186.0', d: '2026-08-27', items: [
+      '💬 ใหม่! บัพตามคำขอ — ตั้ง "ต้องแชทคำขอ" ต่อสกิลบัพ (Sub-tab Skills)',
+      '   ผู้เล่นต้องพิ่งแชทข้อความที่มีคำนั้นมาก่อน (ภายใน 60 วิ · ไม่สนตัวพิมพ์ · contains)',
+      '   เช่น Heal ตั้ง "heal" = คนพิมพ์ heal มาถึงรักษาให้ · เงื่อนไขอื่น (HP%/ระยะ/รายชื่อ/delay ซ้ำ) ยังเช็คครบ',
+      '   ว่าง = ไม่เช็ค บัพตามเงื่อนไขเดิม · API: ASSIST.addSkill({skillId:41, buffMode:true, buffChatKeyword:\'heal\', ...})',
+      '🖥️ ขยายหน้าต่างจัดการ skill list (420→680px) + แถวฟิลด์ wrap ลงบรรทัดใหม่เมื่อแคบ — ไม่ต้อง scroll ขวาอีก',
+    ]},
+    { v: '4.185.1', d: '2026-08-27', items: [
+      '💊 แก้ใช้ยารัวขั้นสุดท้าย — ฐานความจริงของ "ยาหมด" เปลี่ยนจาก "HP ไม่ขยับ" เป็น **inventory (0x32)**',
+      '   เคส gfix: กินยาแล้ว server หักของจริงแต่ HP echo ช้า → เดิมตีความยาหมด ไล่ mark ทุกขวด',
+      '   ตอนนี้: HP เพิ่ม = ได้ผล · ของเหลือ 0 = หมดจริง · ของถูกหัก = ยาทำงานอยู่ (รอ delay ปกติ)',
+      '   · มี HP ใหม่+ของไม่หาก = ถูกปฏิเสธ · ไม่มีข้อมูลเลย = รอ (นิรภัย 5 วิ/ขวด)',
+    ]},
     { v: '4.185.0', d: '2026-08-27', items: [
       '🩺 แก้ HP ? / ตายผิดปกติบน server gfix-ro — สามสาเหตุจากการวิเคราะห์ packet capture:',
       '   1. ตำแหน่งดาเมจใน 0x0b ต่างกัน: rayrag @17 / gfix @18 → อ่านผิด = ดาเมจ×256 (โดน 19 กลายเป็น 4864!)',
@@ -1649,6 +1662,8 @@
   // ★ chat history buffer — เก็บแชทล่าสุดสำหรับ monitor
   const CHAT_BUF_MAX = 50;
   const chatBuf = [];
+  // ★★ บัพตามคำขอ — จำแชทล่าสุดของแต่ละคน (ชื่อ → ข้อความ+เวลา) เช็ค keyword ก่อนบัพ (buffChatKeyword)
+  const chatReqBy = new Map();   // lowercase ชื่อผู้พูด → { msg, at }
   const nameOf = (id) => {
     const db = itemDisplayName(id);
     return db !== 'item_' + id ? `${db}(${id})` : (CFG.itemNames[id] ? `${CFG.itemNames[id]}(${id})` : `item_${id}`);
@@ -1830,11 +1845,14 @@
     pendingCheckAt: 0,            // เวลาที่ใช้ item ล่าสุด (รอเช็คผล)
     pendingItemId: null,          // item ที่รอเช็คผลอยู่
     pendingHpBefore: null,        // HP ก่อนใช้ item ล่าสุด
+    pendingCountBefore: null,     // ★ จำนวนใน inventory ก่อนใช้ (ใช้ตัดสิน "ยาหมด" จากของจริง ไม่ใช่ HP ที่อาจค้าง)
 
-    // item นี้ "ใช้ได้" ไหม (ไม่ได้ถูก mark ว่าเพิ่งหมด)
+    // item นี้ "ใช้ได้" ไหม (ไม่ถูก mark หมด + inventory ไม่ได้เป็น 0 ชัด ๆ)
     isAvailable(id, now) {
       const t = this.exhaustedUntil.get(id) || 0;
-      return now >= t;
+      if (now < t) return false;
+      if (inventory.get(id) === 0) return false;   // ★ เห็นค่า 0 จาก 0x32 = หมดจริง
+      return true;
     },
     // mark ว่า item หมด → รอ healExhaustedMs แล้วค่อยลองใหม่
     markExhausted(id, now) {
@@ -1853,6 +1871,8 @@
     },
     // ล้าง mark "หมด" ทั้งหมด (ใช้ตอน respawn / reset)
     clearExhausted() { this.exhaustedUntil.clear(); },
+    // เคลียร์ pending (แยกจาก mark — แค่ล้างการรอเช็คผล)
+    _clear() { this.pendingItemId = null; this.pendingHpBefore = null; this.pendingCheckAt = 0; this.pendingCountBefore = null; },
   };
 
   // ส่งคำสั่งใช้ item: packet 0x2f, [2f][item_id:4 LE][target:4 LE], target=FFFFFFFF (self)
@@ -1878,24 +1898,38 @@
     if (isDead) return;                                   // ★ ตายอยู่ → ห้าม heal
     if (isResting) return;                                // ★ กำลังนั่งพัก → ข้าม heal (ใช้ regen แทน ประหยัดยา)
 
-    // ★ เช็คผลของ item ที่ใช้ครั้งก่อน — สรุปได้ก็ต่อเมื่อ "server ส่งค่า HP ใหม่มาแล้ว" เท่านั้น
-    //   ★★ กันกดยารัว (เคส gfix): server ส่ง 0x25 HP ช้า/เฉพาะตอนโดนดาเมจ → HP ค้างที่ค่าเดิม
-    //      เดิมตีความ "HP ไม่ขยับ = ยาหมด" ทันที → ไล่ mark ทุกขวดว่าหมด + ใช้ยาต่อเนื่องจนของหมดตะหงาด
+    // ★ เช็คผลของ item ที่ใช้ครั้งก่อน — ฐานความจริงลำดับ: HP เพิ่ม > inventory หมด > ของถูกหัก > HP ไม่ขยับ
+    //   ★★ กันกดยารัว (เคส gfix): server ส่ง 0x25 HP ช้า/เฉพาะตอนโดนดาเมจ → HP ค้าง
+    //      เดิมตีความ "HP ไม่ขยับ = ยาหมด" ทันที → ไล่ mark ทุกขวด + ใช้ต่อเนื่องจนของหมด
+    //      ตอนนี้: ถ้า server หักของออกจาก inventory (0x32) = ยาถูกใช้จริง → ไม่ mark ว่าหมด รอ delay ปกติ
     if (heal.pendingItemId != null && heal.pendingHpBefore != null &&
         now - heal.pendingCheckAt >= CFG.healItemEffectCheckMs) {
+      const cntBefore = heal.pendingCountBefore;
+      const cntNow = inventory.has(heal.pendingItemId) ? inventory.get(heal.pendingItemId) : null;
+      const consumed = (cntBefore != null && cntNow != null && cntNow < cntBefore);
       if (hp.cur > heal.pendingHpBefore + 1) {
         // ★ ยาได้ผล — HP เพิ่มขึ้น
-        heal.pendingItemId = null; heal.pendingHpBefore = null; heal.pendingCheckAt = 0;
-      } else if (hpStatAt >= heal.pendingCheckAt || now - heal.pendingCheckAt > 5000) {
-        // ★ มี HP ใหม่จาก server แล้วแต่ไม่ขยับ (= ยาหมดจริง) หรือรอเกิน 5 วิ (ยอมแพ้ — เคลียร์ pending ไปรอบหน้า)
-        if (hpStatAt >= heal.pendingCheckAt) {
-          log('💊', nameOf(heal.pendingItemId), 'หมด (ใช้แล้ว HP ไม่ขยับ) → ใช้ตัวถัดไป');
-          heal.markExhausted(heal.pendingItemId, now);
-          heal.lastUseAt = 0;                            // ข้าม delay ให้ใช้ตัวถัดไปทันที
-        }
-        heal.pendingItemId = null; heal.pendingHpBefore = null; heal.pendingCheckAt = 0;
+        heal._clear();
+      } else if (cntNow === 0 && cntBefore > 0) {
+        // ★★ ของหมดจริง (0x32 เห็น 0) → mark แล้วไปตัวถัดไปทันที
+        log('💊', nameOf(heal.pendingItemId), 'หมด (inventory = 0)');
+        heal.markExhausted(heal.pendingItemId, now);
+        heal.lastUseAt = 0;
+        heal._clear();
+      } else if (consumed) {
+        // ★★ server หักของแล้ว = ยาถูกใช้จริง — HP echo ช้า (gfix) → ไม่ mark หมด รอ healDelayMs ปกติแล้วใช้ใหม่ได้
+        heal._clear();
+      } else if (hpStatAt >= heal.pendingCheckAt) {
+        // ★ มี HP ใหม่จาก server แล้ว + ของไม่หาย = ถูกปฏิเสธ → mark เดิม
+        log('💊', nameOf(heal.pendingItemId), 'หมด (ใช้แล้ว HP ไม่ขยับ) → ใช้ตัวถัดไป');
+        heal.markExhausted(heal.pendingItemId, now);
+        heal.lastUseAt = 0;
+        heal._clear();
+      } else if (now - heal.pendingCheckAt > 5000) {
+        // ★ รอเกิน 5 วิ ไม่มีข้อมูลอะไรเลย — ยอมแพ้ เคลียร์ pending (ไม่ mark) ไปรอบหน้า
+        heal._clear();
       } else {
-        // ★★ ยังไม่มี HP ใหม่จาก server เลย — จบรอบนี้: ห้ามสรุปว่ายาหมด ห้ามใช้ตัวถัดไป (รอบหน้าค่อยเช็คอีก)
+        // ★★ ยังไม่มีข้อมูลพอ — จบรอบนี้: ห้ามสรุปว่ายาหมด ห้ามใช้ตัวถัดไป (รอบหน้าค่อยเช็คอีก)
         return;
       }
     }
@@ -1920,8 +1954,9 @@
       heal.lastUseAt = now;
       heal.pendingItemId = id;
       heal.pendingHpBefore = hp.cur;                      // จำ HP ก่อนใช้ เพื่อเช็คผล
+      heal.pendingCountBefore = inventory.has(id) ? inventory.get(id) : null;   // ★ จำจำนวนของก่อนใช้
       heal.pendingCheckAt = now;
-      log('💉 ใช้', nameOf(id), `@ HP ${hp.cur}/${hp.max} (${pct.toFixed(0)}%)`);
+      log('💉 ใช้', nameOf(id), `@ HP ${hp.cur}/${hp.max} (${pct.toFixed(0)}%)`, heal.pendingCountBefore != null ? '(มี ' + heal.pendingCountBefore + ')' : '');
     }
   }, CFG.healCheckMs);
 
@@ -2007,6 +2042,13 @@
         _dbSeen++;
         if (!wantAll && !names.some(n => e.name.toLowerCase().includes(n))) continue;
         _dbNameOk++;
+        // ★★ บัพตามคำขอ — ตั้ง buffChatKeyword ไว้ = ผู้เล่นต้องพิ่งแชทคำนั้นมา (ภายใน 60 วิ) ถึงจะบัพให้
+        //   เช็คแบบ contains + ไม่สน case ("w heal" ตรงกับ "heal") · ว่าง = ไม่เช็ค (บัพตามเงื่อนไขอื่นอย่างเดียว)
+        const chatKw = String(skill.buffChatKeyword || '').trim().toLowerCase();
+        if (chatKw) {
+          const cr = chatReqBy.get(e.name.trim().toLowerCase());
+          if (!cr || now - cr.at > 60000 || !cr.msg.toLowerCase().includes(chatKw)) continue;
+        }
         const d = Math.hypot(e.x - player.x, e.y - player.y);
         if (d > radius) continue;
         _dbRange++;
@@ -3055,6 +3097,11 @@
         // ★ เก็บลง chat history buffer (สำหรับ monitor)
         chatBuf.push({ t: Date.now(), type: typeName, chatType, sender: name || '?', message });
         while (chatBuf.length > CHAT_BUF_MAX) chatBuf.shift();
+        // ★ จำแชทล่าสุดของผู้พูด — สำหรับ "บัพตามคำขอ" (buffChatKeyword) + เก็บกวาดเก่า ๆ กัน map โต
+        if (name && name.trim()) {
+          chatReqBy.set(name.trim().toLowerCase(), { msg: message, at: Date.now() });
+          if (chatReqBy.size > 64) { const _cut = Date.now() - 120000; for (const [k, v] of chatReqBy) if (v.at < _cut) chatReqBy.delete(k); }
+        }
         // ★ ตรวจคำต้องห้าม
         const lower = message.toLowerCase();
         if (lower.includes('bot') || message.includes('บอท') || message.includes('บอต')) {
@@ -7704,8 +7751,8 @@
           const fld = (label, inner, title) => `<label style="display:flex;flex-direction:column;gap:1px;font-size:9px;color:#9aa0a6" title="${title}">${label}${inner}</label>`;
           const inp = (key, val, w) => `<input data-edit="${key}" type="number" value="${val}" style="width:${w};background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`;
           row += `<div style="padding:8px;background:rgba(0,0,0,.2);border-radius:4px;margin-top:4px">
-            <div style="display:flex;gap:6px;margin-bottom:6px">
-              ${fld('ชื่อ', `<input data-edit="name" value="${s.name||''}" placeholder="ชื่อสกิล" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`, 'ชื่อสกิล (แสดงใน log)')}
+            <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+              ${fld('ชื่อ', `<input data-edit="name" value="${s.name||''}" placeholder="ชื่อสกิล" style="flex:1;min-width:120px;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`, 'ชื่อสกิล (แสดงใน log)')}
               ${fld('skillId', inp('skillId', s.skillId, '60px'), 'เลข ID ของสกิล (จาก packet capture)')}
               ${fld('เลเวล', inp('level', s.level, '45px'), 'เลเวลสกิลที่จะส่ง (1-10)')}
             </div>
@@ -7726,13 +7773,13 @@
               ${fld('ครั้ง/มอน', inp('maxUsesPerTarget', s.maxUsesPerTarget||1, '55px'), 'ใช้สกิลนี้ได้กี่ครั้งต่อมอน 1 ตัว')}
               ${fld('มอนขั้นต่ำ', inp('mobCountMin', s.mobCountMin||0, '55px'), 'ใช้เมื่อมอนรุมมากกว่าหรือเท่ากับ N ตัว')}
             </div>
-            <div style="display:flex;gap:6px;margin-bottom:6px">
-              ${fld('ระยะเวลา (นาที) — self', `<input data-edit="intervalMin" type="number" step="0.5" value="${s.intervalMin||0}" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`, 'สำหรับ self-cast: ร่ายใหม่ทุก N นาที (0=ใช้ cooldownMs แทน)')}
+            <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+              ${fld('ระยะเวลา (นาที) — self', `<input data-edit="intervalMin" type="number" step="0.5" value="${s.intervalMin||0}" style="flex:1;min-width:90px;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`, 'สำหรับ self-cast: ร่ายใหม่ทุก N นาที (0=ใช้ cooldownMs แทน)')}
               ${fld('ระยะต่ำสุด (ช่อง)', `<input data-edit="minDistance" type="number" value="${s.minDistance||0}" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`, 'ต้องอยู่ไกลอย่างน้อย N ช่อง (เช่น Charge Attack)')}
               ${fld('ใช้เมื่อ HP < %', inp('hpBelowPct', s.hpBelowPct||0, '60px'), 'ใช้สกิลเฉพาะเมื่อ HP% ต่ำกว่าค่านี้ (เช่น Heal ตัวเอง) — 0 หรือว่าง = ไม่สน HP')}
             </div>
-            <div style="display:flex;gap:6px;margin-bottom:6px">
-              <select data-edit="buffAll" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit" title="โหมด buff: ใช้กับใคร">
+            <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+              <select data-edit="buffAll" style="flex:1;min-width:140px;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit" title="โหมด buff: ใช้กับใคร">
                 <option value="all"${(s.buffAll !== false && !(Array.isArray(s.buffNames) && s.buffNames.length))?' selected':''}>บัพให้ทุกคนที่เข้ามาในระยะ</option>
                 <option value="list"${(Array.isArray(s.buffNames) && s.buffNames.length)?' selected':''}>เฉพาะรายชื่อที่กำหนด</option>
               </select>
@@ -7740,6 +7787,7 @@
               ${fld('delay ซ้ำ/คน (วิ)', inp('repeatSec', s.repeatSec||300, '60px'), 'รออย่างน้อย N วินาทีก่อนบัพซ้ำคนเดิม (กันสแปม) — default 300 = 5 นาที')}
               ${fld('รวมตัวเอง', `<select data-edit="buffIncludeSelf" style="width:55px;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 3px;font-size:10px;font-family:inherit"><option value="1"${s.buffIncludeSelf?' selected':''}>ใช่</option><option value="0"${!s.buffIncludeSelf?' selected':''}>ไม่</option></select>`, 'บัพตัวเองด้วยสกิลนี้ตามรอบ delay ซ้ำ (แยกจากโหมด ally/self-cast ที่ใช้ HP% หรือ interval)')}
               ${fld('HP เป้า < %', inp('targetHpBelowPct', s.targetHpBelowPct||0, '60px'), 'ใช้สกิลเฉพาะเมื่อ HP ของเป้าหมายต่ำกว่าค่านี้ — คุมทั้งคนอื่นและตัวเอง (ถ้ารวมตัวเอง) · 0 = ไม่สน (บัพได้ตลอด) · ไม่รู้ HP = ข้าม')}
+              ${fld('💬 ต้องแชทคำขอ', `<input data-edit="buffChatKeyword" value="${s.buffChatKeyword||''}" placeholder="เช่น heal" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:4px;color:#e8e8e8;padding:4px 6px;font-size:10px;font-family:inherit">`, 'บัพเฉพาะคนที่พิ่งแชทข้อความมีคำนี้ (ภายใน 60 วิ · ไม่สนตัวพิมพ์) เช่น heal = พิมพ์ heal มาก่อนถึงบัพ · เงื่อนไขอื่นที่ตั้งไว้ยังเช็คตามปกติ · ว่าง = ไม่เช็ค')}
             </div>
             <div style="display:flex;gap:4px">
               <button data-saveedit="${i}" style="flex:1;background:#1b5e20;border:1px solid #2e7d32;border-radius:4px;color:#a5d6a7;cursor:pointer;font-size:10px;padding:5px;font-family:inherit">✓ บันทึก</button>
@@ -7772,7 +7820,7 @@
       html += `<div style="padding:6px 8px;color:#8ab4f8;font-size:11px;font-weight:600;border-bottom:1px solid #2a2d35;margin-top:6px">➕ เพิ่ม skill ใหม่ (กำหนดเอง)</div>`;
       html += `<div style="padding:8px">
         <input id="__assist_skill_name" placeholder="ชื่อ (เช่น Bash)" style="width:100%;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit;margin-bottom:4px">
-        <div style="display:flex;gap:4px;margin-bottom:4px">
+        <div style="display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap">
           <input id="__assist_skill_id" type="number" placeholder="skillId" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <input id="__assist_skill_lvl" type="number" placeholder="Lv" value="1" style="width:50px;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
         </div>
@@ -7784,26 +7832,27 @@
           <option value="ally">ally (Heal/Kyrie — สกิล Ally ใช้กับตัวเอง)</option>
           <option value="buff">buff (บอทบัพให้ผู้เล่นอื่น)</option>
         </select>
-        <div style="display:flex;gap:4px;margin-bottom:4px">
+        <div style="display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap">
           <input id="__assist_skill_sp" type="number" placeholder="spMin" value="0" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <input id="__assist_skill_cd" type="number" placeholder="cd ms" value="2000" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
         </div>
-        <div style="display:flex;gap:4px;margin-bottom:6px">
+        <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
           <input id="__assist_skill_maxdist" type="number" placeholder="maxDist" value="2" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <input id="__assist_skill_maxuse" type="number" placeholder="maxUse/target" value="1" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <input id="__assist_skill_mobmin" type="number" placeholder="mobMin" value="0" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
         </div>
-        <div style="display:flex;gap:4px;margin-bottom:6px">
+        <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
           <input id="__assist_skill_interval" type="number" placeholder="intervalMin (self)" value="0" step="0.5" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <input id="__assist_skill_mindist" type="number" placeholder="minDist" value="0" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <input id="__assist_skill_hpbelow" type="number" placeholder="HP<%" value="0" min="0" max="100" title="ใช้เมื่อ HP% ต่ำกว่าค่านี้ (0=ไม่สน HP)" style="width:70px;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
         </div>
-        <div style="display:flex;gap:4px;margin-bottom:6px">
+        <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">
           <select id="__assist_skill_buffall" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit" title="โหมด buff: ใช้กับใคร">
             <option value="all">บัพทุกคนในระยะ</option>
             <option value="list">เฉพาะรายชื่อ</option>
           </select>
           <input id="__assist_skill_buffnames" placeholder="รายชื่อผู้เล่น (คั่นจุลภาค)" style="flex:2;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit" title="เช่น superogira0,testmage (ใช้เมื่อเลือกเฉพาะรายชื่อ)">
+          <input id="__assist_skill_buffchat" placeholder="💬 ต้องแชทคำขอ เช่น heal" style="flex:1;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit" title="บัพเฉพาะคนที่พิ่งแชทข้อความมีคำนี้ (ภายใน 60 วิ · ไม่สนตัวพิมพ์) — ว่าง = ไม่เช็ค (บัพตามเงื่อนไขอื่นอย่างเดียว)">
           <input id="__assist_skill_repeatsec" type="number" placeholder="ซ้ำ/คน(วิ)" value="300" title="delay ก่อนบัพซ้ำคนเดิม (วินาที)" style="width:80px;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 7px;font-size:11px;font-family:inherit">
           <select id="__assist_skill_buffself" title="รวมบัพตัวเองด้วยสกิลนี้ตามรอบ delay ซ้ำ" style="width:70px;background:#15171c;border:1px solid #3a3f4b;border-radius:5px;color:#e8e8e8;padding:5px 4px;font-size:11px;font-family:inherit">
             <option value="0">เฉพาะคนอื่น</option>
@@ -7817,7 +7866,7 @@
     }
 
     popup.innerHTML = `
-      <div class="modal" style="background:rgba(20,22,28,.98);border:1px solid #3a3f4b;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.7);width:420px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;color:#e8e8e8;font-family:'Segoe UI',system-ui,sans-serif;font-size:12px">
+      <div class="modal" style="background:rgba(20,22,28,.98);border:1px solid #3a3f4b;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.7);width:680px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;color:#e8e8e8;font-family:'Segoe UI',system-ui,sans-serif;font-size:12px">
         <div class="hdr" style="padding:10px 14px;background:#15171c;border-bottom:1px solid #3a3f4b;display:flex;justify-content:space-between;align-items:center">
           <span style="color:#8ab4f8;font-weight:600;font-size:13px">🔮 จัดการ skill list</span>
           <span id="__assist_skillpopup_x" style="cursor:pointer;color:#9aa0a6;font-size:18px;line-height:1">✕</span>
@@ -7875,7 +7924,9 @@
           if (bisEl) s.buffIncludeSelf = bisEl.value === '1';
           const thbEl = bodyEl.querySelector('[data-edit="targetHpBelowPct"]');
           if (thbEl) { const thb = parseInt(thbEl.value, 10); s.targetHpBelowPct = (!isNaN(thb) && thb > 0) ? Math.min(thb, 100) : 0; }
-          log('✎ บันทึก skill', s.name, s.buffMode ? ('· buff: ' + (s.buffAll === false ? 'เฉพาะ ' + (s.buffNames || []).join(',') : 'ทุกคน') + ' ≤' + (s.maxDistance || 9) + 'ช่อง ทุก' + (s.repeatSec || 300) + 'วิ') : '');
+          const ckwEl = bodyEl.querySelector('[data-edit="buffChatKeyword"]');
+          if (ckwEl) s.buffChatKeyword = ckwEl.value.trim();
+          log('✎ บันทึก skill', s.name, s.buffMode ? ('· buff: ' + (s.buffAll === false ? 'เฉพาะ ' + (s.buffNames || []).join(',') : 'ทุกคน') + (s.buffChatKeyword ? ' · ต้องแชท "' + s.buffChatKeyword + '"' : '') + ' ≤' + (s.maxDistance || 9) + 'ช่อง ทุก' + (s.repeatSec || 300) + 'วิ') : '');
           s.spMin = parseInt(getVal('spMin'), 10) || 0;
           const cdSec = parseFloat(getVal('cooldownSec'));
           s.cooldownMs = isNaN(cdSec) ? (s.cooldownMs || 2000) : Math.round(cdSec * 1000);
@@ -7935,6 +7986,7 @@
           const hpBelowPct = parseInt(bodyEl.querySelector('#__assist_skill_hpbelow').value, 10) || 0;
           const buffAll = bodyEl.querySelector('#__assist_skill_buffall').value !== 'list';
           const buffNames = (bodyEl.querySelector('#__assist_skill_buffnames').value || '').split(',').map(x => x.trim()).filter(Boolean);
+          const buffChatKeyword = (bodyEl.querySelector('#__assist_skill_buffchat').value || '').trim();
           const repeatSec = parseInt(bodyEl.querySelector('#__assist_skill_repeatsec').value, 10) || 300;
           const buffIncludeSelf = bodyEl.querySelector('#__assist_skill_buffself').value === '1';
           const targetHpBelowPct = Math.max(0, Math.min(100, parseInt(bodyEl.querySelector('#__assist_skill_tgthp').value, 10) || 0));
@@ -7946,7 +7998,7 @@
             selfCast: mode === 'self',
             ally: mode === 'ally',
             buffMode: mode === 'buff',
-            buffAll, buffNames, repeatSec, buffIncludeSelf, targetHpBelowPct,
+            buffAll, buffNames, buffChatKeyword, repeatSec, buffIncludeSelf, targetHpBelowPct,
             intervalMin, mobCountMin, maxUsesPerTarget, maxDistance, minDistance, spMin, cooldownMs,
             hpBelowPct: Math.max(0, Math.min(100, hpBelowPct)),
           });
