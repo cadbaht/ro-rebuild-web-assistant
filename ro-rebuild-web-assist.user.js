@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.26
+// @version      4.189.27
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.26';
+  const VERSION = '4.189.27';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.27', d: '2026-09-25', items: [
+      '💬 Chat Alert + Pause — เมื่อมี nearby/whisper จากผู้เล่นอื่น ให้หยุดการเคลื่อนไหว/ต่อสู้อัตโนมัติชั่วคราว',
+      '   · ไม่ตอบอัตโนมัติ: แสดงกล่องแจ้งเตือนพร้อมปุ่มตอบด่วน 👋 / ครับ / แป๊บนึงครับ — ต้องกดเองทุกครั้ง',
+      '   · ปุ่ม ▶ Resume ให้กลับมาทำงานต่อ โดยไม่เปลี่ยนค่า Combat/Warp/Wander ที่ตั้งไว้',
+      '   · ระหว่าง Pause: หยุด Combat/Wander/Flee/WarpFind/Loot/WarpLoot/Auto Buff และไม่เริ่ม Sell/Storage/AB/Buff Visit รอบใหม่; Auto-Heal ยังทำงานเพื่อความปลอดภัย',
+      '   · เพิ่ม toggle Chat Alert + Pause และปุ่ม 🧪 ทดสอบ Chat Alert ในแท็บ 🔔 สำคัญ',
+      '   · ข้อความทดสอบไม่ส่งแชทจริง; ปุ่มตอบด่วนจะส่งจริงเฉพาะเมื่อเป็นแชทที่รับมาจริงและผู้ใช้กดเอง',
+    ]},
     { v: '4.189.26', d: '2026-09-25', items: [
       '🧪 Warp Find Test — เพิ่มปุ่มทดสอบระบบวาร์ปหามอนแบบ Manual Diagnostic',
       '   · กดทดสอบได้ทันทีโดยไม่ต้องรอ noMonsterWarpSec และไม่ต้องเปิด Warp Find ก่อน',
@@ -1360,6 +1368,7 @@
     'farmMap', 'farmMapX', 'farmMapY', 'warpBackToFarm', 'farmMaps', 'farmRotateOnDeath', 'farmMapIdx', 'fleeFromPlayers', 'fleeMode', 'fleeMaps', 'fleePlayerRadius', 'fleeWarpCooldownSec',
     'navRecording', 'navMergeRadius', 'navWanderUseNav', 'navWanderMode', 'gatWanderEnabled',
     'tradeAcceptAll', 'tradeRejectAll', 'tradeRequestOpcode', 'tradeRequestLen', 'tradeAcceptPacketHex', 'tradeRejectPacketHex',
+    'chatPauseOnIncoming',
     'itemNames',
   ];
 
@@ -1719,6 +1728,7 @@
 
     // ---------- MISC ----------
     autoClearConsoleMin: 10,       // ★ 0=off, >0=clear browser console ทุก N นาที (กัน log เยอะค้างหน่วย)
+    chatPauseOnIncoming: true,     // ★ v4.189.27 nearby/whisper จากผู้เล่นอื่น → pause การเคลื่อนไหว/ต่อสู้ + manual quick reply
 
     // ---------- NAVIGATION (บันทึกเส้นทางเดิน + waypoint graph) ----------
     //  เก็บตำแหน่งที่ผู้เล่นคลิกเดิน → สร้าง waypoint graph → bot เดินตามเส้นทางจริง
@@ -1970,6 +1980,9 @@
   // ★ chat history buffer — เก็บแชทล่าสุดสำหรับ Monitor ในเครื่อง
   const CHAT_BUF_MAX = 50;
   const chatBuf = [];
+  // ★ v4.189.27 Chat Alert + Pause — transient state, ไม่เขียนทับ config Combat/Warp/Wander
+  let chatPauseActive = false;
+  let chatPauseLast = null;   // {name,message,chatType,typeName,at,isTest}
   // ★★ บัพตามคำขอ — จำแชทล่าสุดของแต่ละคน (ชื่อ → ข้อความ+เวลา) เช็ค keyword ก่อนบัพ (buffChatKeyword)
   const chatReqBy = new Map();   // lowercase ชื่อผู้พูด → { msg, at }
   const nameOf = (id) => {
@@ -2315,6 +2328,7 @@
   //  ★ packet ยืนยันจาก capture จริง: Heal Lv10 กับ superogira0 = [1d][01][playerId:4][41][0a]
   // ============================================================
   const buffOthersLoop = setInterval(() => {
+    if (chatPauseActive) return;
     if (!CFG.buffOthersEnabled) return;   // ★★ toggle เฉพาะ — default OFF ต้องเปิดเอง (กันบัพมั่ว)
     if (!CFG.skillEnabled || !CFG.skills || !CFG.skills.length) return;
     if (!activeWS || activeWS.readyState !== 1) return;
@@ -2456,6 +2470,7 @@
   let buffVisitLastMoveAt = 0;
   let buffVisitLastWarpAt = 0;
   const buffVisitLoop = setInterval(() => {
+    if (chatPauseActive && buffVisitState === 'IDLE') return;
     if (!CFG.buffVisitEnabled) return;
     if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) return; // ★ v4.189.0 AB Auto รอปิดงานมอนล่าสุด
     if (!activeWS || activeWS.readyState !== 1) return;
@@ -3090,6 +3105,7 @@
     clearUnstuckBuffAutoFinishPending();
   }
   const unstuckBuffLoop = setInterval(() => {
+    if (chatPauseActive && unstuckBuffState === 'IDLE') return;
     if (!CFG.unstuckBuffEnabled) return;
     // ★ v4.188.2: Combat gate ใช้กับรอบ Auto ตอน IDLE เท่านั้น
     // ปุ่ม ▶ รับบัพตอนนี้ เริ่ม routine โดยตรงก่อนเข้าลูป จึงไม่ต้องมี manual bypass/queue
@@ -3171,7 +3187,8 @@
     }
   }, 500);
 
-  const buffLoop = setInterval(() => {    if (!CFG.buffEnabled) return;
+  const buffLoop = setInterval(() => {    if (chatPauseActive) return;
+    if (!CFG.buffEnabled) return;
     if (!CFG.buffItems || !CFG.buffItems.length) return;
     if (isDead) return;
     if (!activeWS || activeWS.readyState !== 1) return;
@@ -4100,6 +4117,11 @@
           chatReqBy.set(name.trim().toLowerCase(), { msg: message, at: Date.now() });
           if (chatReqBy.size > 64) { const _cut = Date.now() - 120000; for (const [k, v] of chatReqBy) if (v.at < _cut) chatReqBy.delete(k); }
         }
+        // ★ v4.189.27 nearby/whisper จากผู้เล่นอื่น → แจ้งเตือน + pause; ไม่ตอบอัตโนมัติ
+        if (CFG.chatPauseOnIncoming && sender !== 0xffffffff && (chatType === 0 || chatType === 2)
+            && name && name.trim() && (!playerName || name.trim().toLowerCase() !== String(playerName).trim().toLowerCase())) {
+          triggerChatPause(name.trim(), message, chatType, typeName, false);
+        }
         // ★ ตรวจคำต้องห้าม
         const lower = message.toLowerCase();
         if (lower.includes('bot') || message.includes('บอท') || message.includes('บอต')) {
@@ -4986,6 +5008,7 @@
 
   // ---------- loop เก็บของ ----------
   const lootLoop = setInterval(() => {
+    if (chatPauseActive) return;
     if (!CFG.lootEnabled) return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
     // ★ ห้ามเก็บของตอนขาย/ฝาก — อยู่คนละแมป (คิวเก็บ cross-map พังตำแหน่ง + ยิง pickup พลาด)
@@ -5039,6 +5062,7 @@
   //  offset pattern: กลาง → เหนือ3 → ตอ3 → ใต้3 → ตต3 (เหมือนบอทหลัก)
   const WARP_OFFSETS = [[0,0,'กลาง'], [0,-3,'เหนือ3'], [3,0,'ตอ3'], [0,3,'ใต้3'], [-3,0,'ตต3']];
   const warpLoop = setInterval(() => {
+    if (chatPauseActive) return;
     if (!CFG.warpLootEnabled) return;
     if (!currentMap) return;                          // ไม่รู้แมป → ไม่วาร์ป (กัน packet ผิด)
     // ★ ห้ามวาร์ปไปเก็บของตอนขาย/ฝาก (warp ตีกับ warp ของ routine — server ดรอปตัวหลัง)
@@ -5323,6 +5347,7 @@
   }
   // สร้าง trigger check + state machine ใน loop เดียว
   const sellLoop = setInterval(() => {
+    if (chatPauseActive && sellState === 'IDLE') return;
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
@@ -5531,6 +5556,7 @@
     return queue;
   }
   const storageLoop = setInterval(() => {
+    if (chatPauseActive && storageState === 'IDLE') return;
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
@@ -6174,28 +6200,18 @@
   }
 
   // ★ v4.189.26 — Manual Warp Find diagnostic
-  // ไม่รอ noMonster timer / auto cooldown และ bypass Combat gate เฉพาะการกดทดสอบ
   function testWarpFindNow() {
     const now = nowMs();
     const mode = CFG.warpFindUseFlyWing ? 'Fly Wing 601' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip skillId 53' : 'Direct random warp');
     const wingStock = inventory.has(601) ? (inventory.get(601) || 0) : 0;
     const autoCooldownLeft = Math.max(0, 3000 - (now - lastWarpFindAt));
     const before = { map: currentMap, x: player.x, y: player.y };
-
-    log('🧪 WarpFind Test — mode=' + mode
-      + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF')
-      + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF')
-      + ' | noMonster=' + CFG.noMonsterWarpSec + 's'
-      + ' | autoCD=' + autoCooldownLeft + 'ms'
-      + ' | SP=' + (sp.cur == null ? '?' : sp.cur)
-      + ' | Wing=' + wingStock);
-
+    log('🧪 WarpFind Test — mode=' + mode + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF') + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF') + ' | noMonster=' + CFG.noMonsterWarpSec + 's | autoCD=' + autoCooldownLeft + 'ms | SP=' + (sp.cur == null ? '?' : sp.cur) + ' | Wing=' + wingStock);
     if (!CFG.warpFindEnabled) log('ℹ️ WarpFind Test: ปุ่ม Auto วาร์ปหามอนยัง OFF — Test จะลองวาร์ปให้ แต่ Auto จะไม่ทำงานจนกว่าจะเปิด');
     if (!CFG.combatEnabled) log('ℹ️ WarpFind Test: Combat ยัง OFF — Test bypass ชั่วคราว แต่ Auto WarpFind จะถูกบล็อก');
     if (!currentMap) { log('❌ WarpFind Test: ยังไม่รู้ชื่อแมป'); return false; }
     if (player.x == null || player.y == null) { log('❌ WarpFind Test: ยังไม่รู้พิกัดตัวละคร'); return false; }
     if (sellState !== 'IDLE' || storageState !== 'IDLE') { log('❌ WarpFind Test: กำลัง Sell/Storage อยู่ — ยกเลิกทดสอบ'); return false; }
-
     const ok = sendWarpFind({ manualTest: true });
     if (!ok) {
       if (CFG.warpFindUseFlyWing && wingStock <= 0) log('❌ WarpFind Test: ไม่มี Fly Wing 601');
@@ -6204,18 +6220,12 @@
       else log('❌ WarpFind Test: ส่งคำสั่งไม่สำเร็จ — ดู Debug Log เพิ่มเติม');
       return false;
     }
-
     log('📤 WarpFind Test: ส่งคำสั่ง ' + mode + ' แล้ว — รอตรวจตำแหน่ง ~1.8s');
     setTimeout(() => {
       const mapChanged = before.map && currentMap && before.map !== currentMap;
-      const moved = before.x != null && before.y != null && player.x != null && player.y != null
-        ? Math.hypot(player.x - before.x, player.y - before.y) >= 2
-        : false;
-      if (mapChanged || moved) {
-        log('✅ WarpFind Test: เห็นการวาร์ปแล้ว → ' + (currentMap || '?') + ' @(' + Math.round(player.x) + ',' + Math.round(player.y) + ')');
-      } else {
-        log('⚠️ WarpFind Test: ส่งคำสั่งสำเร็จ แต่ยังไม่เห็นตำแหน่งเปลี่ยนหลัง 1.8s — ถ้าในเกมไม่วาร์ปจริงให้ส่ง Log บรรทัดนี้มา');
-      }
+      const moved = before.x != null && before.y != null && player.x != null && player.y != null ? Math.hypot(player.x - before.x, player.y - before.y) >= 2 : false;
+      if (mapChanged || moved) log('✅ WarpFind Test: เห็นการวาร์ปแล้ว → ' + (currentMap || '?') + ' @(' + Math.round(player.x) + ',' + Math.round(player.y) + ')');
+      else log('⚠️ WarpFind Test: ส่งคำสั่งสำเร็จ แต่ยังไม่เห็นตำแหน่งเปลี่ยนหลัง 1.8s — ถ้าในเกมไม่วาร์ปจริงให้ส่ง Log บรรทัดนี้มา');
     }, 1800);
     return true;
   }
@@ -6308,6 +6318,7 @@
     return hpFleeSameMap();
   }
   const hpEmergencyFleeLoop = setInterval(() => {
+    if (chatPauseActive) return;
     if (!CFG.hpFleeEnabled) { hpFleeLatched = false; hpFleePendingClip = null; return; }
     // ★ ถ้ากำลังหนีผู้เล่นแบบ fallback อยู่ ให้ชุดนั้นเป็นเจ้าของการวาร์ปก่อน กัน Clip/Wing ชนกัน
     if (playerFleePending) return;
@@ -6429,6 +6440,7 @@
     return playerFleeTryClip(nextMap, nearby);
   }
   const playerFleeFallbackLoop = setInterval(() => {
+    if (chatPauseActive) return;
     const p = playerFleePending;
     if (!p) return;
     if (!activeWS || activeWS.readyState !== 1) return;
@@ -6502,6 +6514,51 @@
     b[3 + msgBytes.length] = chatType || 0;
     activeWS.send(b);
     return true;
+  }
+
+  // ★ v4.189.27 — Chat Alert + Pause (manual reply only)
+  function chatAlertTone() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ac = new AC(); const o = ac.createOscillator(); const g = ac.createGain();
+      o.frequency.value = 740; g.gain.value = 0.045; o.connect(g); g.connect(ac.destination); o.start();
+      setTimeout(() => { try { o.stop(); ac.close(); } catch (_) {} }, 180);
+    } catch (_) {}
+  }
+  function resumeChatPause() {
+    if (!chatPauseActive) return;
+    chatPauseActive = false;
+    const box = document.getElementById('__assist_chat_alert'); if (box) box.remove();
+    log('▶ Chat Pause: Resume — กลับมาทำงานตาม config เดิม');
+  }
+  function renderChatPauseOverlay() {
+    if (!chatPauseLast) return;
+    let box = document.getElementById('__assist_chat_alert');
+    if (!box) {
+      box = document.createElement('div'); box.id = '__assist_chat_alert';
+      Object.assign(box.style, {position:'fixed',right:'18px',top:'18px',zIndex:'2147483647',width:'360px',maxWidth:'calc(100vw - 36px)',background:'rgba(22,24,31,.98)',border:'2px solid #ef5350',borderRadius:'10px',boxShadow:'0 8px 30px rgba(0,0,0,.55)',padding:'12px',fontFamily:"'Segoe UI',system-ui,sans-serif",color:'#eee',fontSize:'12px'});
+      document.body.appendChild(box);
+    }
+    while (box.firstChild) box.removeChild(box.firstChild);
+    const title=document.createElement('div'); title.style.cssText='font-weight:700;color:#ff8a80;font-size:14px;margin-bottom:6px'; title.textContent='💬 มีคนทัก — Automation Pause'; box.appendChild(title);
+    const meta=document.createElement('div'); meta.style.cssText='color:#9aa0a6;font-size:11px;margin-bottom:5px'; meta.textContent=(chatPauseLast.isTest?'[TEST] ':'')+(chatPauseLast.typeName||'แชท')+' · '+(chatPauseLast.name||'?'); box.appendChild(meta);
+    const msg=document.createElement('div'); msg.style.cssText='background:#0f1115;border:1px solid #333;border-radius:6px;padding:8px;white-space:pre-wrap;word-break:break-word;margin-bottom:8px'; msg.textContent=chatPauseLast.message||''; box.appendChild(msg);
+    const note=document.createElement('div'); note.style.cssText='color:#f1c40f;font-size:10px;margin-bottom:8px'; note.textContent=chatPauseLast.isTest?'โหมดทดสอบ: ปุ่มตอบจะไม่ส่งข้อความจริง':'ตอบด่วนต้องกดเอง — ไม่มีการตอบอัตโนมัติ'; box.appendChild(note);
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;flex-wrap:wrap'; box.appendChild(row);
+    const mk=(label,reply)=>{const b=document.createElement('button');b.textContent=label;b.style.cssText='background:#2a3441;border:1px solid #4b5563;border-radius:6px;color:#fff;padding:6px 10px;cursor:pointer;font-size:12px';b.onclick=()=>{if(chatPauseLast&&chatPauseLast.isTest){log('🧪 Chat Alert Test: กด '+reply+' (ไม่ส่งจริง)');return;}const ct=chatPauseLast&&chatPauseLast.chatType===2?2:0;if(sendChat(reply,ct))log('💬 ตอบด้วยมือ → '+reply);else log('❌ ส่งแชทไม่สำเร็จ');};row.appendChild(b);};
+    mk('👋','👋'); mk('ครับ','ครับ'); mk('แป๊บนึงครับ','แป๊บนึงครับ');
+    const resume=document.createElement('button');resume.textContent='▶ Resume';resume.style.cssText='background:#1b5e20;border:1px solid #2e7d32;border-radius:6px;color:#fff;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700';resume.onclick=resumeChatPause;row.appendChild(resume);
+  }
+  function triggerChatPause(name, message, chatType, typeName, isTest) {
+    chatPauseLast = { name:name||'?', message:String(message||''), chatType:Number(chatType), typeName:typeName||'แชท', at:Date.now(), isTest:!!isTest };
+    chatPauseActive = true;
+    target = null;
+    noMonsterSince = 0;
+    if (!isTest) logImportant('chat', '💬 [' + (typeName||'แชท') + '] ' + (name||'?') + ': ' + message + ' → ⏸️ Pause รอผู้ใช้ตอบ/Resume');
+    else log('🧪 Chat Alert Test → ⏸️ Pause (ไม่ส่งข้อความจริง)');
+    renderChatPauseOverlay();
+    chatAlertTone();
   }
   // SELL encoders (mirror protocol.js:367,386,394)
   function sendNpcTalk(npcId) {
@@ -6830,6 +6887,7 @@
     if (typeof storageState !== 'undefined' && storageState !== 'IDLE') return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return; // ★ ESC→Unstuck→รับ AB→กลับฟาร์ม เป็นเจ้าของตัวละคร
     if (playerFleePending) return; // ★ v4.189.2 Clip/Wing→รอเปลี่ยนแมพ เป็นเจ้าของตัวละครชั่วคราว
+    if (chatPauseActive) return;  // ★ v4.189.27 มีคนทัก → หยุด Combat/Wander/Flee/WarpFind จนกด Resume
     // ★★ Flee from players — ทำงานไม่สน combat on/off (priority สูงสุด)
     //   ★★ ยกเว้นตอนกำลังขายของ/ฝากของ (ในเมืองมีผู้เล่นเยอะ → ห้ามวาร์ปหนี!)
     const _inSellRoutine = typeof sellState !== 'undefined' && sellState !== 'IDLE';
@@ -8717,6 +8775,9 @@
     toggleWander(on) { CFG.wanderEnabled = !!on; log('⚔️ wander =', CFG.wanderEnabled); },
     toggleWarpFind(on) { CFG.warpFindEnabled = !!on; log('⚔️ warpFind =', CFG.warpFindEnabled); },
     testWarpFind() { return testWarpFindNow(); },
+    toggleChatPauseAlert(on) { CFG.chatPauseOnIncoming = !!on; saveConfigDebounced(); if (!CFG.chatPauseOnIncoming) resumeChatPause(); log('💬 Chat Alert + Pause:', CFG.chatPauseOnIncoming ? 'ON' : 'OFF'); },
+    resumeChatPause() { resumeChatPause(); },
+    testChatAlert() { triggerChatPause('ผู้เล่นทดสอบ', 'สวัสดีครับ (ข้อความทดสอบ)', 0, 'ใกล้', true); },
     toggleWarpFindFlyWing(on) {
       CFG.warpFindUseFlyWing = !!on;
       if (CFG.warpFindUseFlyWing) CFG.warpFindUseTeleportSkill = false;   // mutual exclusive
@@ -10051,6 +10112,8 @@
           </div>
         </div>
         <div class="__assist_page" data-page="alert">
+          <div class="btns" style="margin-bottom:8px"><button id="__assist_chatpausebtn" class="on">💬 Chat Alert + Pause: ON</button><button id="__assist_testchatalert">🧪 ทดสอบ Chat Alert</button><button id="__assist_chatresume">▶ Resume</button></div>
+          <div style="font-size:10px;color:#9aa0a6;margin-bottom:8px;line-height:1.5">★ nearby/whisper จากผู้เล่นอื่น → หยุดการเคลื่อนไหว/ต่อสู้ชั่วคราว และแสดงปุ่มตอบด่วนที่ต้องกดเอง<br>★ Auto-Heal ยังทำงานระหว่าง Pause · ไม่มีการตอบแชทอัตโนมัติ</div>
           <div class="logbox" id="__assist_alertbox"></div>
           <div class="btns"><button class="danger" id="__assist_clearalert">ล้าง log สำคัญ</button></div>
         </div>
@@ -10778,6 +10841,9 @@
       else log('❌ คัดลอกไม่สำเร็จ — คลิกที่ logbox + Ctrl+A แล้ว Ctrl+C เอง');
     });
     root.querySelector('#__assist_clearalert')?.addEventListener('click', () => ASSIST.clearImportantLogs());
+    root.querySelector('#__assist_chatpausebtn').addEventListener('click', () => ASSIST.toggleChatPauseAlert(!CFG.chatPauseOnIncoming));
+    root.querySelector('#__assist_testchatalert').addEventListener('click', () => ASSIST.testChatAlert());
+    root.querySelector('#__assist_chatresume').addEventListener('click', () => ASSIST.resumeChatPause());
     const updBtn = root.querySelector('#__assist_updatebtn');
     if (updBtn) updBtn.addEventListener('click', () => {
       if (latestVersion && cmpVer(latestVersion, VERSION) > 0) {
@@ -11497,7 +11563,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
       set('[data-farmmap]', farmInfo);
     }
     set('[data-pid]', playerId ? playerId.toString(16) : '?');
-    set('[data-state]', isDead ? '☠️ ตาย' : (isResting ? '🪑 นั่งพัก' : (activeWS && activeWS.readyState === 1 ? '🟢 เชื่อมต่อ' : '🔴 ไม่ได้ต่อ')));
+    set('[data-state]', chatPauseActive ? '⏸️ Chat Pause' : (isDead ? '☠️ ตาย' : (isResting ? '🪑 นั่งพัก' : (activeWS && activeWS.readyState === 1 ? '🟢 เชื่อมต่อ' : '🔴 ไม่ได้ต่อ'))));
     set('[data-kills]', s.kills);
     set('[data-looted]', s.itemsLooted);
     set('[data-exp]', s.expGained.toLocaleString());
@@ -11780,6 +11846,9 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
         }
       }
     }
+    const chatPauseBtn = root.querySelector('#__assist_chatpausebtn');
+    if (chatPauseBtn) { chatPauseBtn.textContent = '💬 Chat Alert + Pause: ' + (CFG.chatPauseOnIncoming ? 'ON' : 'OFF'); chatPauseBtn.className = CFG.chatPauseOnIncoming ? 'on' : 'off'; }
+    const chatResumeBtn = root.querySelector('#__assist_chatresume'); if (chatResumeBtn) { chatResumeBtn.disabled = !chatPauseActive; chatResumeBtn.style.opacity = chatPauseActive ? '1' : '.45'; }
     // ★ alert page (log สำคัญ — card + chat bot)
     const alertPage = root.querySelector('.__assist_page[data-page="alert"]');
     if (alertPage && alertPage.classList.contains('active')) {
