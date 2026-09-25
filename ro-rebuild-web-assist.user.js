@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.186.2
+// @version      4.189.10
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,195 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.186.2';
+  const VERSION = '4.189.10';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.10', d: '2026-09-25', items: [
+      '❤️ HP Authoritative Sync บนฐาน v4.189.7 — UI/Heal/Rest ใช้ HP จาก STAT/SPAWN ของ server เท่านั้น',
+      '🛡️ แยก safety HP สำหรับ HP Emergency Flee เพื่อหนีเร็ว โดยไม่ทำให้ตัวเลข HP บน UI drift',
+      '🔧 ไม่รวม Standard Profile patch จาก v4.189.8/4.189.9 — คง config/profile behavior ของ v4.189.7 เดิม',
+    ]},
+    { v: '4.189.7', d: '2026-09-24', items: [
+      '🚶 Long Wake Move — ปรับตามการทดสอบจริง: หลัง Unstuck ต้องสั่งเดินไกลกว่า ~10 ช่องจึงปลด movement state',
+      '   · เปลี่ยนก้าวปลุกจาก 1–3 ช่องเป็น 12–15 ช่อง (ไม่เกิน game click-walk cap 16)',
+      '   · เลือกทิศไปยัง Sell/Kafra ก่อน ถ้าทางตันจะวนทิศอื่นและตรวจ GAT line-walkable เมื่อมีข้อมูล',
+      '   · เมื่อ server ส่ง MOVE_UPDATE ยืนยันว่าขยับแล้ว จึงต่อ GAT/NAV/path ปกติทันที',
+    ]},
+    { v: '4.189.6', d: '2026-09-24', items: [
+      '🚶 Wake Move หลัง Unstuck — แก้อาการต้องคลิกเดินเอง 1 ครั้งก่อน Sell/Kafra ถึงจะเดิน',
+      '   · หลัง /where ยืนยัน Save Point จะส่งก้าวสั้น 1–3 ช่องไปช่องข้างตัวก่อน ไม่ยิงก้าวไกลเป็นคำสั่งแรก',
+      '   · วนลอง 8 ทิศและเลือกช่องที่ GAT เดินได้เมื่อมีข้อมูล จน server ส่ง MOVE_UPDATE ยืนยันว่าขยับจริง',
+      '   · เมื่อขยับสำเร็จจึงเริ่ม GAT/NAV/path ไปจุด Sell/Kafra ตามปกติ; ไม่ต้องคลิกปลุกเอง',
+      '   · สั่งโหลด GAT ของแมพ Save Point ทันทีเพื่อช่วยเลือกก้าวแรก/เส้นทางในแมพที่มีสิ่งกีดขวาง',
+    ]},
+    { v: '4.189.5', d: '2026-09-24', items: [
+      '🚶 Fix Unstuck → Walk — แก้อาการ Sell/Kafra Unstuck แล้วไม่เดินจนกว่าจะคลิกเอง',
+      '   · หลังส่ง Direct Unstuck 0x73 จะทิ้ง player.x/y เก่าทันที ป้องกัน sendMove clamp จากพิกัดก่อน Unstuck',
+      '   · ขอพิกัด Save Point จริงจาก server ด้วย /where (0x37) อัตโนมัติ แล้วค่อยเริ่มเดิน',
+      '   · /where response อัปเดต currentMap ด้วย เพราะเป็นข้อมูล authoritative จาก server',
+      '   · เมื่อได้พิกัดใหม่แล้ว เริ่มส่งก้าวแรกไป NPC/Kafra ใน tick เดียว ไม่ต้องคลิกปลุกการเดิน',
+    ]},
+    { v: '4.189.4', d: '2026-09-24', items: [
+      '💰🏦 Sell/Storage Travel — เปลี่ยนขาไป NPC จาก Direct Teleport เป็น Unstuck 0x73 → เดินไปจุดที่ตั้ง',
+      '   · Auto/Manual Sell และ Kafra Storage ใช้ flow เดียวกัน: จดจุดกลับ → Unstuck → รอ 2s → เดิน',
+      '   · ใช้ GAT A* ก่อน, fallback NAV waypoint, สุดท้ายเดินตรงเป็นช่วง ≤16 ช่อง',
+      '   · Save Point ต้องอยู่แมพเดียวกับ NPC/Kafra ที่ตั้งไว้; ถ้าคนละแมพจะ abort พร้อมแจ้งชัด ไม่วาร์ปข้ามแมพแทน',
+      '   · ขากลับฟาร์มหลังขาย/ฝากยังใช้ระบบเดิม เพื่อไม่เปลี่ยนพฤติกรรมส่วนอื่น',
+    ]},
+    { v: '4.189.3', d: '2026-09-24', items: [
+      '🎒 Inventory Bulk Action — เพิ่มปุ่มเลือก ขายทั้งหมด / ฝากทั้งหมด แยกตามแท็บ Item / Equip / Etc.',
+      '   · ปุ่มทำหน้าที่ตั้ง action ให้ไอเทมทั้งหมดที่มีอยู่ในหมวดที่กำลังเปิดเท่านั้น ไม่สั่งขาย/ฝากทันที',
+      '   · ขายทั้งหมดจะถอดรายการในหมวดนั้นออกจาก Deposit แล้วใส่ Sell; ฝากทั้งหมดทำกลับกัน',
+      '   · หลังเลือกจะอัปเดตสี/ป้าย ขาย-ฝาก ใน Inventory ทันที และบันทึกค่าไว้ตามเดิม',
+    ]},
+    { v: '4.189.2', d: '2026-09-24', items: [
+      '🏃 Player Flee fallback — โหมดเปลี่ยนแมพใช้ Direct → Teleport Clip → Fly Wing เมื่อ Direct ยังติด gap',
+      '   · Direct 0x40 ไปแมพสำรองพร้อม = เปลี่ยนแมพทันที',
+      '   · ถ้า Direct ข้ามแมพยังติด gap 3s: ใช้ Teleport Clip ก่อน; ถ้าไม่ย้ายใน ~450ms ใช้ Fly Wing 601',
+      '   · หลัง Clip/Wing หนีออกจากจุดอันตรายแล้ว ระบบยังรอ gap และเปลี่ยนไปแมพสำรองอัตโนมัติทันทีที่ Direct พร้อม',
+      '   · โหมดแมพเดิมยังใช้ Direct same-map random ทันทีเหมือนเดิม',
+    ]},
+    { v: '4.189.1', d: '2026-09-24', items: [
+      '🏠 Direct Unstuck default interval — เปลี่ยนค่าเริ่มต้นรอบ Auto จาก 600 วินาทีเป็น 500 วินาที',
+      '   · ค่าเดิม 600 วินาทีจาก config รุ่นก่อนจะ migrate เป็น 500 วินาทีอัตโนมัติ',
+      '   · พฤติกรรม Finish Current Kill → เก็บของ → Unstuck → กลับจุดเดิม ยังคงเดิม',
+    ]},
+    { v: '4.189.0', d: '2026-09-24', items: [
+      '🏠 AB Auto Finish Current Kill — ครบเวลาระหว่างสู้จะไม่ตัดมอนตัวล่าสุดกลางคัน',
+      '   · ตี target ปัจจุบันให้จบก่อน แล้วรอ packet ของตกสั้น ๆ + เก็บ queue/warpQueue ให้หมด',
+      '   · ระหว่างรอจะไม่ acquire/defensive-retarget/wander ไปหามอนตัวใหม่',
+      '   · เก็บเสร็จแล้ว Direct Unstuck 0x73 ทันที; ถ้าครบเวลาตอนว่างอยู่แล้วจะ Unstuck ทันทีเหมือนเดิม',
+    ]},
+    { v: '4.188.9', d: '2026-09-24', items: [
+      '🏠 Fix AB Auto Timer — ครบเวลาปุ๊บ Direct Unstuck 0x73 ทันที แม้กำลัง Combat/มี target/มี loot/กำลัง wander',
+      '   · Auto timer ใช้ trigger เดียวกับปุ่ม ▶ รับบัพตอนนี้ จึงไม่ค้าง state=IDLE ที่ ~0s ระหว่างฟาร์มต่อเนื่อง',
+      '   · ยังไม่ตัดกลาง Sell/Storage/BuffVisit เพื่อป้องกัน state ธุรกรรมค้าง; จบทันทีแล้วรอบ AB จะเริ่มเอง',
+      '   · หลัง Unstuck รอ 2 วินาที → กลับแมพ+พิกัดเดิม → เริ่มนับ Auto รอบใหม่ตามเดิม',
+    ]},
+    { v: '4.188.8', d: '2026-09-24', items: [
+      '❤️ HP Emergency Flee — ตั้ง %HP แล้วหนีอัตโนมัติแบบ priority สูง ไม่ต้องรอ Combat target',
+      '   · เลือกโหมด: 🌀 หนีในแมพ หรือ 🏠 Unstuck 0x73',
+      '   · หนีในแมพเรียงอัตโนมัติ: Direct/Database TP (0x40) → Teleport Clip skillId 53 → Fly Wing itemId 601',
+      '   · ถ้า Direct TP ยังอยู่ใน teleport gap 3s จะข้ามไป Clip ทันที; ถ้า Clip ไม่ทำให้ตำแหน่งเปลี่ยนภายใน ~450ms จะ fallback เป็น Fly Wing',
+      '   · ล็อก 1 รอบต่อช่วง HP ต่ำ ป้องกันเผา Wing/ยิง packet รัว; เมื่อ HP ฟื้นเหนือ threshold +5% จึง arm ใหม่',
+    ]},
+    { v: '4.188.7', d: '2026-09-24', items: [
+      '🤝 Auto Trade LIVE — ล็อก packet จาก capture จริงของ Rayrag',
+      '   · Incoming Trade Request = 0x7e len=43',
+      '   · Accept-All: ส่ง [78 01] แล้ว [78 00] ทันทีเมื่อมีคำขอ Trade',
+      '   · Eject-All: ส่ง [78 00] สองครั้งทันทีเมื่อมีคำขอ Trade',
+      '   · Accept-All และ Eject-All เปิดพร้อมกันไม่ได้; เอาเมนู Capture ออกจาก UI แล้ว',
+    ]},
+    { v: '4.188.6', d: '2026-09-24', items: [
+      '🤝 Auto Trade — เพิ่มเมนู Accept-All Trade / Eject-All Trade ในหมวด อื่นๆ',
+      '   · Trade protocol ของ Rayrag ยังไม่มีใน Assist เดิม จึงเพิ่ม Trade Packet Capture แบบ IN/OUT เพื่อเรียนรู้ packet จริงก่อน ไม่เดา opcode',
+      '   · ปุ่ม 🔬 จับ Accept และ 🔬 จับ Eject: pause automation ชั่วคราว + จับ packet พร้อม marker ตอนคลิกปุ่ม Trade ใน WebGL',
+      '   · แสดง unknown incoming opcode เด่น ๆ และ outgoing packet หลังคลิก เพื่อใช้ยืนยัน request/response ในรอบถัดไป',
+      '   · ปุ่ม Auto Trade จะยังไม่ส่ง packet จนกว่าจะยืนยัน packet จากการ capture จริง ป้องกันส่งคำสั่งผิดประเภท',
+    ]},
+    { v: '4.188.5', d: '2026-09-24', items: [
+      '🪽 Fly Wing Warp Find — เพิ่มตัวเลือกใช้ Fly Wing (Item ID 601 ตาม Rayrag) สำหรับวาร์ปหามอน',
+      '   · ทำงานเฉพาะเมื่อ Combat ON + Warp Find ON + ไม่เจอมอนครบเวลาที่ตั้งไว้',
+      '   · Fly Wing และ Teleport Clip เลือกได้ทีละโหมด; เปิดอันหนึ่งจะปิดอีกอันอัตโนมัติ',
+      '   · เช็ก inventory ก่อนใช้: ถ้าไม่มี Fly Wing 601 จะไม่ส่ง use-item packet และจะรอรอบถัดไป',
+      '   · ใช้ packet ใช้ไอเท็มเดิม 0x2f ผ่าน sendUseItem(601); หลังใช้สำเร็จเริ่มนับ no-monster ใหม่',
+    ]},
+    { v: '4.188.4', d: '2026-09-24', items: [
+      '🧹 Remove Assist Chat Room — ลบระบบห้องแชตของตัว Assist ออกทั้งหมด',
+      '   · เอาปุ่ม 💬 ห้องแชต, modal, unread badge, reaction, reply และอัปโหลดไฟล์ออก',
+      '   · หยุด roomJoin / roomHistory / roomMessage / roomReact กับ relay server',
+      '   · คง Game Chat parser, บัพตามคำขอ, Telegram และ Remote Monitor ไว้ตามเดิม',
+    ]},
+    { v: '4.188.3', d: '2026-09-24', items: [
+      '💀 Post-Respawn Unstuck — หลัง Auto Respawn ยืนยันว่าเกิดใหม่แล้ว (HP > 0) ส่ง Direct Unstuck 0x73 จำนวน 1 ครั้งเสมอ',
+      '   · เป็น action แยกจาก AB Refresh: ไม่เริ่มรอบรับบัพและไม่รีเซ็ตตัวนับ AB',
+      '   · ถ้าจังหวะแรกส่งไม่สำเร็จ จะค้าง pending และ retry เมื่อ WebSocket พร้อม จนส่งสำเร็จ 1 ครั้ง แล้วล้าง flag',
+      '   · หลังส่ง Unstuck แล้ว post-respawn rest / farm guard ทำงานต่อเหมือนเดิม',
+    ]},
+    { v: '4.188.2', d: '2026-09-24', items: [
+      '🏠 รับบัพตอนนี้ = Auto Reset — กดแล้วส่ง Direct Unstuck 0x73 ทันที ไม่ตั้งคิว manual รอสถานะว่าง',
+      '   · จำแมพ+พิกัดปัจจุบัน → Unstuck ทันที → รอ 2 วินาที → วาร์ปกลับจุดเดิม',
+      '   · เมื่อกลับถึงจุดเดิม เริ่มนับถอยหลัง AB Auto รอบใหม่จากศูนย์',
+      '   · เอาสถานะ manual queued/Manual Run ออกจาก flow ของปุ่ม; รอบอัตโนมัติปกติยังรอ Combat ON ตามเดิม',
+    ]},
+    { v: '4.188.1', d: '2026-09-24', items: [
+      '🏠 Unstuck Fast Return — หลังส่ง Direct Unstuck 0x73 รอ 2 วินาที แล้ววาร์ปกลับแมพ+พิกัดเดิมทันที',
+      '   · ไม่รอตรวจ WAIT_SPAWN และไม่รอ WAIT_BUFF/AB timer เดิมอีก',
+      '   · ส่งวาร์ปกลับครั้งแรกทันทีเมื่อครบ 2 วินาที; หากยังไม่ถึงจุดเดิมจะ retry ทุก 5 วินาทีตามระบบเดิม',
+      '   · หน้า AB Refresh เอาช่อง “รอ AB (วิ)” ออก เพราะดีเลย์กลับถูกล็อกที่ 2 วินาที',
+    ]},
+    { v: '4.188.0', d: '2026-09-24', items: [
+      '🚶 Continuous Wander — ไม่มีเป้าแล้วเดินต่อเนื่องขึ้น ลดช่วงหยุดยืนระหว่างกวาดแมป',
+      '   · fallback wander: 3000ms → 500ms',
+      '   · GAT/Nav re-issue: 1000ms → 400ms',
+      '   · GAT move throttle: 900ms → 400ms',
+      '   · GAT chain ต่อขาใหม่เมื่อเหลือ ≤14 ช่อง (เดิม ≤10) เพื่อให้เดินลื่นต่อเนื่อง',
+      '   · เมื่อพบมอน/มีของรอเก็บ/กำลังสู้ ยังหยุด wander ตามเดิมเพื่อไม่ให้คำสั่งเดินแย่ง Combat',
+    ]},
+    { v: '4.187.9', d: '2026-09-24', items: [
+      '⚡ Fast retarget after loot — ฆ่ามอน → รอ drop สั้น ๆ → เก็บของให้คิวว่าง → หาเป้าใหม่ทันที',
+      '   · หลังเก็บของชิ้นสุดท้ายสำเร็จ ไม่ใช้ postCombatDelayMs อีก (combatCooldownUntil = now)',
+      '   · หลังมอนตายรอเพียง 250ms เพื่อให้ packet ของตกเข้าคิวก่อน ป้องกันวิ่งไปตีตัวใหม่ก่อนเก็บของ',
+      '   · ถ้ามีของในคิว Auto-Loot ยังบล็อก Combat จนเก็บเสร็จเหมือนเดิม',
+    ]},
+    { v: '4.187.8', d: '2026-09-24', items: [
+      '🧹 ซ่อนบรรทัดสถานะ Direct Unstuck fixed 0x73 จากหน้า AB Refresh (การทำงาน 0x73 คงเดิม)',
+    ]},
+    { v: '4.187.7', d: '2026-09-24', items: [
+      '🏠 Fixed Direct Unstuck — ล็อก packet ที่ยืนยันแล้วเป็น 0x73 (len=1) ในตัวสคริปต์',
+      '   · ไม่ใช้ Candidate / localStorage packet เดิมอีก ป้องกัน 0x71 packet ใหญ่ถูกเลือกผิด',
+      '   · เอาปุ่ม Capture / ใช้ Candidate / ล้าง Packet ออกจากหน้า AB Refresh',
+      '   · รอบ AB อัตโนมัติยังรอ Combat ON; ▶ รับบัพตอนนี้ยังใช้ได้แม้ Combat OFF',
+      '   · Warp Find/Teleport หามอนยังถูกบล็อกเมื่อ Combat OFF ตามเดิม',
+    ]},
+    { v: '4.187.6', d: '2026-09-24', items: [
+      '🏠 แก้ regression Direct Unstuck จาก v4.187.5 — ไม่บังคับ Combat สำหรับปุ่มรับบัพตอนนี้/Direct Unstuck อีกแล้ว',
+      '   · Combat OFF บล็อกเฉพาะ Warp Find/Teleport หามอน และรอบ AB อัตโนมัติ 10 นาที',
+      '   · ▶ รับบัพตอนนี้ ใช้ได้แม้ Combat OFF (ถือเป็นคำสั่งผู้ใช้โดยตรง)',
+      '   · รอบ AB ที่เริ่มแล้วทำจนจบ ไม่ถูก Combat OFF ยกเลิกกลางทางจนค้างที่จุดเกิด',
+      '   · ปิด Combat ขณะ IDLE จะรีเซ็ตเฉพาะ timer รอบอัตโนมัติ ไม่ล้าง Direct Packet/Candidate',
+    ]},
+    { v: '4.187.5', d: '2026-09-24', items: [
+      '🛑 Combat gate: ระบบ AB Refresh/Direct Unstuck จะไม่ทำงานและไม่วาร์ปเองขณะ Combat = OFF',
+      '   · Combat OFF ระหว่างรอบรับบัพ = หยุด routine ทันทีและไม่วาร์ปกลับฟาร์ม',
+      '   · ตัวจับเวลา 10 นาทีเริ่มใหม่เมื่อเปิด Combat — ป้องกันเปิด Combat แล้ววาร์ปทันทีจาก timer เก่า',
+      '   · Warp Find ผ่าน Teleport Clip เช็ค Combat ซ้ำที่ sendWarpFind เพื่อกันการเรียกจากทางอื่น',
+    ]},
+    { v: '4.187.4', d: '2026-09-24', items: [
+      '🏠 Direct Unstuck only — ยืนยัน packet 0x73 ใช้งานได้บนการตั้งค่าปัจจุบัน',
+      '   · เอาปุ่ม 🎯 จำปุ่ม Unstuck / ♻️ Reset ปุ่ม / UI fallback แบบคลิกตำแหน่งออก',
+      '   · AB Refresh จะทำงานเมื่อ Direct Packet = ON เท่านั้น ไม่ fallback ไปกด ESC/คลิกอัตโนมัติ',
+      '   · ยังเก็บ 🔬 จับ Packet / ✅ ใช้ Candidate / 🧹 ล้าง Packet ไว้สำหรับตั้งค่าใหม่หรือทดสอบภายหลัง',
+    ]},
+    { v: '4.187.3', d: '2026-09-24', items: [
+      '🔬 เพิ่ม Unstuck Packet Capture — จับ WebSocket OUT ตอนกด Unstuck จริง เพื่อหา opcode โดยไม่เดา protocol',
+      '   · เริ่มจับแล้ว pause automation ชั่วคราว + กด ESC ให้เอง ลด packet รบกวนจาก combat/loot/heal/skill/wander',
+      '   · แสดง packet ที่จับได้เป็นเวลา/opcode/length/hex และเลือก packet ล่าสุดเป็น Candidate อัตโนมัติ',
+      '   · ปุ่ม ✅ ใช้ Candidate เป็น Unstuck จะบันทึก packet แล้ว AB Refresh ส่งตรง ไม่ต้อง ESC/คลิกอีก',
+      '   · มีปุ่ม 🧹 ล้าง Packet / ปิด Direct Packet ได้ตลอด และยัง fallback วิธีปุ่มเดิมได้',
+    ]},
+    { v: '4.187.2', d: '2026-09-24', items: [
+      '🏠 แก้ระบบจำปุ่ม Unstuck: จับคลิกจากทั้ง document ไม่จำกัดเฉพาะ Unity canvas',
+      '   · ตอนใช้งานใช้ elementFromPoint() กด DOM/UI overlay ที่ตำแหน่งจำไว้ก่อน แล้วค่อย fallback ไป Unity canvas',
+      '   · ค้นปุ่ม Unstuck จาก text / aria-label / title / value แบบ contains และตัด UI ของ Assist ออก',
+      '   · เพิ่มปุ่ม ♻️ Reset ปุ่ม Unstuck + API ASSIST.resetUnstuckButton() และแสดงพิกัด/สถานะการจำ',
+      '   · reset จะยกเลิกรอบ AB ที่กำลังทำอย่างปลอดภัย ป้องกันคลิกตำแหน่งเก่าหลังเปลี่ยนความละเอียด',
+    ]},
+    { v: '4.187.1', d: '2026-09-24', items: [
+      '👁️ ปรับระบบตรวจจับมอนรอบตัว: รวมหลักฐานจาก SPAWN / MOVE / ENTITY_POS / minimap ให้เสถียรกว่าเดิม',
+      '   · 0x14 ENTITY_POS สามารถคืน ghost จาก MOVE ให้เป็น monster ได้ (ยกเว้น id ที่ radar ยืนยันว่าเป็นผู้เล่น)',
+      '   · 0x3c แก้ handler ซ้ำ/ตัวเก่าดัก packet: อ่าน count จริงทุกจำนวน และ force player beacon เป็น kind=0',
+      '   · false-despawn guard 2s → 6.5s: มอนยืนนิ่งไม่หลุด radar ง่าย แต่ despawn จริงยังถูกลบหลัง grace',
+      '   · progressive search เติม maxAcquireDistance เป็นรัศมีสุดท้ายเสมอ + reacquire เร็วขึ้น 1.5s → 0.6s',
+      '   · countMonsters กัน beacon player ซ้ำอีกชั้น ไม่ให้นับคนเป็นมอนใน flee/สถิติ',
+    ]},
+    { v: '4.187.0', d: '2026-09-24', items: [
+      '🌀 Warp Find: เลือกใช้ Teleport Lv.1 (skillId 53 / Teleport Clip) แทน packet วาร์ปสุ่มเดิมได้',
+      '   · เมื่อเปิดโหมดนี้ skillId 53 จะถูกสงวนไว้สำหรับ Warp Find ไม่ถูกร่ายตาม timer ของ Auto-Skill',
+      '🏠 AB Refresh: ทุก 10 นาที ESC → Unstuck → กลับจุดเกิด → รอรับบัพ AB → วาร์ปกลับจุดฟาร์มเดิม',
+      '   · เพิ่มระบบบันทึกตำแหน่งปุ่ม Unstuck แบบ ratio ต่อ canvas ใช้ได้กับหลายความละเอียด',
+      '   · routine แยก state และกันชนกับ combat / wander / sell / storage / buffVisit / farm warp-back',
+    ]},
     { v: '4.186.2', d: '2026-08-27', items: [
       '🚑 แก้ HP ค้าง/ใช้ยารัวบน rayrag (ต่อจาก 4.186.1 ที่ยังไม่หาย)',
       '   พบจาก debug จริง: rayrag ส่ง statType ใน 0x25 เปลี่ยนทุก packet (48,127,124,...) ไม่เสถียร',
@@ -172,7 +358,7 @@
     { v: '4.183.0', d: '2026-08-25', items: [
       '🗺️✨ ใหม่! GAT wander — เดินหามอนตาม "ตารางเดินได้" จากไฟล์ .gat ของแมป (ground truth จาก server)',
       '   อ่านค่า type ต่อช่อง (0=เดินได้) → สุ่มเป้า 25-70 ช่องในพื้นที่เดินได้ → หาทางด้วย A* → เดินตามจุดเลี้ยว',
-      '   เดินต่อเนื่องแบบคน: chain ล่วงหน้า — ยังไม่ถึงเป้า (เหลือ ≤10 ช่อง) ก็ต่อขาใหม่ทันที ไม่หยุดยืน',
+      '   เดินต่อเนื่องแบบคน: chain ล่วงหน้า — ยังไม่ถึงเป้า (เหลือ ≤14 ช่อง) ก็ต่อขาใหม่ทันที ไม่หยุดยืน',
       '   กวาดพื้นที่ตามทิศ: มุ่งทิศหลัก 8 ทิศ 60-150 ช่อง แล้วเลี้ยว 45-135° (ไม่ย้อนกลับ 180°) เหมือนกวาดหามอนจริง',
       '   moc_fild01 ฝังมาในตัว · อีก 168 แผนที่ (ฟิลด์/ดัน/เมือง) เก็บใน repo โฟลเดอร์ maps-gat — เข้าแมปไหน script ดึงเอง + cache localStorage',
       '   ปุ่ม "เดินตาม GAT" ใน Sub-tab Nav (✅ = แมปนี้มีข้อมูล) · สั่งลำดับ: GAT → nav ที่เรียนรู้ → สุ่มทิศ',
@@ -218,17 +404,7 @@
       '🌀 กดวาร์ปสุ่มรัว ๆ แล้วเหมือนต้องรอ? — คือ server รับ teleport ห่างกัน ≥3 วิ',
       '   (ยิงถี่กว่านั้นโดนดรอปเงียบ — เคยทำระบบขาย/ฝากค้างมาแล้ว) serializer จึงคิวไว้ยิงให้เอง',
       '   → ตอนนี้ตอนถูกคิว log บอกชัด: "จะยิงในอีก ~N วิ" แทนข้อความ dbg ที่ไปโผล่แค่ console',
-    ]},
-    { v: '4.180.0', d: '2026-08-21', items: [
-      '😀 ใหม่! รีแอ็กชั่นข้อความแชท — ในห้องแชท UI script และ remote monitor:',
-      '   ปุ่ม 🙂+ ท้ายข้อความ → เลือกอีโมจิ (👍❤️😂😮😢🔥🎉🙏) กดได้ทั้งข้อตัวเองและคนอื่น',
-      '   chip รีแอ็กชั่นแสดงมุมขวาล่างข้อความ: อีโมจิ + จำนวนคน · hover ดูรายชื่อ',
-      '   · ตัวที่เรากดอยู่ = ขอบฟ้า · คลิก chip ซ้ำ = ยกเลิกของเรา',
-      '   sync ทุก client ทันทีผ่าน relay (roomReact) · เก็บถาวรไปกับ chat-history.json',
-      '   ★ ต้องรีสตาร์ท relay server ก่อน (เพิ่ม id ข้อความ + handler roomReact)',
-      '   ข้อความเก่าก่อนอัปเดตไม่มี id → กด reaction ไม่ได้ (เฉพาะข้อใหม่)',
-    ]},
-    { v: '4.179.0', d: '2026-08-21', items: [
+    ]},    { v: '4.179.0', d: '2026-08-21', items: [
       '👤 ใหม่! Profile การตั้งค่า — สร้าง/สลับ/ลบ ชุด config ได้หลายชุด',
       '   เหมาะกับ: บอทหลายตัวต่างบัญชี (รวม auto-login) หรือสไตล์เล่นต่างกัน',
       '   อยู่ใน Sub-tab เดียวกับ export/import: เลือก profile (● = กำลังใช้) ·',
@@ -508,12 +684,7 @@
       '   (แก้: เดิม v4.156 เข้าใจว่าก้อน = ของในถุงล้วน → ของที่สวมโผล่ใน Equip tab)',
       '⚔️ ก้อน = สวม + ในถุงรวมกัน · bag slot id = 20000+ลำดับ "เฉพาะชิ้นที่ไม่ได้สวม"',
       '📏 ถอดขอบ inst เดิม 0x13900 (เดิมหลุดชิ้นที่เกิน 32 — มีตัวละครถือ 59 ชิ้น!)',
-    ]},
-    { v: '4.156.1', d: '2026-08-20', items: [
-      '🖱️ ห้องแชทลากย้ายอิสระได้ — จับที่แถบหัวเรื่อง "🗨️ ห้องแชท" กดค้างลาก (เหมือน popup Inventory)',
-      '   กันลากหลุดจอ · คลิกพื้นหลัง/Esc ปิดได้เหมือนเดิม · ช่องพิมพ์/ปุ่มใช้งานได้ปกติ',
-    ]},
-    { v: '4.156.0', d: '2026-08-20', items: [
+    ]},    { v: '4.156.0', d: '2026-08-20', items: [
       '🔓 ปริศนาครบ! ก้อน equipment ตอน login = "ของในถุงเท่านั้น" ไม่รวมที่สวมอยู่',
       '   (ยืนยัน: deposit ทำกับของในก้อนได้ตรง ๆ — ทฤษฎี @28&3=สวม/ถุง เมื่อวานเป็นเรื่องบังเอิญ ถอดทิ้งแล้ว)',
       '🎯 ลำดับในก้อน = bag slot id (20000+N) — ยืนยันจาก deposit จริง:',
@@ -974,7 +1145,7 @@
       '🔍 flee debug log — • = ผู้เล่นจาก minimap (ไม่มีชื่อ)',
     ]},
     { v: '4.109.0', d: '2026-08-17', items: [
-      '🔴 Ctrl+V ใน chat/feedback ไม่ทำงาน (ต้องคลิกขวา Paste)',
+      '🔴 Ctrl+V ใน feedback ไม่ทำงาน (ต้องคลิกขวา Paste)',
       '   เหตุ: keydown handler ที่เราทำไว้กัน Unity แย่งคีย์ preventDefault() ทุกปุ่ม',
       '   รวมถึง Ctrl+V → browser ไม่สร้าง paste event เลย (คลิกขวาไม่ผ่าน keydown เลยรอด)',
       '   แก้: Ctrl/Cmd+V/C/X/A ไม่ preventDefault — คืนให้ browser ทำ → paste event ไหลเข้า handler เดิม',
@@ -1078,7 +1249,6 @@
     ]},
     { v: '4.87.0', d: '2026-08-14', items: [
       '🚶 Toggle เดินหลีกหลัง abandon — เปิด/ปิดได้จาก sub-tab Combat',
-      '🗨️ Chat modal ชิดขวาแทนกลางจอ — ไม่บังจอเกม',
     ]},
     { v: '4.86.0', d: '2026-08-14', items: [
       '🔴 แก้ critical: duplicate 0x0b handler บล็อก handler หลัก — มอนตีเราไม่ตอบโต้!',
@@ -1097,19 +1267,20 @@
   // keys ที่บันทึก/โหลด (boolean/number/array/string — ไม่เก็บ function หรือ object ซ้อน)
   const PERSIST_KEYS = [
     'healEnabled', 'healAtPercent', 'healItems', 'healMode', 'healDelayMs', 'healAtMax',
-    'buffEnabled', 'buffItems', 'buffRebuffDelayMs', 'buffVisitEnabled', 'buffVisitMap', 'buffVisitX', 'buffVisitY', 'buffVisitIntervalSec', 'buffVisitWaitSec', 'autoClearConsoleMin', 'monitorServerEnabled', 'monitorServerUrl', 'monitorSendIntervalMs',
+    'buffEnabled', 'buffItems', 'buffRebuffDelayMs', 'buffVisitEnabled', 'buffVisitMap', 'buffVisitX', 'buffVisitY', 'buffVisitIntervalSec', 'buffVisitWaitSec', 'unstuckBuffEnabled', 'unstuckBuffIntervalSec', 'unstuckBuffWaitSec', 'unstuckBuffMenuDelayMs', 'unstuckBuffSpawnTimeoutSec', 'unstuckBuffClickXRatio', 'unstuckBuffClickYRatio', 'unstuckPacketEnabled', 'unstuckPacketHex', 'autoClearConsoleMin', 'monitorServerEnabled', 'monitorServerUrl', 'monitorSendIntervalMs',
     'skillEnabled', 'skills', 'disabledSkillIds', 'buffOthersEnabled',
     'lootEnabled', 'lootDelayAfterDropMs', 'lootUseKillPos', 'pickRadiusKill', 'lootRespectOthers', 'filter', 'sendThrottleMs', 'maxAttempts',
     'warpLootEnabled',
     'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'normalAttackEnabled', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'warpDanceEnabled', 'warpDanceMode', 'warpDanceDistance', 'warpDanceThrottleMs', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
     'maxAcquireDistance', 'searchRadii', 'maxChaseDistance', 'attackPendingMax', 'attackAbandonMs', 'antiKS', 'avoidOtherPlayers', 'targetLowestHpFirst',
-    'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
-    'wanderEnabled', 'warpFindEnabled', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
+    'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'hpFleeEnabled', 'hpFleePercent', 'hpFleeMode', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
+    'wanderEnabled', 'warpFindEnabled', 'warpFindUseFlyWing', 'warpFindUseTeleportSkill', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
     'restEnabled', 'restHpPercent', 'restSpPercent', 'restUntilPercent', 'restMaxSec', 'restDelayMs', 'postCombatDelayMs', 'autoRespawnEnabled', 'autoRespawnDelayMs', 'telegramAlertCard', 'telegramAlertFlee', 'telegramAlertBotMention', 'telegramAlertNearby', 'telegramAlertWhisper', 'telegramBotToken', 'telegramChatId',
     'sellEnabled', 'sellNpcName', 'sellNpcMap', 'sellNpcX', 'sellNpcY', 'sellIntervalMin', 'sellOnFull', 'sellItemIds',
     'storageEnabled', 'kafraName', 'kafraMap', 'kafraMapX', 'kafraMapY', 'kafraChoice', 'depositOnFull', 'depositAfterSell', 'depositItemIds',
     'farmMap', 'farmMapX', 'farmMapY', 'warpBackToFarm', 'farmMaps', 'farmRotateOnDeath', 'farmMapIdx', 'fleeFromPlayers', 'fleeMode', 'fleeMaps', 'fleePlayerRadius', 'fleeWarpCooldownSec',
     'navRecording', 'navMergeRadius', 'navWanderUseNav', 'navWanderMode', 'gatWanderEnabled',
+    'tradeAcceptAll', 'tradeRejectAll', 'tradeRequestOpcode', 'tradeRequestLen', 'tradeAcceptPacketHex', 'tradeRejectPacketHex',
     'itemNames',
   ];
   function saveConfig() {
@@ -1135,6 +1306,13 @@
       //   ถ้า saved = 3000 (= old default) → ปรับเป็น 1000 (new default)
       //   ถ้า saved เป็นค่าอื่นที่ผู้ใช้ตั้งเอง → เก็บไว้
       if (saved.monitorSendIntervalMs === 3000) { CFG.monitorSendIntervalMs = 1000; log('⚙️ migrate monitorSendIntervalMs: 3000 → 1000'); }
+      // ★ v4.189.1 migrate: Direct Unstuck/AB Auto old default 600s → 500s
+      if (saved.unstuckBuffIntervalSec === 600) {
+        CFG.unstuckBuffIntervalSec = 500;
+        saved.unstuckBuffIntervalSec = 500;
+        try { localStorage.setItem(CFG_STORAGE_KEY, JSON.stringify(saved)); } catch (_) {}
+        log('⚙️ migrate Direct Unstuck interval: 600s → 500s');
+      }
       log('💾 โหลดค่าที่บันทึกไว้จากเครื่อง (' + PERSIST_KEYS.filter(k => k in saved).length + ' รายการ)');
     } catch (e) { /* parse fail — ใช้ default */ }
   }
@@ -1401,6 +1579,16 @@
     buffVisitY: -999,
     buffVisitIntervalSec: 600,    // ทุกกี่วินาทีไปรับ (default 10 นาที)
     buffVisitWaitSec: 20,        // รอบอทบัพนานสุดกี่วินาที (ยืนรอรับ Heal/Buff)
+    // ★★ AB REFRESH ผ่านเมนูเกม: ESC → Unstuck → รอรับบัพ → กลับจุดฟาร์มเดิม
+    unstuckBuffEnabled: false,     // เปิดรอบกลับจุดเกิดรับบัพ AB
+    unstuckBuffIntervalSec: 500,   // default 500 วินาที
+    unstuckBuffWaitSec: 2,         // legacy compatibility — v4.188.1 ล็อกกลับหลัง Unstuck 2 วินาที
+    unstuckBuffMenuDelayMs: 700,   // รอเมนู ESC เปิดก่อนคลิก Unstuck
+    unstuckBuffSpawnTimeoutSec: 12,// รอการย้ายตำแหน่ง/แมปหลังคลิก Unstuck ก่อนถือว่าเกิดแล้ว
+    unstuckBuffClickXRatio: null,  // ตำแหน่งปุ่ม Unstuck เทียบกับ canvas (0..1) — calibrate ครั้งเดียว
+    unstuckBuffClickYRatio: null,
+    unstuckPacketEnabled: true,     // ★ v4.187.7 compatibility flag — Direct Unstuck ถูกล็อกเป็น 0x73
+    unstuckPacketHex: '73',          // ★ v4.187.7 fixed packet; ค่า localStorage เดิมจะถูก ignore
     buffCheckMs: 20000,            // ความถี่ในการเช็ค (1 วิ)
     buffRebuffDelayMs: 5000,      // รออย่างน้อย N ms ก่อนใช้ buff ตัวเดิมซ้ำ (กัน spurious)
 
@@ -1412,6 +1600,15 @@
     skills: [],                   // รายการ skill config
     disabledSkillIds: [],         // skillId ที่ toggle ปิดชั่วคราว
     buffOthersEnabled: false,     // ★★ บอทบัพให้ผู้เล่นอื่น — default OFF! ต้องเปิดเอง (กันบัพมั่วใส่คนแปลกหน้าตอนเดินผ่าน)
+
+    // ---------- AUTO TRADE (incoming request) ----------
+    // ★ packet ต้องยืนยันจาก Rayrag จริงก่อน — ห้ามเดา opcode
+    tradeAcceptAll: false,         // รับคำขอ Trade ทุกคนอัตโนมัติ (เปิดได้หลัง calibrate)
+    tradeRejectAll: false,         // ปฏิเสธ/Eject คำขอ Trade ทุกคนอัตโนมัติ (mutually exclusive)
+    tradeRequestOpcode: 0x7e,      // verified Rayrag incoming Trade Request
+    tradeRequestLen: 43,           // verified Rayrag Trade Request length
+    tradeAcceptPacketHex: '78 01 78 00', // verified sequence marker; runtime sends two 2-byte packets
+    tradeRejectPacketHex: '78 00 78 00', // verified sequence marker; runtime sends two 2-byte packets
 
     // ---------- MISC ----------
     autoClearConsoleMin: 10,       // ★ 0=off, >0=clear browser console ทุก N นาที (กัน log เยอะค้างหน่วย)
@@ -1463,9 +1660,9 @@
     //  เลือก NPC + แมป เอง + เลือก item ที่จะขายเอง (default ไม่ขายอะไร)
     sellEnabled: true,
     sellNpcName: 'Tool Dealer',   // ชื่อ NPC (หาจาก entities kind=2)
-    sellNpcMap: 'izlude_in',     // แมปที่ NPC อยู่ (วาร์ปไปแมปนี้)
-    sellNpcX: 116,                // ★ พิกัด X ที่จะวาร์ปไป (ใกล้ NPC ที่สุด, mirror บอทหลัก npcMapX)
-    sellNpcY: 55,                 // ★ พิกัด Y ที่จะวาร์ปไป (-999 = random spawn, แต่อาจไกล NPC)
+    sellNpcMap: 'izlude_in',     // แมปที่ NPC อยู่ (ต้องตรงกับ Save Point หลัง Unstuck)
+    sellNpcX: 116,                // ★ พิกัด X จุดเดินหลัง Unstuck (ตั้งใกล้ NPC)
+    sellNpcY: 55,                 // ★ พิกัด Y จุดเดินหลัง Unstuck
     sellIntervalMin: 0,           // 0=off, >0=ขายทุก N นาที
     sellOnFull: true,             // ขายเมื่อของเต็ม (server ส่ง 'too full')
     sellItemIds: [908,909,910,911,918,919,920,921,924,926,928,940,943,946,949,950,951,955,960,961,962,1024,1052,7033,935,915,913,957,7032,902,1068,1067,948,907,1021,906,937,945,705,1023,1050,956,1057,963,914,905,511,711,721,1051,1054,1053,901,1094,1020,1019,7054,1022,7013,7094,7356,7317,7004,7049,1055,7064,967,912,1027,1096,7070,7358,7357,942,7359,953,1501,2221,1035,1032,1031,1013,1402,1916,1026,947,1014,1040,1034,1012,737,904,7031,1056,7007,903,7041,930,958,934,1059,1099,1098,7174,1025,1042,1017,7318,1028,1041,1061,1405,1408,2220,7119,923,7012,1063,7009,7002,931,7005,1095,1097,938,2297,1301,932,1505,1060,734,7069,7072,7066,7068,954,7156,7053,7158,7157,7106,7107,7001,7159,7124,7063,7111,7112,1038,7015,713,936,2303,1016,2304,1202,7154,7155,7153,7152,7126,1044,922,1116,1064,1201,1039,1602,1033,7067,1048,1062,944,7003,7006,1036,7123,1037,941,7030,7150,7149,7151,959],              // ★ item id ที่ติ๊กว่าจะขาย (default ว่าง = ไม่ขายอะไร)
@@ -1475,9 +1672,9 @@
     //  mirror บอทหลัก config.bot.autoStorage (config.json:743-924)
     storageEnabled: true,        // เปิดใช้ตอนเริ่มหรือไม่
     kafraName: 'Kafra Staff',     // ชื่อ NPC Kafra (หาจาก entities kind=2)
-    kafraMap: 'izlude',           // แมปที่ Kafra อยู่ (วาร์ปไปแมปนี้)
-    kafraMapX: 134,                 // พิกัดวาร์ป X (0 = ใช้ sellNpcX/Y แทน)
-    kafraMapY: 79,                 // พิกัดวาร์ป Y
+    kafraMap: 'izlude',           // แมปที่ Kafra อยู่ (ต้องตรงกับ Save Point หลัง Unstuck)
+    kafraMapX: 134,                 // พิกัดเดิน X หลัง Unstuck (0 = ใช้ sellNpcX/Y แทน)
+    kafraMapY: 79,                 // พิกัดเดิน Y หลัง Unstuck
     kafraChoice: 1,               // index เมนู "Use Storage" (0=Save, 1=Use Storage, 2=Teleport)
     depositOnFull: true,          // ฝากเมื่อของเต็ม (server ส่ง 'too full')
     depositAfterSell: true,       // ★ chain: ฝากต่อทันทีหลังขายเสร็จ
@@ -1579,6 +1776,10 @@
     fleeCooldownMs: 3000,
     fleeMonsters: [],             // ★ มอนที่ต้องหนี (ชื่อหรือ sub-ID) — เจอในระยะ → วาร์ปหนีทันที
     fleeMonsterRadius: 20,        // ★ ระยะ (ช่อง) ที่ถ้าเจอมอนใน fleeMonsters → วาร์ปหนี
+    // ★ v4.188.8 HP Emergency Flee
+    hpFleeEnabled: false,          // HP ต่ำกว่า % ที่ตั้ง → หนีฉุกเฉิน
+    hpFleePercent: 30,             // threshold 1-99
+    hpFleeMode: 'sameMap',         // 'sameMap' = Direct/Clip/Wing fallback · 'unstuck' = 0x73
     // KS avoidance + ป้องกันแย่ง
     antiKS: true,                 // ไม่ตีมอนที่คนอื่นกำลังสู้ (default ON)
     antiKSCooldownMs: 5000,       // มอนที่ถูกตีโดยคนอื่น จะถูกข้ามไป N ms
@@ -1599,8 +1800,10 @@
     // หามอน
     wanderEnabled: true,          // ไม่เจอมอน → สุ่มเดิน
     wanderMaxStep: 20,            // สุ่มระยะ ≤20 ช่อง
-    wanderCooldownMs: 3000,
+    wanderCooldownMs: 500,
     warpFindEnabled: false,       // ไม่เจอมอนนาน → วาร์ปสุ่ม (toggle, default OFF)
+    warpFindUseFlyWing: false,    // ★ true = ใช้ Fly Wing itemId 601 (Rayrag) สำหรับ warp-find
+    warpFindUseTeleportSkill: true,// ★ true = ใช้ Teleport Lv.1 (skillId 53 / Teleport Clip) สำหรับ warp-find
     noMonsterWarpSec: 30,
 
     // โหมดกรองของ: 'all' = เก็บหมด, 'only' = เก็บเฉพาะ, 'except' = ยกเว้น
@@ -1610,7 +1813,7 @@
     verbose: true,
     itemNames: {
       501: 'Red Potion', 502: 'Yellow Potion', 503: 'White Potion',
-      504: 'Blue Potion', 505: 'Wing of Fly', 601: 'Wing of Butterfly',
+      504: 'Blue Potion', 505: 'Wing of Fly', 601: 'Fly Wing',   // ★ Rayrag DB: Fly Wing = 601
       909: 'Jellopy', 916: 'Bird Feather', 512: 'Apple',
     },
   };
@@ -1620,6 +1823,15 @@
   const CFG_DEFAULTS = JSON.parse(JSON.stringify(CFG));
   // ★ โหลดค่าที่บันทึกไว้จาก localStorage (ทับ default)
   loadConfig();
+  // ★ v4.188.7 verified Rayrag Trade protocol — ignore stale capture/calibration values from older versions
+  CFG.tradeRequestOpcode = 0x7e;
+  CFG.tradeRequestLen = 43;
+  CFG.tradeAcceptPacketHex = '78 01 78 00';
+  CFG.tradeRejectPacketHex = '78 00 78 00';
+  // ★ v4.187.7: override legacy/captured value — Unstuck confirmed as 0x73 len=1
+  CFG.unstuckPacketEnabled = true;
+  CFG.unstuckPacketHex = '73';
+  CFG.unstuckBuffWaitSec = 2; // ★ v4.188.1 fixed return delay compatibility
   loadBuffTimes();   // ★ โหลดเวลา buff ล่าสุดข้าม session
   loadSkillTimes();  // ★ โหลดเวลา skill ล่าสุดข้าม session
 
@@ -1775,6 +1987,22 @@
   let hpStatAt = 0;   // ★ timestamp ที่ server ส่งค่า HP มาล่าสุด (0x25/SPAWN เท่านั้น — ไม่รวม local ดาเมจ)
                       //   ใช้คู่กับ heal: กันตัดสิน "ยาหมด" ตอน HP ค้างเพราะ server ยังไม่ส่งค่าใหม่ (gfix ส่งช้า)
   const sp = { cur: null, max: null };   // ★ SP สำหรับ autoSkill — ตรวจ spMin
+  // ★ v4.189.10 — แยก HP จริงที่แสดง (server authoritative) ออกจากค่าประมาณฉุกเฉิน
+  // hp.cur/hp.max จะถูกแก้เฉพาะจาก STAT/SPAWN/DEATH เท่านั้น เพื่อไม่ให้ drift จาก damage packet ซ้ำ
+  let hpSafetyCur = null, hpSafetyMax = null, hpSafetyAt = 0;
+  function syncHpSafety(cur, m) {
+    if (cur == null || !(m > 0)) { hpSafetyCur = null; hpSafetyMax = null; hpSafetyAt = 0; return; }
+    hpSafetyCur = Math.max(0, Math.min(m, cur)); hpSafetyMax = m; hpSafetyAt = nowMs();
+  }
+  function noteHpSafetyDamage(damage) {
+    if (!(damage > 0) || hp.max == null || !(hp.max > 0)) return;
+    if (hpSafetyCur == null || hpSafetyMax !== hp.max) { hpSafetyCur = hp.cur; hpSafetyMax = hp.max; }
+    if (hpSafetyCur != null) { hpSafetyCur = Math.max(0, hpSafetyCur - damage); hpSafetyAt = nowMs(); }
+  }
+  function hpSafetyPct() {
+    if (hpSafetyCur != null && hpSafetyMax > 0 && hpSafetyMax === hp.max) return (hpSafetyCur / hpSafetyMax) * 100;
+    return hpPct();
+  }
   // ★★ 0x25 STAT routing — สองสไตล์ server (จาก capture จริงทั้งคู่):
   //   · gfix-ro: statType เสถียรต่อ stat (6=HP) + ส่ง stat อื่นปน (มักค่าเต็ม 127/127)
   //   · rayrag:  statType เปลี่ยนทุก packet (48,127,124,...) แต่ทุก packet คือ HP จริง!
@@ -1828,10 +2056,22 @@
       isDead = false;
       heal.clearExhausted();                            // ล้าง mark "หมด" ทั้งหมด เริ่มนับใหม่
       heal.allExhaustedLogged = false;
+      // ★ v4.188.3 — ถ้าเกิดใหม่นี้มาจาก Auto Respawn ให้ Unstuck 0x73 1 ครั้งเสมอ
+      // ลองส่งทันทีตอน HP > 0 ยืนยันว่าเกิดใหม่แล้ว; ถ้ายังส่งไม่ได้ combatLoop จะ retry จนสำเร็จ
+      if (autoRespawnUnstuckPending) {
+        if (sendDirectUnstuckPacket()) {
+          autoRespawnUnstuckPending = false;
+          autoRespawnUnstuckReadyAt = 0;
+          log('💀 Auto Respawn สำเร็จ → Direct Unstuck 0x73 ครบ 1 ครั้ง');
+        } else {
+          autoRespawnUnstuckReadyAt = now + 200;
+        }
+      }
     }
     hp.cur = cur;
     hp.max = m;
     hpStatAt = now;
+    syncHpSafety(cur, m);
   }
   const hpPct = () => (hp.cur != null && hp.max > 0) ? (hp.cur / hp.max) * 100 : null;
   const spPct = () => (sp.cur != null && sp.max > 0) ? (sp.cur / sp.max) * 100 : null;
@@ -1852,6 +2092,8 @@
   let isDead = false;
   let lastRespawnAt = 0;          // ★ timestamp ที่ส่ง respawn ล่าสุด (throttle)
   let postRespawnRest = false;    // ★ บังคับนั่งพักหลัง respawn จนกว่า HP จะเต็ม
+  let autoRespawnUnstuckPending = false; // ★ v4.188.3: Auto Respawn สำเร็จแล้วต้องส่ง Direct Unstuck 0x73 ให้ครบ 1 ครั้ง
+  let autoRespawnUnstuckReadyAt = 0;    // เวลาที่อนุญาต retry หากส่งทันทีตอนยืนยันเกิดใหม่ไม่สำเร็จ
 
   // ---------- AUTO-REST state ----------
   let isResting = false;          // กำลังนั่งพักอยู่
@@ -2132,10 +2374,12 @@
   let buffVisitLastWarpAt = 0;
   const buffVisitLoop = setInterval(() => {
     if (!CFG.buffVisitEnabled) return;
+    if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) return; // ★ v4.189.0 AB Auto รอปิดงานมอนล่าสุด
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
     if (playerId == null || player.x == null || !currentMap) return;
     if (sellState !== 'IDLE' || storageState !== 'IDLE') return;   // ห้ามชน routine
+    if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return; // AB Refresh เป็นเจ้าของตัวละคร
     const now = nowMs();
 
     if (buffVisitState === 'IDLE') {
@@ -2207,6 +2451,552 @@
       return;
     }
   }, 1000);
+
+  // ============================================================
+  //  AB REFRESH VIA DIRECT UNSTUCK 0x73
+  //  IDLE → DIRECT 0x73 → WAIT_RETURN_2S → RETURN
+  //  ★ v4.188.1: จดแมป+พิกัดเดิม → Unstuck → ครบ 2 วิวาร์ปกลับทันที (ไม่รอ spawn/buff state)
+  const UNSTUCK_RETURN_DELAY_MS = 2000;
+  //  ★ ปุ่ม Unstuck เป็น Unity canvas จึง calibrate ตำแหน่งครั้งเดียวเป็น ratio (0..1)
+  // ============================================================
+  let unstuckBuffState = 'IDLE';
+  let unstuckBuffLastAt = 0;
+  let unstuckBuffManualRun = false;   // ★ v4.187.6: ▶ รับบัพตอนนี้ bypass Combat gate (explicit user action)
+  let unstuckBuffReturnTo = null;
+  let unstuckBuffStepAt = 0;
+  let unstuckBuffWaitUntil = 0;
+  let unstuckBuffSource = null;
+  let unstuckBuffLastWarpAt = 0;
+  let unstuckBuffNoPosWarned = false;
+  // ★ v4.189.0 — เมื่อ AB Auto ครบเวลาระหว่างกำลังสู้: ปิดงาน target ปัจจุบัน + เก็บ loot ให้หมดก่อน Unstuck
+  let unstuckBuffAutoFinishPending = false;
+  let unstuckBuffFinishTargetId = null;
+  let unstuckBuffLootSettleUntil = 0;
+  function clearUnstuckBuffAutoFinishPending() {
+    unstuckBuffAutoFinishPending = false;
+    unstuckBuffFinishTargetId = null;
+    unstuckBuffLootSettleUntil = 0;
+  }
+  let unstuckCaptureArmed = false;
+
+  // ★★ v4.187.3 — จับ packet Unstuck จาก WebSocket OUT จริง (ไม่เดา opcode)
+  let unstuckPacketCaptureActive = false;
+  let unstuckPacketCaptureStartedAt = 0;
+  let unstuckPacketCapturePackets = [];   // [{dt, opcode, len, hex}]
+  let unstuckPacketCandidate = null;
+  let unstuckPacketCaptureTimer = null;
+  let unstuckPacketCaptureSnapshot = null;
+  let unstuckPacketCaptureSource = null;
+  const UNSTUCK_CAPTURE_MS = 12000;
+  const UNSTUCK_CAPTURE_MAX = 40;
+
+  function u8ToHex(u) {
+    return Array.from(u || []).map(b => Number(b).toString(16).padStart(2, '0')).join(' ');
+  }
+  function hexToU8(hex) {
+    try {
+      const parts = String(hex || '').trim().split(/\s+/).filter(Boolean);
+      if (!parts.length || parts.length > 512) return null;
+      const vals = parts.map(x => parseInt(x, 16));
+      if (vals.some(v => !Number.isFinite(v) || v < 0 || v > 255)) return null;
+      return new Uint8Array(vals);
+    } catch (_) { return null; }
+  }
+  // ★★ v4.188.6 — Trade Packet Capture / calibration (Rayrag-specific)
+  let tradeCaptureActive = false;
+  let tradeCaptureMode = '';       // 'accept' | 'reject'
+  let tradeCaptureStartedAt = 0;
+  let tradeCaptureRecords = [];    // packet + CLICK markers
+  let tradeCaptureTimer = null;
+  let tradeCaptureStopTimer = null;
+  let tradeCaptureSnapshot = null;
+  const TRADE_CAPTURE_MS = 12000;
+  const TRADE_CAPTURE_MAX = 80;
+  // incoming opcodes ที่ Assist รู้จักอยู่แล้ว — opcode นอกชุดนี้จะติด ★UNKNOWN ช่วยหา Trade request
+  const TRADE_KNOWN_IN_OPS = new Set([0x00,0x03,0x06,0x07,0x0b,0x0f,0x12,0x14,0x17,0x18,0x19,0x1b,0x1d,0x20,0x22,0x24,0x25,0x27,0x2a,0x2c,0x30,0x32,0x36,0x38,0x3c,0x4d,0x51,0x52,0x53,0x5b]);
+
+  function tradeCaptureStatusText() {
+    const mode = tradeCaptureMode === 'accept' ? 'ACCEPT' : tradeCaptureMode === 'reject' ? 'EJECT/REJECT' : '-';
+    const head = tradeCaptureActive
+      ? '🔬 CAPTURE ' + mode + ' กำลังทำงาน — ให้ผู้เล่นอื่นกด Trade แล้วคลิก ' + (tradeCaptureMode === 'accept' ? 'Accept' : 'Reject/Eject') + ' ในเกม 1 ครั้ง'
+      : 'สถานะ: ' + (tradeCaptureRecords.length ? 'มีข้อมูล capture ล่าสุด' : 'ยังไม่ได้จับ packet');
+    const rows = tradeCaptureRecords.slice(-28).map(r => {
+      if (r.kind === 'click') return '+' + r.dt + 'ms  🖱️ CLICK canvas @(' + r.x + ',' + r.y + ')';
+      const op = '0x' + r.opcode.toString(16).padStart(2,'0');
+      const unk = r.dir === 'IN' && !TRADE_KNOWN_IN_OPS.has(r.opcode) ? '  ★UNKNOWN' : '';
+      const hex = r.hex.length > 220 ? r.hex.slice(0,220) + ' …' : r.hex;
+      return '+' + r.dt + 'ms  ' + r.dir + ' ' + op + ' len=' + r.len + unk + ' [' + hex + ']';
+    });
+    return head + (rows.length ? '\n' + rows.join('\n') : '');
+  }
+  function updateTradeCaptureUI() {
+    const root = document.getElementById('__assist_root');
+    if (!root) return;
+    const el = root.querySelector('#__assist_trade_capture_status');
+    if (el) el.textContent = tradeCaptureStatusText();
+  }
+  function captureTradePacket(dir, u) {
+    if (!tradeCaptureActive || !u || !u.length) return;
+    const rec = { kind:'packet', dir, dt:Math.max(0, nowMs()-tradeCaptureStartedAt), opcode:u[0], len:u.length, hex:u8ToHex(u) };
+    tradeCaptureRecords.push(rec);
+    while (tradeCaptureRecords.length > TRADE_CAPTURE_MAX) tradeCaptureRecords.shift();
+    updateTradeCaptureUI();
+  }
+  function snapshotAndPauseForTradeCapture() {
+    const keys = ['combatEnabled','lootEnabled','healEnabled','skillEnabled','buffEnabled','warpFindEnabled','wanderEnabled','fleeFromPlayers','restEnabled','warpLootEnabled'];
+    tradeCaptureSnapshot = {};
+    for (const k of keys) { tradeCaptureSnapshot[k] = CFG[k]; CFG[k] = false; }
+    target = null; noMonsterSince = 0;
+    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
+  }
+  function restoreAfterTradeCapture() {
+    if (tradeCaptureSnapshot) for (const [k,v] of Object.entries(tradeCaptureSnapshot)) CFG[k] = v;
+    tradeCaptureSnapshot = null;
+  }
+  function stopTradeCapture(reason) {
+    if (!tradeCaptureActive) return false;
+    tradeCaptureActive = false;
+    if (tradeCaptureTimer) { clearTimeout(tradeCaptureTimer); tradeCaptureTimer = null; }
+    if (tradeCaptureStopTimer) { clearTimeout(tradeCaptureStopTimer); tradeCaptureStopTimer = null; }
+    restoreAfterTradeCapture();
+    log('🤝 จบ Trade Capture (' + (reason || 'หยุด') + ') — ' + tradeCaptureRecords.filter(r=>r.kind==='packet').length + ' packet');
+    updateTradeCaptureUI();
+    return true;
+  }
+  function startTradeCapture(mode) {
+    if (!activeWS || activeWS.readyState !== 1) { log('⚠️ Trade Capture: ยังไม่ได้เชื่อม game WebSocket'); return false; }
+    if (tradeCaptureActive) stopTradeCapture('เริ่มรอบใหม่');
+    tradeCaptureMode = mode === 'reject' ? 'reject' : 'accept';
+    tradeCaptureRecords = [];
+    tradeCaptureStartedAt = nowMs();
+    tradeCaptureActive = true;
+    snapshotAndPauseForTradeCapture();
+    log('🔬 Trade Capture ' + (tradeCaptureMode === 'accept' ? 'ACCEPT' : 'EJECT/REJECT') + ' — ให้ผู้เล่นอื่นส่ง Trade แล้วคลิกปุ่มจริงในเกม 1 ครั้ง');
+    tradeCaptureTimer = setTimeout(() => stopTradeCapture('ครบเวลา'), TRADE_CAPTURE_MS);
+    updateTradeCaptureUI();
+    return true;
+  }
+  function clearTradeCapture() {
+    if (tradeCaptureActive) stopTradeCapture('ล้าง');
+    tradeCaptureRecords = []; tradeCaptureMode = '';
+    updateTradeCaptureUI();
+  }
+  function tradeCaptureCanvasClick(e) {
+    if (!tradeCaptureActive) return;
+    // ไม่เอาคลิกบน RO Assist เอง — ต้องเป็น click ที่ WebGL/game area
+    try { if (e.target && e.target.closest && e.target.closest('#__assist_root')) return; } catch (_) {}
+    const rec = {kind:'click', dt:Math.max(0,nowMs()-tradeCaptureStartedAt), x:Math.round(e.clientX||0), y:Math.round(e.clientY||0)};
+    tradeCaptureRecords.push(rec);
+    while (tradeCaptureRecords.length > TRADE_CAPTURE_MAX) tradeCaptureRecords.shift();
+    updateTradeCaptureUI();
+    // เก็บ packet หลัง click อีก 1.5s แล้วหยุดเอง
+    if (tradeCaptureStopTimer) clearTimeout(tradeCaptureStopTimer);
+    tradeCaptureStopTimer = setTimeout(() => stopTradeCapture('หลังคลิก 1.5s'), 1500);
+  }
+  // v4.188.7: Trade Capture listener removed — protocol verified
+
+  // ★★ v4.188.7 — Auto Trade protocol verified from Rayrag capture
+  // Incoming request: 0x7e len=43
+  // Accept click: [78 01] then [78 00]
+  // Eject click:  [78 00] then [78 00]
+  function tradeModeReady(_mode) { return true; }
+  let lastAutoTradeAt = 0;
+  function handleAutoTradeInbound(u) {
+    if (!u || u.length !== 43 || u[0] !== 0x7e) return false;
+    if (!CFG.tradeAcceptAll && !CFG.tradeRejectAll) return false;
+    const now = nowMs();
+    if (now - lastAutoTradeAt < 1200) return false;
+    if (!activeWS || activeWS.readyState !== 1) return false;
+    lastAutoTradeAt = now;
+    try {
+      if (CFG.tradeAcceptAll) {
+        activeWS.send(new Uint8Array([0x78, 0x01]));
+        activeWS.send(new Uint8Array([0x78, 0x00]));
+        log('🤝 Accept-All Trade → รับคำขอ Trade อัตโนมัติ');
+      } else {
+        activeWS.send(new Uint8Array([0x78, 0x00]));
+        activeWS.send(new Uint8Array([0x78, 0x00]));
+        log('🚫 Eject-All Trade → ปฏิเสธคำขอ Trade อัตโนมัติ');
+      }
+      return true;
+    } catch (e) {
+      log('⚠️ Auto Trade ส่ง packet ไม่สำเร็จ:', e && e.message ? e.message : e);
+      return false;
+    }
+  }
+
+  function captureUnstuckOutgoing(u) {
+    if (!unstuckPacketCaptureActive || !u || !u.length) return;
+    const rec = {
+      dt: Math.max(0, nowMs() - unstuckPacketCaptureStartedAt),
+      opcode: u[0], len: u.length, hex: u8ToHex(u)
+    };
+    unstuckPacketCapturePackets.push(rec);
+    while (unstuckPacketCapturePackets.length > UNSTUCK_CAPTURE_MAX) unstuckPacketCapturePackets.shift();
+    unstuckPacketCandidate = rec;
+    dbg('🔬 Unstuck OUT +' + rec.dt + 'ms op=0x' + rec.opcode.toString(16).padStart(2,'0') + ' len=' + rec.len + ' :: ' + rec.hex.slice(0,180));
+  }
+  function snapshotAndPauseForUnstuckCapture() {
+    const keys = ['combatEnabled','lootEnabled','healEnabled','skillEnabled','buffEnabled','warpFindEnabled','wanderEnabled','fleeFromPlayers','restEnabled','warpLootEnabled'];
+    unstuckPacketCaptureSnapshot = {};
+    for (const k of keys) { unstuckPacketCaptureSnapshot[k] = CFG[k]; CFG[k] = false; }
+    target = null; noMonsterSince = 0;
+    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
+    unstuckBuffState = 'CAPTURE_PACKET';
+  }
+  function restoreAfterUnstuckCapture() {
+    if (unstuckPacketCaptureSnapshot) {
+      for (const [k,v] of Object.entries(unstuckPacketCaptureSnapshot)) CFG[k] = v;
+    }
+    unstuckPacketCaptureSnapshot = null;
+    if (unstuckBuffState === 'CAPTURE_PACKET') unstuckBuffState = 'IDLE';
+  }
+  function stopUnstuckPacketCapture(reason) {
+    if (!unstuckPacketCaptureActive) return false;
+    unstuckPacketCaptureActive = false;
+    if (unstuckPacketCaptureTimer) { clearTimeout(unstuckPacketCaptureTimer); unstuckPacketCaptureTimer = null; }
+    restoreAfterUnstuckCapture();
+    const n = unstuckPacketCapturePackets.length;
+    if (n > 0) {
+      const c = unstuckPacketCandidate || unstuckPacketCapturePackets[n-1];
+      log('🔬 จบ Capture Unstuck (' + (reason || 'หยุด') + ') — จับได้ ' + n + ' packet · Candidate: 0x' + c.opcode.toString(16).padStart(2,'0') + ' len=' + c.len + ' [' + c.hex + ']');
+    } else log('⚠️ จบ Capture Unstuck (' + (reason || 'หยุด') + ') — ไม่พบ WebSocket OUT packet');
+    return true;
+  }
+  function startUnstuckPacketCapture() {
+    if (!activeWS || activeWS.readyState !== 1) { log('⚠️ ยังไม่ได้เชื่อมต่อ game WebSocket'); return false; }
+    if (sellState !== 'IDLE' || storageState !== 'IDLE' || buffVisitState !== 'IDLE') {
+      log('⚠️ ยังเริ่มจับ Unstuck ไม่ได้ — รอ sell/storage/buffVisit จบก่อน'); return false;
+    }
+    if (unstuckPacketCaptureActive) stopUnstuckPacketCapture('เริ่มรอบใหม่');
+    unstuckPacketCapturePackets = [];
+    unstuckPacketCandidate = null;
+    unstuckPacketCaptureSource = currentMap && player.x != null ? {map:currentMap,x:player.x,y:player.y} : null;
+    unstuckPacketCaptureStartedAt = nowMs();
+    unstuckPacketCaptureActive = true;
+    snapshotAndPauseForUnstuckCapture();
+    log('🔬 เริ่มจับ Packet Unstuck ' + Math.round(UNSTUCK_CAPTURE_MS/1000) + ' วิ — automation ถูก pause ชั่วคราว');
+    setTimeout(() => {
+      if (!unstuckPacketCaptureActive) return;
+      pressGameEscape();
+      log('🔬 เปิด ESC แล้ว → กรุณาคลิก Unstuck จริง 1 ครั้งภายใน ' + Math.round(UNSTUCK_CAPTURE_MS/1000) + ' วิ');
+    }, 350);
+    unstuckPacketCaptureTimer = setTimeout(() => stopUnstuckPacketCapture('ครบเวลา'), UNSTUCK_CAPTURE_MS);
+    return true;
+  }
+  function clearUnstuckPacketCapture() {
+    if (unstuckPacketCaptureActive) stopUnstuckPacketCapture('ล้าง');
+    unstuckPacketCapturePackets = [];
+    unstuckPacketCandidate = null;
+    CFG.unstuckPacketEnabled = false;
+    CFG.unstuckPacketHex = '';
+    saveConfigDebounced();
+    log('🧹 ล้าง Capture/Direct Unstuck packet แล้ว — กลับไปใช้ ESC+ปุ่มแบบเดิม');
+  }
+  function acceptUnstuckPacketCandidate() {
+    const c = unstuckPacketCandidate || (unstuckPacketCapturePackets.length ? unstuckPacketCapturePackets[unstuckPacketCapturePackets.length-1] : null);
+    if (!c || !c.hex) { log('⚠️ ยังไม่มี Candidate — กด 🔬 จับ Packet Unstuck ก่อน'); return false; }
+    CFG.unstuckPacketHex = c.hex;
+    CFG.unstuckPacketEnabled = true;
+    saveConfigDebounced();
+    log('✅ ใช้ Candidate เป็น Direct Unstuck: opcode 0x' + c.opcode.toString(16).padStart(2,'0') + ' len=' + c.len + ' [' + c.hex + ']');
+    return true;
+  }
+  // ★★ v4.187.7 — Direct Unstuck ที่ยืนยันจาก capture จริง: 0x73 len=1 [73]
+  // ไม่อ่าน Candidate / localStorage เพื่อป้องกัน packet อื่น (เช่น 0x71) ถูกเลือกผิด
+  const FIXED_UNSTUCK_PACKET = new Uint8Array([0x73]);
+  function sendDirectUnstuckPacket() {
+    if (!activeWS || activeWS.readyState !== 1) return false;
+    try {
+      activeWS.send(FIXED_UNSTUCK_PACKET);
+      log('🏠 ส่ง Direct Unstuck → 0x73 len=1 [73]');
+      return true;
+    } catch (e) { log('⚠️ ส่ง Direct Unstuck 0x73 ไม่สำเร็จ:', e && e.message); return false; }
+  }
+  const unstuckPacketCaptureWatcher = setInterval(() => {
+    if (!unstuckPacketCaptureActive || !unstuckPacketCaptureSource) return;
+    const movedMap = currentMap && currentMap !== unstuckPacketCaptureSource.map;
+    const movedPos = player.x != null && Math.hypot(player.x - unstuckPacketCaptureSource.x, player.y - unstuckPacketCaptureSource.y) >= 6;
+    if (movedMap || movedPos) stopUnstuckPacketCapture(movedMap ? 'ตรวจพบเปลี่ยนแมป' : 'ตรวจพบย้ายตำแหน่ง');
+  }, 250);
+
+  function gameCanvas() { return document.querySelector('canvas') || document.body; }
+  function pressGameEscape() {
+    try {
+      const cv = gameCanvas();
+      if (cv && cv.focus) { try { cv.focus(); } catch (_) {} }
+      cv.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+      cv.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+      return true;
+    } catch (e) { dbg('⚠️ pressGameEscape:', e && e.message); return false; }
+  }
+  function dispatchSyntheticClick(el, x, y) {
+    if (!el) return false;
+    try {
+      if (el.focus) { try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (_) {} } }
+      for (const t of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click']) {
+        const E = t.startsWith('pointer') ? PointerEvent : MouseEvent;
+        el.dispatchEvent(new E(t, {
+          clientX: x, clientY: y, bubbles: true, cancelable: true,
+          pointerId: 1, isPrimary: true, button: 0,
+          buttons: t.endsWith('down') ? 1 : 0
+        }));
+      }
+      return true;
+    } catch (e) { dbg('⚠️ dispatchSyntheticClick:', e && e.message); return false; }
+  }
+  function clickGameCanvasRatio(rx, ry) {
+    try {
+      const cv = gameCanvas();
+      if (!cv || !cv.getBoundingClientRect) return false;
+      const r = cv.getBoundingClientRect();
+      if (!r.width || !r.height) return false;
+      const x = r.left + Math.max(0, Math.min(1, Number(rx))) * r.width;
+      const y = r.top + Math.max(0, Math.min(1, Number(ry))) * r.height;
+
+      // ★ v4.187.2: ถ้าปุ่ม ESC/Unstuck เป็น DOM overlay ให้กด element จริงที่อยู่เหนือ canvas
+      //   เดิมยิง event เข้า canvas อย่างเดียว → เมนู DOM รับคลิกไม่ได้แม้จำพิกัดถูก
+      const hit = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+      if (hit && !(hit.closest && hit.closest('#__assist_root'))) {
+        const clickable = hit.closest ? hit.closest('button,[role="button"],a,input[type="button"],input[type="submit"],[onclick]') : null;
+        const targetEl = clickable || (hit !== cv ? hit : null);
+        if (targetEl && targetEl !== document.body && targetEl !== document.documentElement) {
+          const label = ((targetEl.textContent || targetEl.value || targetEl.getAttribute?.('aria-label') || targetEl.title || '') + '').trim().replace(/\s+/g, ' ').slice(0, 60);
+          dbg('🏠 Unstuck saved-point hit DOM:', targetEl.tagName, label || '(no text)');
+          if (dispatchSyntheticClick(targetEl, x, y)) {
+            // native .click() ช่วย DOM framework บางชนิดที่ฟัง click โดยตรง
+            try { if (typeof targetEl.click === 'function') targetEl.click(); } catch (_) {}
+            return true;
+          }
+        }
+      }
+      // Unity canvas / fallback
+      return dispatchSyntheticClick(cv, x, y);
+    } catch (e) { dbg('⚠️ clickGameCanvasRatio:', e && e.message); return false; }
+  }
+  function clickDomUnstuckIfPresent() {
+    try {
+      // ★ v4.187.2: match แบบ contains + aria/title/value และไม่ค้น UI ของ Assist เอง
+      const sels = 'button,[role="button"],a,input[type="button"],input[type="submit"],[onclick]';
+      const all = [...document.querySelectorAll(sels)].filter(el => !(el.closest && el.closest('#__assist_root')));
+      const visible = (el) => {
+        const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+        const st = getComputedStyle ? getComputedStyle(el) : null;
+        return !!(r && r.width > 1 && r.height > 1 && (!st || (st.display !== 'none' && st.visibility !== 'hidden' && st.pointerEvents !== 'none')));
+      };
+      const b = all.find(el => {
+        const txt = [el.textContent, el.value, el.getAttribute?.('aria-label'), el.getAttribute?.('title')]
+          .filter(Boolean).join(' ').trim().replace(/\s+/g, ' ');
+        return /unstuck/i.test(txt) && visible(el);
+      });
+      if (b) {
+        const r = b.getBoundingClientRect();
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        dbg('🏠 พบ DOM Unstuck โดยข้อความ → click', (b.textContent || b.value || '').trim());
+        if (dispatchSyntheticClick(b, x, y)) {
+          try { if (typeof b.click === 'function') b.click(); } catch (_) {}
+          return true;
+        }
+      }
+    } catch (e) { dbg('⚠️ clickDomUnstuckIfPresent:', e && e.message); }
+    return false;
+  }
+  function resetUnstuckButton() {
+    unstuckCaptureArmed = false;
+    CFG.unstuckBuffClickXRatio = null;
+    CFG.unstuckBuffClickYRatio = null;
+    unstuckBuffNoPosWarned = false;
+    // ถ้ากำลังทำ routine อยู่ ให้หยุดก่อนเพื่อไม่ใช้ตำแหน่งเก่าต่อ
+    if (unstuckBuffState !== 'IDLE') {
+      unstuckBuffState = 'IDLE';
+      unstuckBuffLastAt = nowMs();
+      unstuckBuffReturnTo = null;
+      unstuckBuffSource = null;
+      unstuckBuffWaitUntil = 0;
+    }
+    saveConfigDebounced();
+    log('♻️ Reset ตำแหน่ง Unstuck แล้ว — กด “🎯 จำปุ่ม Unstuck” เพื่อบันทึกใหม่');
+  }
+  function calibrateUnstuckButton() {
+    if (unstuckCaptureArmed) { log('🎯 กำลังรอคลิก Unstuck อยู่แล้ว — กด Reset หากต้องการยกเลิก'); return; }
+    unstuckCaptureArmed = true;
+
+    // ★ v4.187.2: ฟังที่ document capture phase ไม่ใช่เฉพาะ canvas
+    //   รองรับทั้ง Unity canvas และเมนู ESC ที่เป็น DOM overlay
+    let timer = null;
+    const cleanup = () => {
+      document.removeEventListener('pointerdown', handler, true);
+      document.removeEventListener('mousedown', handler, true);
+      if (timer) clearTimeout(timer);
+    };
+    const handler = (e) => {
+      if (!unstuckCaptureArmed) { cleanup(); return; }
+      // ไม่เอาคลิกที่ panel Assist เป็นตำแหน่ง Unstuck
+      if (e.target && e.target.closest && e.target.closest('#__assist_root')) return;
+      try {
+        const cv = gameCanvas();
+        const r = cv.getBoundingClientRect();
+        if (!r.width || !r.height) throw new Error('canvas size = 0');
+        // ต้องอยู่ในกรอบ canvas — เมนู DOM overlay ปกติก็ยังวางทับในกรอบนี้
+        if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) {
+          log('⚠️ คลิกอยู่นอกพื้นที่เกม — กรุณาคลิกปุ่ม Unstuck ในหน้าต่างเกม');
+          return;
+        }
+        unstuckCaptureArmed = false;
+        CFG.unstuckBuffClickXRatio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        CFG.unstuckBuffClickYRatio = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+        saveConfigDebounced();
+        const label = e.target ? ((e.target.textContent || e.target.value || e.target.getAttribute?.('aria-label') || '') + '').trim().replace(/\s+/g, ' ').slice(0, 60) : '';
+        log('✅ จำตำแหน่ง Unstuck แล้ว — x=' + CFG.unstuckBuffClickXRatio.toFixed(4) + ' y=' + CFG.unstuckBuffClickYRatio.toFixed(4) + (label ? ' · target=' + label : ''));
+        cleanup();
+      } catch (err) {
+        unstuckCaptureArmed = false;
+        cleanup();
+        log('⚠️ บันทึกตำแหน่ง Unstuck ไม่สำเร็จ:', err && err.message);
+      }
+    };
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('mousedown', handler, true);
+    timer = setTimeout(() => {
+      if (unstuckCaptureArmed) {
+        unstuckCaptureArmed = false;
+        cleanup();
+        log('⚠️ หมดเวลาบันทึกตำแหน่ง Unstuck — กด “🎯 จำปุ่ม Unstuck” แล้วลองใหม่');
+      }
+    }, 30000);
+
+    pressGameEscape();
+    log('🎯 เปิดเมนู ESC แล้ว — คลิกปุ่ม Unstuck จริง 1 ครั้ง ระบบจะจำตำแหน่งจากทั้ง Canvas/DOM ให้');
+  }
+  function startUnstuckBuffNow(origin = 'manual') {
+    // ★ v4.188.2: ปุ่มนี้สั่งรอบ AB ทันทีแบบ Auto Reset — ไม่ใช้ manual queue
+    // ★ v4.189.0: กดปุ่มเอง = override การรอปิดงานมอนล่าสุด; Auto จะเรียกด้วย origin='auto' หลังเก็บของเสร็จ
+    if (origin !== 'auto') clearUnstuckBuffAutoFinishPending();
+    // จำจุดปัจจุบัน → Direct Unstuck 0x73 ทันที → 2s → กลับจุดเดิม → เริ่มนับรอบ Auto ใหม่
+    if (!CFG.unstuckBuffEnabled) CFG.unstuckBuffEnabled = true;
+    unstuckBuffManualRun = false;   // legacy flag: ปุ่มนี้ไม่ใช่ manual queued อีกต่อไป
+
+    if (unstuckBuffState !== 'IDLE') {
+      log('⏳ รอบรับบัพกำลังทำงานอยู่ (state=' + unstuckBuffState + ') — ไม่ส่ง Unstuck ซ้ำ');
+      return false;
+    }
+    if (!activeWS || activeWS.readyState !== 1 || isDead || playerId == null || player.x == null || !currentMap) {
+      log('⚠️ รับบัพตอนนี้: ยังส่ง Unstuck ไม่ได้ — WebSocket/ตัวละคร/ตำแหน่งยังไม่พร้อม');
+      return false;
+    }
+
+    const now = nowMs();
+    unstuckBuffReturnTo = { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
+    unstuckBuffSource = { map: currentMap, x: player.x, y: player.y };
+    unstuckBuffStepAt = now;
+    unstuckBuffWaitUntil = 0;
+    unstuckBuffLastWarpAt = 0;
+    unstuckBuffNoPosWarned = false;
+    target = null;
+    noMonsterSince = 0;
+
+    if (!sendDirectUnstuckPacket()) {
+      abortUnstuckBuff('Direct Unstuck ส่งไม่สำเร็จ');
+      return false;
+    }
+
+    clearUnstuckBuffAutoFinishPending();
+    unstuckBuffState = 'WAIT_RETURN_2S';
+    saveConfigDebounced();
+    log('🏠 รับบัพตอนนี้ → Direct Unstuck ทันที (จำจุดกลับ ' + unstuckBuffReturnTo.map + ' @(' + unstuckBuffReturnTo.x + ',' + unstuckBuffReturnTo.y + ')) → กลับใน 2 วิ แล้วเริ่มนับ Auto ใหม่');
+    return true;
+  }
+  function abortUnstuckBuff(reason) {
+    log('⚠️ ยกเลิกรอบรับบัพ AB' + (reason ? ': ' + reason : ''));
+    unstuckBuffState = 'IDLE';
+    unstuckBuffLastAt = nowMs();
+    unstuckBuffReturnTo = null;
+    unstuckBuffSource = null;
+    unstuckBuffWaitUntil = 0;
+    unstuckBuffManualRun = false;
+    clearUnstuckBuffAutoFinishPending();
+  }
+  const unstuckBuffLoop = setInterval(() => {
+    if (!CFG.unstuckBuffEnabled) return;
+    // ★ v4.188.2: Combat gate ใช้กับรอบ Auto ตอน IDLE เท่านั้น
+    // ปุ่ม ▶ รับบัพตอนนี้ เริ่ม routine โดยตรงก่อนเข้าลูป จึงไม่ต้องมี manual bypass/queue
+    if (unstuckBuffState === 'IDLE' && !CFG.combatEnabled) {
+      unstuckBuffLastAt = 0;   // เริ่มจับเวลาใหม่เมื่อ Combat ON
+      clearUnstuckBuffAutoFinishPending();
+      return;
+    }
+    if (!activeWS || activeWS.readyState !== 1 || isDead) return;
+    if (playerId == null || player.x == null || !currentMap) return;
+    const now = nowMs();
+
+    if (unstuckBuffState === 'IDLE') {
+      if (unstuckBuffLastAt === 0) { unstuckBuffLastAt = now; return; }
+      if (now - unstuckBuffLastAt < Math.max(30, CFG.unstuckBuffIntervalSec || 500) * 1000 && !unstuckBuffAutoFinishPending) return;
+
+      // ★ v4.189.0: ครบเวลาแล้ว — ถ้ากำลังตี ให้ปิดงาน target ปัจจุบัน + เก็บของก่อน Unstuck
+      // คง guard เฉพาะ routine ธุรกรรม/เดินทางที่ไม่ควรถูกตัดกลาง
+      if (sellState !== 'IDLE' || storageState !== 'IDLE') return;
+      if (typeof buffVisitState !== 'undefined' && buffVisitState !== 'IDLE') return;
+      if (typeof postRespawnRest !== 'undefined' && postRespawnRest) return;
+
+      if (!unstuckBuffAutoFinishPending) {
+        unstuckBuffAutoFinishPending = true;
+        unstuckBuffFinishTargetId = target && target.id != null ? target.id : null;
+        unstuckBuffLootSettleUntil = 0;
+        if (target) {
+          const tm = entities.get(target.id);
+          log('⏰ AB Auto ครบเวลา → ตีมอนตัวล่าสุดให้จบก่อน:', (tm && tm.name) || target.id.toString(16), 'แล้วเก็บของก่อน Unstuck');
+        } else if (queue.size > 0 || warpQueue.size > 0) {
+          log('⏰ AB Auto ครบเวลา → ไม่มี target แล้ว แต่มีของค้าง → เก็บให้หมดก่อน Unstuck');
+        }
+      }
+
+      // ยังมี target ปัจจุบัน → ปล่อย combatLoop ตีตัวนี้ต่อ (แต่ห้ามเปลี่ยน/หา target ใหม่)
+      if (target) return;
+      // หลังมอนตายรอสั้น ๆ ให้ drop packet เข้าคิวก่อน แล้วค่อยตรวจคิวของ
+      if (unstuckBuffLootSettleUntil && now < unstuckBuffLootSettleUntil) return;
+      if (queue.size > 0 || warpQueue.size > 0) return;
+
+      if (startUnstuckBuffNow('auto')) {
+        log('⏰ AB Auto: ปิดงานมอนตัวล่าสุด + เก็บของเสร็จ → Direct Unstuck 0x73 ทันที');
+      }
+      return;
+    }
+
+
+    if (unstuckBuffState === 'WAIT_RETURN_2S') {
+      // ★ v4.188.1: นับจากจังหวะส่ง Unstuck สำเร็จ ไม่ต้องรอยืนยัน spawn และไม่รอ AB timer เดิม
+      if (now - unstuckBuffStepAt < UNSTUCK_RETURN_DELAY_MS) return;
+      if (!unstuckBuffReturnTo) { abortUnstuckBuff('ไม่มีจุดฟาร์มเดิม'); return; }
+      unstuckBuffState = 'RETURN';
+      unstuckBuffLastWarpAt = now;
+      log('⚡ ครบ 2 วิหลัง Unstuck → วาร์ปกลับทันที', unstuckBuffReturnTo.map, '@(', unstuckBuffReturnTo.x + ',' + unstuckBuffReturnTo.y + ')');
+      sendTeleport(unstuckBuffReturnTo.map, unstuckBuffReturnTo.x, unstuckBuffReturnTo.y);
+      return;
+    }
+
+    if (unstuckBuffState === 'RETURN') {
+      if (!unstuckBuffReturnTo) { abortUnstuckBuff('ไม่มีจุดกลับ'); return; }
+      if (currentMap === unstuckBuffReturnTo.map && player.x != null) {
+        const d = Math.hypot(player.x - unstuckBuffReturnTo.x, player.y - unstuckBuffReturnTo.y);
+        if (d <= 4) {
+          unstuckBuffState = 'IDLE';
+          unstuckBuffLastAt = now;
+          unstuckBuffReturnTo = null;
+          unstuckBuffSource = null;
+          unstuckBuffManualRun = false;
+          noMonsterSince = 0;
+          log('✅ กลับจุดฟาร์มเดิมแล้ว → รีเซ็ตนับถอยหลัง Auto ใหม่ (รอบถัดไปอีก ' + Math.round((CFG.unstuckBuffIntervalSec || 500) / 60) + ' นาที)');
+          return;
+        }
+      }
+      if (now - unstuckBuffLastWarpAt > 5000) {
+        unstuckBuffLastWarpAt = now;
+        sendTeleport(unstuckBuffReturnTo.map, unstuckBuffReturnTo.x, unstuckBuffReturnTo.y);
+      }
+      return;
+    }
+  }, 500);
 
   const buffLoop = setInterval(() => {    if (!CFG.buffEnabled) return;
     if (!CFG.buffItems || !CFG.buffItems.length) return;
@@ -2520,6 +3310,7 @@
   // ---------- ประมวลผล packet ----------
   function handleIn(u) {
     if (!u.length) return;
+    handleAutoTradeInbound(u);
     lastGamePacketAt = Date.now();   // ★★ auto-refresh watchdog — เกมส่งอะไรมา = ยังไม่ค้าง
     // ★★ Packet capture
     if (ASSIST._captureUntil && Date.now() < ASSIST._captureUntil) {
@@ -2706,9 +3497,10 @@
         if (itemName.endsWith(' Card') || (itemId >= 4001 && itemId <= 4520)) {
           logImportant('card', '🃏 เก็บการ์ดได้! ' + itemName + ' (' + itemId + ')');
         }
-        // ★ ถ้าเก็บหมดแล้ว (queue ว่าง) → trigger cooldown ก่อน combatLoop acquire ใหม่
+        // ★ v4.187.9 Fast retarget: เก็บของชิ้นสุดท้ายเสร็จ → ปลด combat cooldown ทันที
+        //   combat loop จะหาเป้าใหม่ใน tick ถัดไป (~combatTickMs) โดยไม่รอ postCombatDelayMs
         if (queue.size === 0 && warpQueue.size === 0) {
-          combatCooldownUntil = nowMs() + CFG.postCombatDelayMs;
+          combatCooldownUntil = nowMs();
         }
       } else {
         // server ตอบ FAIL ชัดเจน → ของอาจถูกมอนเก็บไปแล้ว → ลด attempts ที่เหลือให้เหลือ 1 (ลองอีกทีเดียวแล้วปล่อย)
@@ -2815,6 +3607,7 @@
               && name !== CFG.sellNpcMap && name !== CFG.kafraMap
               && !(CFG.guardEnabled && CFG.guardMap)
               && !(typeof buffVisitState !== 'undefined' && buffVisitState !== 'IDLE' && name === CFG.buffVisitMap)
+              && !(typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE')
               && !isDead
               && !(typeof postRespawnRest !== 'undefined' && postRespawnRest)
               && !(typeof sellState !== 'undefined' && sellState !== 'IDLE')
@@ -2855,6 +3648,7 @@
           sp.cur = null; sp.max = null;
           player.x = null; player.y = null;
           isDead = false; postRespawnRest = false; isResting = false;
+          autoRespawnUnstuckPending = false; autoRespawnUnstuckReadyAt = 0; // สลับตัวละคร → ห้าม carry pending จากตัวเก่า
           playerId = eid; selfIdConfirmed = true; relayRegisterPlayer();   // ★ SELECT_CHAR = authoritative ยืนยันเลย
         } else if (!playerName) {
           // ตัวเดิม re-login แต่ยังไม่รู้ชื่อ — ปล่อยให้ SPAWN ตั้ง
@@ -3112,11 +3906,16 @@
             const wx = parseInt(wm[1], 10), wy = parseInt(wm[2], 10);
             if (wx >= -500 && wx <= 1000 && wy >= -500 && wy <= 1000) {
               player.x = wx; player.y = wy;
+              const whereMap = wm[3];
+              if (whereMap && whereMap !== currentMap) {
+                dbg('📍 /where ยืนยันแมป ' + whereMap + ' (เดิม ' + (currentMap || '?') + ') → อัปเดต currentMap');
+                currentMap = whereMap;
+              }
               if (playerId != null) {
                 const pe = entities.get(playerId);
                 if (pe) { pe.x = wx; pe.y = wy; pe._lastSeenAt = nowMs(); }
               }
-              dbg('📍 /where → (' + wx + ',' + wy + ') แมป ' + wm[3] + (wm[3] !== currentMap ? ' (ต่างจากปัจจุบัน ' + currentMap + ')' : ''));
+              dbg('📍 /where → (' + wx + ',' + wy + ') แมป ' + whereMap);
             }
           }
         }
@@ -3267,85 +4066,40 @@
         }
       }
     }
-    // ★ 0x3c MINIMAP_MARKER: 2 โหมด
-    //   sub=1: [3c][0100][id:4][x:2][y:2][flag:1] — boss/player position (single, 12 bytes)
-    //   sub=7: [3c][0700][id:4][x:2][y:2][flag:1] × N — warp portals + entities (multi)
-    //   flag=1/3 = boss/player, flag=5 = warp portal
+    // ★ 0x3c ENTITY_LIST / MINIMAP MARKER
+    //   capture ยืนยัน: u16 @1 = จำนวนระเบียน แล้วตามด้วย [id:4][x:2][y:2][flag:1] × count
+    //   flag: 1=player, 3=MiniBoss, 4=Boss, 5=Warp portal
+    //   v4.187.1: ใช้ parser เดียวทุก count (เดิม handler เก่ารับเฉพาะ 1/4/7/13 และดัก handler ใหม่ด้านล่าง)
     else if (op === 0x3c && u.length >= 3) {
-      const sub = u16(u, 1);
+      const count = u16(u, 1);
       const now = nowMs();
-      // DEBUG (commented out — ไม่ต้องแสดงตอนปกติ):
-      // if (now - (last3cDebugAt || 0) > 3000) {
-      //   last3cDebugAt = now;
-      //   const flags = [];
-      //   if (sub === 7 || sub === 13 || sub === 4) { let pp = 3; while (pp + 9 <= u.length) { flags.push(u[pp+8]); pp += 9; } }
-      //   log('📡 0x3c sub=' + sub + ' len=' + u.length + ' flags=[' + flags.join(',') + ']');
-      // }
-      if ((sub === 7 || sub === 13 || sub === 4) && u.length >= 5) {
-        // ★ sub=7 / sub=13: multi-entity minimap list (players + warps + NPCs)
-        //   format: [3c][sub:2] then repeating [id:4][x:2][y:2][flag:1] (9 bytes each)
-        //   ★★ sub=13 = initial map data (ส่งตอนเข้าแมป — มีผู้เล่นทุกคนในแมป)
+      if (count > 0 && count <= 200) {
         let p = 3;
-        while (p + 9 <= u.length) {
-          const eid = u32(u, p); p += 4;
-          const ex = i16(u, p), ey = i16(u, p + 2); p += 4;
-          const eflag = u[p]; p += 1;
-          if (!eid || eid === 0xffffffff || ex < -500 || ex > 1000 || ey < -500 || ey > 1000) continue;
-          if (eflag === 5) {
-            // ★ warp portal → track as entity kind=2 (NPC) + _isWarp flag
-            entities.set(eid, { id: eid, kind: 2, x: ex, y: ey, alive: true, _lastSeenAt: now, _isWarp: true, name: 'Warp' });
-          } else if (eflag === 4) {
-            // ★ flag=4 = Boss (จริง) → track as _isBoss
-            let m = entities.get(eid);
-            if (m) { m.x = ex; m.y = ey; m._lastSeenAt = now; m._isBoss = true; }
-            else { entities.set(eid, { id: eid, kind: 1, x: ex, y: ey, alive: true, _lastSeenAt: now, _isBoss: true, name: 'Boss' }); }
-          } else if (eflag === 3) {
-            // ★ flag=3 = Mini Boss
-            let m = entities.get(eid);
-            if (m) { m.x = ex; m.y = ey; m._lastSeenAt = now; m._isMiniBoss = true; }
-            else { entities.set(eid, { id: eid, kind: 1, x: ex, y: ey, alive: true, _lastSeenAt: now, _isMiniBoss: true, name: 'Mini Boss' }); }
-          } else if (eflag === 1) {
-            // ★ flag=1 = ผู้เล่นบนแมป (minimap marker) → track เป็น kind=0
-            //   ★★ ห้าม SELF-DETECT จาก minimap! (ถอดออก v4.120)
-            //   หลักฐานจาก log จริง: id ของเรา "ไม่เปลี่ยน" ตอนวาร์ป (dot id เดิมยังโผล่ในแมปใหม่)
-            //   การฉก dot ที่ไม่มีชื่อ = ฉก id คนอื่นมาเป็นเรา → HP ค้าง (STAT id จริงไม่ match)
-            //   ตำแหน่งเราหลังวาร์ปมาจาก: SPAWN self / 0x07 MOVE / combatLoop sync จาก entity ตัวเอง
-            let m = entities.get(eid);
-            if (m) { m.x = ex; m.y = ey; m._lastSeenAt = now; }
-            else { entities.set(eid, { id: eid, kind: 0, x: ex, y: ey, alive: true, _lastSeenAt: now, name: '', _src: 'beacon' }); }
-            // ★ marker ของเราเอง (id ตรง playerId) → อัปเดตตำแหน่งเรา
-            //   (จาก capture: server ส่ง beacon ทุก 4 ช่องที่เดิน — เติมช่องว่างระหว่าง 0x07 response)
-            if (playerId != null && eid === playerId) { player.x = ex; player.y = ey; }
-            beaconPlayerIds.set(eid, now);   // ★ เคยบน radar = ผู้เล่น (กันถูกมองเป็นมอน)
+        for (let i = 0; i < count && p + 9 <= u.length; i++, p += 9) {
+          const id = u32(u, p);
+          const x = i16(u, p + 4), y = i16(u, p + 6);
+          const flag = u[p + 8];
+          if (!id || id === 0xffffffff || x < -500 || x > 1000 || y < -500 || y > 1000) continue;
+          if (flag === 5) {
+            entities.set(id, { id, kind: 2, x, y, alive: true, _lastSeenAt: now, _despawnPendingAt: 0, _isWarp: true, name: 'Warp' });
+            continue;
           }
-        }
-      } else if (sub === 1 && u.length >= 12) {
-        // ★ sub=1: single boss/player position
-        const id = u32(u, 3);
-        const x = i16(u, 7), y = i16(u, 9);
-        const flag = u[11];
-        if (id && id !== 0xffffffff && x >= -500 && x <= 1000 && y >= -500 && y <= 1000 && (flag === 1 || flag === 3 || flag === 4)) {
           if (flag === 1) {
-            // ★ flag=1 = ผู้เล่นบนแมป (minimap marker) → track เป็น kind=0
-            //   ★★ ห้าม SELF-DETECT จาก minimap — id เราไม่เปลี่ยนตอนวาร์ป (ดู comment ด้านบน)
-            let m = entities.get(id);
-            if (m) { m.x = x; m.y = y; m._lastSeenAt = now; }
-            else { entities.set(id, { id, kind: 0, x, y, alive: true, _lastSeenAt: now, name: '', _src: 'beacon' }); }
-            // ★ marker ของเราเอง → อัปเดตตำแหน่งเรา (beacon ทุก 4 ช่อง — เหมือน multi path)
-            if (playerId != null && id === playerId) { player.x = x; player.y = y; }
-            beaconPlayerIds.set(id, now);   // ★ เคยบน radar = ผู้เล่น (กันถูกมองเป็นมอน)
-          } else {
-            // ★ flag=3 = Mini Boss, flag=4 = Boss
-            const isRealBoss = (flag === 4);
-            let m = entities.get(id);
-            if (isRealBoss) {
-              if (m) { m.x = x; m.y = y; m._lastSeenAt = now; m._isBoss = true; }
-              else { m = { id, kind: 1, x, y, alive: true, _lastSeenAt: now, _isBoss: true, name: 'Boss' }; entities.set(id, m); }
-            } else {
-              if (m) { m.x = x; m.y = y; m._lastSeenAt = now; m._isMiniBoss = true; }
-              else { m = { id, kind: 1, x, y, alive: true, _lastSeenAt: now, _isMiniBoss: true, name: 'Mini Boss' }; entities.set(id, m); }
+            // radar เป็นหลักฐาน player ที่แรงที่สุด: force kind=0 และกันถูกนับ/ตีเป็นมอน
+            beaconPlayerIds.set(id, now);
+            if (id === playerId) { player.x = x; player.y = y; }
+            if (!isStaleId(id, now)) {
+              const e = entities.get(id);
+              if (e) { e.kind = 0; e.x = x; e.y = y; e.alive = true; e._lastSeenAt = now; e._despawnPendingAt = 0; e._src = 'beacon'; }
+              else { entities.set(id, { id, kind: 0, x, y, alive: true, _lastSeenAt: now, _despawnPendingAt: 0, name: '', _src: 'beacon' }); }
             }
-            // ★ alert (ครั้งเดียวต่อ entity ID)
+            continue;
+          }
+          if (flag === 3 || flag === 4) {
+            const isRealBoss = flag === 4;
+            const m = upsertMonsterEvidence(id, x, y, now, 'minimap', { isBoss: isRealBoss, isMiniBoss: !isRealBoss });
+            if (!m) continue;
+            if (!m.name) m.name = isRealBoss ? 'Boss' : 'Mini Boss';
             if (!bossAlertedIds.has(id)) {
               bossAlertedIds.add(id);
               const dist = (player.x != null) ? Math.hypot(x - player.x, y - player.y).toFixed(0) : '?';
@@ -3353,13 +4107,11 @@
               log(label + '! entity', id.toString(16), '@(', x, y, ') ห่าง', dist, 'ช่อง');
               logImportant('card', label + ' ที่ (' + x + ', ' + y + ') ห่าง ' + dist + ' ช่อง');
             }
-            // ★ auto-warp — แยก toggle สำหรับ Boss และ Mini Boss
             const warpEnabled = isRealBoss ? CFG.warpToBoss : CFG.warpToMiniBoss;
             if (warpEnabled && player.x != null && now - lastBossWarpAt > 10000) {
               const d = Math.hypot(x - player.x, y - player.y);
               if (d > 10) {
-                const label = isRealBoss ? '👑 Boss' : '👹 Mini Boss';
-                log(label + ' → วาร์ปไปสู้ @(', x, y, ') ห่าง', d.toFixed(0), 'ช่อง');
+                log((isRealBoss ? '👑 Boss' : '👹 Mini Boss') + ' → วาร์ปไปสู้ @(', x, y, ') ห่าง', d.toFixed(0), 'ช่อง');
                 sendTeleport(currentMap, x, y);
                 lastBossWarpAt = now;
               }
@@ -3647,7 +4399,7 @@
             // ★★ ไม่เช็ค grace — SPAWN HP ผูก id===playerId จาก packet สด = เชื่อถือได้เสมอ
             //   (grace มีไว้กัน STAT เก่าของ ID อื่นเท่านั้น — applyStat เช็ค id อยู่แล้ว)
             if (sHp != null && sHpMax != null && sHpMax > 0) {
-              hp.cur = sHp; hp.max = sHpMax; hpStatAt = nowMs();
+              hp.cur = sHp; hp.max = sHpMax; hpStatAt = nowMs(); syncHpSafety(sHp, sHpMax);
             }
           }
           // ★★★ DEBUG: SPAWN ตัวเรา — ★ พิมพ์หลัง apply แล้ว (ยืนยันค่าจริงใน object)
@@ -3704,59 +4456,24 @@
       } catch (e) { /* SPAWN parse error ข้าม */ }
     }
     // 0x07 MOVE_UPDATE: อัปเดตตำแหน่ง entity — merge แล้วใน handler 0x07 ด้านบน (player + entity)
-    // 0x3c ENTITY_LIST: batch ตำแหน่ง [3c][count:2][eid:4][x:2][y:2][flag:1]...
-    //   ★★ ค้นพบจาก capture วาร์ป: byte @1-2 คือ "จำนวนระเบียน" (ไม่ใช่ sub!)
-    //   flag ต่อระเบียน: 1=ผู้เล่นบน radar / 3=MiniBoss / 4=Boss / 5=Warp portal
-    //   (เดิมสร้างทุกอย่างเป็น kind=1 — warp portal กลายเป็น "มอน" ไร้ชื่อ!
-    //    รอดมาได้เพราะ portal ไกล >12 ช่อง แต่ถ้า wander ไปใกล้จะตีเปล่า)
-    else if (op === 0x3c && u.length >= 3) {
-      const count = u16(u, 1);
-      const now = nowMs();
-      let p = 3;
-      for (let i = 0; i < count && p + 9 <= u.length; i++) {
-        const id = u32(u, p);
-        const x = i16(u, p + 4), y = i16(u, p + 6);
-        const flag = u[p + 8];   // ★ 1=player 3=miniboss 4=boss 5=warp
-        // sanity check พิกัด (กัน garbage)
-        if (x >= -500 && x <= 1000 && y >= -500 && y <= 1000) {
-          if (flag === 5) {
-            // ★ warp portal — ไม่ใช่มอน! track เป็น kind=2 ไว้ดูบน monitor
-            entities.set(id, { id, kind: 2, x, y, alive: true, _lastSeenAt: now, _isWarp: true, name: 'Warp' });
-          } else if (flag === 1) {
-            // ★ ผู้เล่นบน radar — ลงทะเบียน beacon (กันถูกมองเป็นมอน)
-            beaconPlayerIds.set(id, now);
-            if (id === playerId) { player.x = x; player.y = y; }
-            else if (!isStaleId(id, now)) {
-              const e = entities.get(id);
-              if (e) { e.x = x; e.y = y; e._lastSeenAt = now; }
-              else { entities.set(id, { id, kind: 0, x, y, alive: true, _lastSeenAt: now, name: '', _src: 'beacon' }); }
-            }
-          } else if (id !== playerId && id !== 0 && id !== 0xffffffff && !isStaleId(id, now) && !isBeaconPlayer(id, now)) {
-            const e = entities.get(id);
-            if (e) { e.x = x; e.y = y; e._lastSeenAt = now; if (flag === 3) e._isMiniBoss = true; if (flag === 4) e._isBoss = true; }
-            else { entities.set(id, { id, kind: 1, x, y, alive: true, _lastSeenAt: now, ...(flag === 3 ? { _isMiniBoss: true } : flag === 4 ? { _isBoss: true } : {}) }); }
-          } else if (id === playerId) { player.x = x; player.y = y; }   // ★ player ด้วย
-        }
-        p += 9;
-      }
-    }
-    // 0x14 ENTITY_POS: [14][id:4][x:2][y:2][flag:1]
+    // 0x14 ENTITY_POS: [14][id:4][x:2][y:2]
+    // ★ v4.187.1: packet นี้เป็นหลักฐาน entity ฝั่งมอน; ถ้า id เคยเข้ามาเป็น ghost จาก 0x07 ให้ promote กลับเป็น kind=1
+    //   แต่ id ที่ 0x3c ยืนยันว่าเป็นผู้เล่นจะถูก isBeaconPlayer บล็อกเสมอ
     else if (op === 0x14 && u.length >= 9) {
       const id = u32(u, 1);
       const x = i16(u, 5), y = i16(u, 7);
-      if (x >= -500 && x <= 1000 && y >= -500 && y <= 1000) {   // sanity
-        if (id !== playerId && id !== 0 && id !== 0xffffffff && !isStaleId(id, nowMs()) && !isBeaconPlayer(id, nowMs())) {
-          const e = entities.get(id);
-          if (e) { e.x = x; e.y = y; e._lastSeenAt = nowMs(); }
-          else {
-            // ★ id ที่ sweeper เพิ่งลบ → คืน sub/name ด้วย (kind=1 อยู่แล้ว แต่ไร้ sub จะตีได้แค่ ≤12 ช่อง)
-            const rd = recentlyDespawned.get(id);
-            if (rd && nowMs() < rd.expireAt && !(rd.kind === 1 && isBeaconPlayer(id, nowMs()))) {
-              recentlyDespawned.delete(id);
-              entities.set(id, { id, kind: rd.kind, sub: rd.sub, name: rd.name, x, y, alive: true, _lastSeenAt: nowMs(), _src: 'restore', ...(rd.isBoss ? { _isBoss: true } : {}), ...(rd.isMiniBoss ? { _isMiniBoss: true } : {}) });
-            } else { entities.set(id, { id, kind: 1, x, y, alive: true, _lastSeenAt: nowMs() }); }
-          }
-        } else if (id === playerId) { player.x = x; player.y = y; }
+      const now = nowMs();
+      if (x >= -500 && x <= 1000 && y >= -500 && y <= 1000) {
+        if (id === playerId) {
+          player.x = x; player.y = y;
+          const pe = entities.get(id);
+          if (pe) { pe.kind = 0; pe.x = x; pe.y = y; pe.alive = true; pe._lastSeenAt = now; pe._despawnPendingAt = 0; }
+        } else {
+          const before = entities.get(id);
+          const wasMoveGhost = !!(before && before.kind === 0 && before._src === 'move');
+          const m = upsertMonsterEvidence(id, x, y, now, 'pos14');
+          if (m && wasMoveGhost && m.kind === 1) dbg('👁️ 0x14 ยืนยัน ghost → monster:', m.name || id.toString(16), '@(' + x + ',' + y + ')');
+        }
       }
     }
     // 0x0b ATTACK_RESULT IN: [0b][attacker:4][target:4]...[damage:4 @17 ถ้ามี]
@@ -3877,14 +4594,9 @@
             dbg('🛠️ สร้าง entity ผู้โจมตี (ยังไม่เคยเห็น):', attacker.toString(16));
           }
         }
-        // ★★ real-time HP tracking — ลด HP ทันทีจาก damage (แก้ heal ช้า!)
-        //   เดิม: รอ server ส่ง STAT (1-2 วิ) → HP ค้างที่ค่าเก่า → heal ช้า
-        if (damage > 0 && !dmgDup0b && hp.cur != null && hp.max > 0) {
-          hp.cur = Math.max(0, hp.cur - damage);
-          // ★★ HP=0 แต่ไม่ตาย → tracking ผิด → reset เป็น null (รอ STAT แก้)
-          //   กันนั่งพักวนลูปเพราะ HP ค้างที่ 0%
-          if (hp.cur <= 0 && !isDead) { hp.cur = null; hp.max = null; }
-        }
+        // ★ v4.189.10 — ห้ามหัก hp.cur จาก damage packet: hp.cur เป็นค่าจริงจาก server เท่านั้น
+        // ใช้ safety estimate เฉพาะกรณี victimId ระบุตัวเราแน่ ๆ; victimId=0 กำกวมจึงไม่หัก
+        if (victimId === playerId && damage > 0 && !dmgDup0b) noteHpSafetyDamage(damage);
       }
       // ★★ DEBUG: log เมื่อ player โดนตี (ทุก 2s — กัน spam)
       if (now - (lastDamageDebugAt || 0) > 2000 && victimId === playerId) {
@@ -3912,11 +4624,8 @@
       // ★★ DEBUG: player โดนดาเมจผ่าน 0x17 → log + ★★ ลด HP ทันที!
       if (victimId === playerId) {
         const nowD = nowMs();
-        // ★★ real-time HP tracking — ลด HP ทันทีจาก damage (แก้ heal ช้า!)
-        if (damage > 0 && !dmgDup17 && hp.cur != null && hp.max > 0) {
-          hp.cur = Math.max(0, hp.cur - damage);
-          if (hp.cur <= 0 && !isDead) { hp.cur = null; hp.max = null; }   // tracking ผิด → reset
-        }
+        // ★ v4.189.10 — UI/Heal ใช้ HP จริงจาก server; damage packet ใช้แค่ safety estimate สำหรับหนีฉุกเฉิน
+        if (damage > 0 && !dmgDup17) noteHpSafetyDamage(damage);
         if (nowD - (lastDamageDebugAt || 0) > 2000) {
           lastDamageDebugAt = nowD;
           const hex = Array.from(u.slice(0, Math.min(u.length, 20))).map(b => b.toString(16).padStart(2, '0')).join(' ');
@@ -4050,9 +4759,15 @@
         }
       }
       if (target && target.id === id) {
+        if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) {
+          // ★ v4.189.0: มอนตัวล่าสุดตายแล้ว — กันช่องว่างก่อน DROP packet มาถึง
+          unstuckBuffLootSettleUntil = nowMs() + 600;
+          log('🏠 AB Auto: มอนตัวล่าสุดตาย → รอของตก 0.6 วิ แล้วเก็บให้หมดก่อน Unstuck');
+        }
         abandonTarget('ฆ่าได้', false); target = null;
-        // ★ trigger post-combat cooldown (รอก่อน acquire ใหม่ — ถ้ามีของ loot-blocking จะเก็บก่อน)
-        combatCooldownUntil = nowMs() + CFG.postCombatDelayMs;
+        // ★ v4.187.9: รอ drop packet สั้น ๆ ก่อนหาเป้าใหม่
+        //   ถ้ามีของตก queue จะบล็อก combat จนเก็บหมด; พอชิ้นสุดท้ายเก็บสำเร็จจะปลด cooldown ทันที
+        combatCooldownUntil = nowMs() + 250;
       }
     }
     // 0x1b DESPAWN: entity หาย (มี false-despawn guard)
@@ -4072,11 +4787,11 @@
         } else if (recentAttack) {
           dbg('🛡️ false despawn guard: target', e.name || id.toString(16), 'ส่ง attack', (now - target.firstAttackAt) + 'ms ที่แล้ว → ไม่ลบ');
         } else {
-          // ★★★ ไม่ลบทันที! — mark pending แล้วรอ 2s (sweeper ลบให้ถ้าไม่มีอะไรมายืนยัน)
+          // ★★★ ไม่ลบทันที! — mark pending แล้วรอ grace 6.5s (sweeper ลบให้ถ้าไม่มีอะไรมายืนยัน)
           //   การค้นพบจาก capture จริง: server ส่ง 1b + 36(reason=5) เป็นประจำทุก ~5s
           //   กับมอนที่ยังเดินอยู่ (client ยัง render!) — ลบทันที = สร้าง ghost kind=0
           //   จาก MOVE ถัดไป → มอนหายจาก targeting ("มอนอยู่รอบตัวแต่หาไม่เจอ")
-          //   ตัวยืนยันว่ายังอยู่: 0x07 MOVE / 0x36 reason=5 / 0x0f emote — ตัวไหนมาก่อน 2s คือยังอยู่
+          //   ตัวยืนยันว่ายังอยู่: 0x07 MOVE / 0x36 reason=5 / 0x0f emote — ตัวไหนมาก่อน grace คือยังอยู่
           e._despawnPendingAt = Date.now();
         }
       }
@@ -4115,6 +4830,7 @@
   // ---------- loop เก็บของ ----------
   const lootLoop = setInterval(() => {
     if (!CFG.lootEnabled) return;
+    if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
     // ★ ห้ามเก็บของตอนขาย/ฝาก — อยู่คนละแมป (คิวเก็บ cross-map พังตำแหน่ง + ยิง pickup พลาด)
     if (typeof sellState !== 'undefined' && (sellState !== 'IDLE' || storageState !== 'IDLE')) return;
     const now = Date.now();
@@ -4216,7 +4932,138 @@
   }, CFG.lootTickMs);
 
   // ============================================================
-  //  AUTO-SELL — state machine (IDLE → WARP → MOVE → TALK → SELECT → SELL → WARP_BACK)
+  //  ROUTINE WALK HELPER — ใช้สำหรับ Sell / Kafra หลัง Direct Unstuck
+  //  priority: GAT A* → NAV waypoint → เดินตรงเป็นช่วง ≤ MOVE_MAX_DIST
+  // ============================================================
+  function routineWalkTowardPoint(tx, ty, tag) {
+    if (player.x == null || player.y == null) return { arrived:false, sent:false, mode:'no-pos' };
+    tx = Math.round(Number(tx)); ty = Math.round(Number(ty));
+    const dist = Math.hypot(tx - player.x, ty - player.y);
+    if (dist <= 3) return { arrived:true, sent:false, mode:'arrived', dist };
+
+    let wx = tx, wy = ty, mode = 'direct';
+    try {
+      if (currentMap && typeof gatCache !== 'undefined' && gatCache.has(currentMap)) {
+        const path = gatFindPath(tx, ty, 12000);
+        if (path && path.length > 1) {
+          let best = 1;
+          for (let i = path.length - 1; i >= 1; i--) {
+            const p = path[i];
+            if (Math.hypot(p.x - player.x, p.y - player.y) <= MOVE_MAX_DIST && gatLineWalkable(player.x, player.y, p.x, p.y)) { best = i; break; }
+          }
+          wx = path[best].x; wy = path[best].y; mode = 'GAT';
+        }
+      }
+      if (mode === 'direct' && typeof navNavigateTo === 'function') {
+        const wp = navNavigateTo(tx, ty);
+        if (wp) { wx = wp.x; wy = wp.y; mode = 'NAV'; }
+      }
+    } catch (_) {}
+
+    // game click-walk มีเพดานระยะ — clamp ทุก fallback ให้อยู่ในช่วงปลอดภัย
+    const wd = Math.hypot(wx - player.x, wy - player.y);
+    if (wd > MOVE_MAX_DIST) {
+      const step = MOVE_MAX_DIST;
+      const a = Math.atan2(wy - player.y, wx - player.x);
+      wx = player.x + Math.cos(a) * step;
+      wy = player.y + Math.sin(a) * step;
+    }
+    const sent = sendMove(wx, wy);
+    if (sent) dbg((tag || '🚶 Routine') + ' เดิน ' + mode + ' @(' + Math.round(wx) + ',' + Math.round(wy) + ') เหลือ ' + dist.toFixed(0) + ' ช่อง');
+    return { arrived:false, sent, mode, dist };
+  }
+
+  // ★ v4.189.5: หลัง Direct Unstuck ตำแหน่งใน memory ยังเป็นจุดก่อนวาร์ป
+  // ถ้าเอาค่านั้นไป clamp sendMove จะส่งก้าวจากจุดเก่า → server ปฏิเสธ จนผู้ใช้คลิกเองแล้วได้ MOVE_UPDATE ใหม่
+  // แก้: invalidate พิกัดเก่า + ใช้ /where เป็น authoritative position oracle ก่อนเริ่มเดิน
+  function invalidatePositionAfterRoutineUnstuck() {
+    player.x = null; player.y = null;
+    if (playerId != null) {
+      const me = entities.get(playerId);
+      if (me) { me.x = null; me.y = null; }
+    }
+    lastWhereReqAt = 0;
+  }
+  function requestRoutinePosition(tag, now) {
+    if (player.x != null && player.y != null) return true;
+    if (now - (lastWhereReqAt || 0) >= 700) {
+      if (sendWhere()) {
+        lastWhereReqAt = now;
+        dbg((tag || '🚶 Routine') + ' รอพิกัดหลัง Unstuck → ส่ง /where');
+      }
+    }
+    return false;
+  }
+
+  // ★ v4.189.7: หลัง Unstuck server จะปลด movement state เมื่อคำสั่งเดินแรกห่าง >~10 ช่อง
+  // ผู้ใช้ทดสอบจริงว่าคลิกใกล้ 1–3 ช่องไม่ขยับ แต่คลิกไกลเกิน 10 ช่องแล้ว automation เดินต่อได้
+  // จึงใช้ "long wake move" 12–15 ช่อง (ยังไม่เกิน MOVE_MAX_DIST=16) แล้วรอ MOVE_UPDATE ยืนยัน
+  function newRoutineWakeState() {
+    return { baseX:null, baseY:null, startedAt:0, lastSendAt:0, attempt:0, confirmed:false };
+  }
+  function resetRoutineWakeState(w) {
+    if (!w) return;
+    w.baseX = null; w.baseY = null; w.startedAt = 0; w.lastSendAt = 0; w.attempt = 0; w.confirmed = false;
+  }
+  function routineWakeMove(w, tx, ty, tag, now) {
+    if (!w || player.x == null || player.y == null) return false;
+    if (w.baseX == null || w.baseY == null) {
+      w.baseX = player.x; w.baseY = player.y; w.startedAt = now; w.lastSendAt = 0; w.attempt = 0; w.confirmed = false;
+      try { if (currentMap && !gatCache.has(currentMap)) gatLoad(currentMap); } catch (_) {}
+    }
+    // server MOVE_UPDATE มาแล้ว = ปลุก movement สำเร็จ
+    if (Math.hypot(player.x - w.baseX, player.y - w.baseY) >= 0.60) {
+      if (!w.confirmed) log((tag || '🚶 Routine') + ' Long Wake Move สำเร็จ @(' + Math.round(player.x) + ',' + Math.round(player.y) + ') → เริ่มเดินเส้นทาง');
+      w.confirmed = true;
+      return true;
+    }
+    if (now - w.lastSendAt < 350) return false;
+
+    // ทิศแรกมุ่งไปเป้าหมาย จากนั้นหมุน ±45/90/135/180 องศา
+    const vx = Number(tx) - player.x, vy = Number(ty) - player.y;
+    const baseAngle = Math.atan2(vy, vx);
+    const angleOffsets = [0, Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2, 3*Math.PI/4, -3*Math.PI/4, Math.PI];
+    // ทดสอบจริงต้อง >10 ช่อง; สลับ 12–15 เพื่อผ่าน threshold แต่ไม่เกิน click cap 16
+    const wakeDistances = [13, 15, 12, 14];
+    const dist = wakeDistances[Math.floor(w.attempt / angleOffsets.length) % wakeDistances.length];
+    let chosen = null;
+
+    for (let k = 0; k < angleOffsets.length; k++) {
+      const idx = (w.attempt + k) % angleOffsets.length;
+      const a = baseAngle + angleOffsets[idx];
+      const cx = Math.round(player.x + Math.cos(a) * dist);
+      const cy = Math.round(player.y + Math.sin(a) * dist);
+      let ok = true;
+      try {
+        if (currentMap && gatCache.has(currentMap)) {
+          ok = !!gatWalkable(cx, cy) && !!gatLineWalkable(player.x, player.y, cx, cy);
+        }
+      } catch (_) {}
+      if (ok) { chosen = {x:cx, y:cy}; break; }
+    }
+
+    if (!chosen) {
+      // ถ้า GAT หาเส้นตรง 12–15 ช่องไม่ได้ ให้ลองทิศเป้าหมายโดยตรง; sendMove จะ clamp ที่ 16 เอง
+      const a = baseAngle + angleOffsets[w.attempt % angleOffsets.length];
+      chosen = { x:Math.round(player.x + Math.cos(a) * dist), y:Math.round(player.y + Math.sin(a) * dist) };
+    }
+
+    w.attempt++; w.lastSendAt = now;
+    if (sendMove(chosen.x, chosen.y)) {
+      dbg((tag || '🚶 Routine') + ' Long Wake Move #' + w.attempt + ' ระยะ~' + dist + ' → (' + chosen.x + ',' + chosen.y + ')');
+    }
+    // ถ้ายังไม่ขยับหลายรอบ ขอ /where ซ้ำ เผื่อพิกัด authoritative เปลี่ยนแต่ MOVE_UPDATE หลุด
+    if (w.attempt % 8 === 0 && now - (lastWhereReqAt || 0) >= 700) {
+      if (sendWhere()) lastWhereReqAt = now;
+    }
+    return false;
+  }
+  let sellWakeMove = newRoutineWakeState();
+  let storageWakeMove = newRoutineWakeState();
+
+  // ============================================================
+  //  AUTO-SELL — state machine
+  //  IDLE → UNSTUCK_TO_NPC → WAKE_MOVE → WALK_TO_POINT → MOVE_TO_NPC → TALK → SELECT → SELL → WARP_BACK
   // ============================================================
   // หา NPC จาก entities (kind=2 + ชื่อตรง) — mirror world.js:1948-1959
   function findSellNpc() {
@@ -4227,13 +5074,26 @@
     return null;
   }
   function setSellState(s) { sellState = s; sellStateAt = nowMs(); }
-  let sellWarped = false;        // true = ไม่ต้องรอ 5s หลังวาร์ป (อยู่ใกล้ NPC แล้ว)
-  let sellWarpRetries = 0;       // วาร์ปไม่ถึงแมป NPC → ยิงซ้ำได้ max 2
-  let sellMoveLastAt = 0;        // throttle เดินเข้าหา NPC (เดิมเก็บบน string = no-op!)
+  let sellWarped = false;        // legacy flag (คงไว้เพื่อ compatibility; v4.189.4 ขาไปใช้ Unstuck+เดิน)
+  let sellWarpRetries = 0;       // legacy retry counter
+  let sellMoveLastAt = 0;        // throttle เดินไปจุด/NPC
+  let sellTravelStartedAt = 0;   // เวลาส่ง Unstuck สำหรับขาไปขาย
   let pendingSellEquip = [];     // ★ equipment รอขายรอบสอง (แยก packet กัน server ปฏิเสธทั้งก้อน)
   let sellEquipRoundSent = false;
   let sellEqRetryMode = false;   // ★ true = รอบลองส่ง equipment แบบ itemId ตรง ๆ (slot id โดนปฏิเสธ — ไม่เคยสำเร็จเลยตั้งแต่ v4.150)
   let lastSellSentItems = [];    // ★ รายการที่ส่งล่าสุด (สำหรับ retry เปลี่ยน equipment เป็น itemId)
+  function startSellTravel(reason, returnTo) {
+    if (!currentMap || player.x == null || player.y == null) { log('⚠️ เริ่มขายไม่ได้ — ยังไม่รู้แมพ/พิกัดตัวละคร'); return false; }
+    sellReturnTo = returnTo || { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
+    sellWarpRetries = 0; pendingSellEquip = []; sellEquipRoundSent = false; sellEqRetryMode = false;
+    sellNpcId = null; sellNpcRetryAt = 0; sellMoveLastAt = 0; resetRoutineWakeState(sellWakeMove);
+    if (!sendDirectUnstuckPacket()) { sellReturnTo = null; log('⚠️ เริ่มขายไม่ได้ — ส่ง Direct Unstuck 0x73 ไม่สำเร็จ'); return false; }
+    invalidatePositionAfterRoutineUnstuck();
+    sellTravelStartedAt = nowMs();
+    setSellState('UNSTUCK_TO_NPC');
+    log('💰 เริ่มขายของ (' + reason + ') → Unstuck 0x73 → รอ 2 วิ → เดินไป ' + CFG.sellNpcMap + ' @(' + CFG.sellNpcX + ',' + CFG.sellNpcY + ')');
+    return true;
+  }
   function abortSell(reason) {
     log('⚠️ ยกเลิกขาย:', reason);
     sellState = 'IDLE'; sellStateAt = 0;
@@ -4245,6 +5105,8 @@
   const sellLoop = setInterval(() => {
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
+    if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
+    if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) return;
     const now = nowMs();
 
     // === trigger (เฉพาะ IDLE) ===
@@ -4261,44 +5123,57 @@
         shouldSell = true; reason = 'ครบ ' + CFG.sellIntervalMin + ' นาที';
       }
       if (shouldSell && currentMap && player.x != null) {
-        sellReturnTo = { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
-        sellWarpRetries = 0; pendingSellEquip = []; sellEquipRoundSent = false; sellEqRetryMode = false;
-        // ★★ อยู่แมป NPC แล้ว + ใกล้พอ → ไม่วาร์ป (วาร์ปซ้ำโดน server ดรอป + log "วาร์ปไป" ทั้งที่ไม่ไปไหน)
-        const dNpc = Math.hypot(player.x - CFG.sellNpcX, player.y - CFG.sellNpcY);
-        if (currentMap === CFG.sellNpcMap && dNpc <= 40) {
-          log('💰 เริ่มขายของ (' + reason + ') — อยู่ใกล้ NPC แล้ว ไม่ต้องวาร์ป');
-          sellWarped = true;
-        } else {
-          log('💰 เริ่มขายของ (' + reason + ') → วาร์ปไป', CFG.sellNpcMap, '@(', CFG.sellNpcX, CFG.sellNpcY + ')');
-          sendTeleport(CFG.sellNpcMap, CFG.sellNpcX, CFG.sellNpcY);
-          sellWarped = false;
-        }
-        setSellState('WARP_TO_NPC');
+        startSellTravel(reason, null);
       }
       return;
     }
 
-    // === watchdog: stuck >60s → abort ===
-    if (now - sellStateAt > 60000) { abortSell('timeout (' + sellState + ' 60s)'); return; }
+    // === watchdog: เดินจาก Save Point อาจไกลกว่าเดิม → ให้เวลา state ละ 120s ===
+    if (now - sellStateAt > 120000) { abortSell('timeout (' + sellState + ' 120s)'); return; }
 
     // === state machine ===
-    if (sellState === 'WARP_TO_NPC') {
-      // ★★ รอ 5s หลังวาร์ปจริง ให้ entities โหลด (ถ้า warp ยังค้างในคิว → รอก่อน)
-      //   sellWarped=true = อยู่ใกล้ NPC แล้ว → หาได้เลยไม่ต้องรอ
-      const warpSettled = sellWarped || pendingTeleport == null;
-      if (warpSettled && now - sellStateAt > (sellWarped ? 500 : 5000)) {
-        const npc = findSellNpc();
-        if (npc) { sellNpcId = npc.id; setSellState('MOVE_TO_NPC'); log('💰 พบ', npc.name, '@(', npc.x, npc.y + ')'); }
-        else if (now - sellStateAt > 10000 && currentMap !== CFG.sellNpcMap && sellWarpRetries < 2) {
-          // ★★ warp ไม่ถึงแมป NPC (โดนดรอป/ตีกับอย่างอื่น) → ยิงซ้ำ (สูงสุด 2)
-          sellWarpRetries++;
-          log('💰 ยังไม่ถึง', CFG.sellNpcMap, '(อยู่ ' + currentMap + ') → วาร์ปซ้ำ ครั้ง', sellWarpRetries + '/2');
-          sendTeleport(CFG.sellNpcMap, CFG.sellNpcX, CFG.sellNpcY);
-          setSellState('WARP_TO_NPC');   // reset นาฬิกา
-          return;
+    if (sellState === 'UNSTUCK_TO_NPC') {
+      // ให้ server ย้ายตัวก่อนเล็กน้อย แล้วถามตำแหน่งจริงด้วย /where
+      if (now - sellTravelStartedAt < 700) return;
+      if (!requestRoutinePosition('💰 Sell', now)) return;
+      if (currentMap !== CFG.sellNpcMap) {
+        if (now - sellTravelStartedAt > 12000) {
+          abortSell('Unstuck แล้วอยู่แมพ ' + (currentMap || '?') + ' แต่ NPC อยู่ ' + CFG.sellNpcMap + ' — ตั้ง Save Point ให้ตรงแมพ NPC ก่อน');
         }
-        else if (now - sellStateAt > 15000) { abortSell('ไม่พบ NPC ' + CFG.sellNpcName + ' (หลังรอ 15s)'); return; }
-        // else: ยังไม่เจอ → รอต่อ (entities ยังโหลดไม่ครบ)
+        return;
+      }
+      try { if (currentMap && !gatCache.has(currentMap)) gatLoad(currentMap); } catch (_) {}
+      resetRoutineWakeState(sellWakeMove);
+      setSellState('WAKE_MOVE');
+      log('💰 ได้พิกัด Save Point จริง @(' + Math.round(player.x) + ',' + Math.round(player.y) + ') → ปลุกการเดินไกล 12–15 ช่องก่อนเข้าทางไปจุดขาย');
+      routineWakeMove(sellWakeMove, CFG.sellNpcX, CFG.sellNpcY, '💰 Sell', now);
+      return;
+    }
+    if (sellState === 'WAKE_MOVE') {
+      if (currentMap !== CFG.sellNpcMap) { abortSell('หลุดจากแมพ NPC ระหว่าง Wake Move (' + currentMap + ' ≠ ' + CFG.sellNpcMap + ')'); return; }
+      if (routineWakeMove(sellWakeMove, CFG.sellNpcX, CFG.sellNpcY, '💰 Sell', now)) {
+        setSellState('WALK_TO_POINT');
+        sellMoveLastAt = 0;
+        routineWalkTowardPoint(CFG.sellNpcX, CFG.sellNpcY, '💰 Sell');
+      }
+      return;
+    }
+    if (sellState === 'WALK_TO_POINT') {
+      if (currentMap !== CFG.sellNpcMap) { abortSell('หลุดจากแมพ NPC ระหว่างเดิน (' + currentMap + ' ≠ ' + CFG.sellNpcMap + ')'); return; }
+      const dPoint = Math.hypot(CFG.sellNpcX - player.x, CFG.sellNpcY - player.y);
+      if (dPoint <= 4) {
+        const npc = findSellNpc();
+        if (npc) { sellNpcId = npc.id; setSellState('MOVE_TO_NPC'); log('💰 ถึงจุดขายแล้ว → พบ', npc.name, '@(', npc.x, npc.y + ')'); }
+        else {
+          if (!sellNpcRetryAt) sellNpcRetryAt = now;
+          if (now - sellNpcRetryAt > 12000) { abortSell('ถึงจุดที่กำหนดแล้วแต่ไม่พบ NPC ' + CFG.sellNpcName); sellNpcRetryAt = 0; }
+        }
+        return;
+      }
+      sellNpcRetryAt = 0;
+      if (now - sellMoveLastAt > 700) {
+        sellMoveLastAt = now;
+        routineWalkTowardPoint(CFG.sellNpcX, CFG.sellNpcY, '💰 Sell');
       }
       return;
     }
@@ -4352,11 +5227,11 @@
       }
       return;
     }
-  }, 1000);
+  }, 250);
 
   // ============================================================
   //  AUTO-STORAGE — state machine (mirror bot.js:1816-2047)
-  //  IDLE → WARP_TO_KAFRA → MOVE_TO_KAFRA → TALK_KAFRA → SELECT_STORAGE
+  //  IDLE → UNSTUCK_TO_KAFRA → WAKE_MOVE → WALK_TO_KAFRA_POINT → MOVE_TO_KAFRA → TALK_KAFRA → SELECT_STORAGE
   //       → STORAGE_OPENED → MOVE_ITEMS → CLOSE_STORAGE → WARP_BACK → IDLE
   // ============================================================
   function findKafraNpc() {
@@ -4375,25 +5250,22 @@
     if (storageReturnTo && storageReturnTo.map) { sendTeleport(storageReturnTo.map, storageReturnTo.x, storageReturnTo.y); }
     storageReturnTo = null;
   }
-  // ★ เริ่มฝากของ — จด returnTo แล้ววาร์ปไปแมป Kafra
-  let storageWarped = false;     // true = อยู่ใกล้ Kafra แล้ว ไม่ต้องวาร์ป
+  // ★ เริ่มฝากของ — จด returnTo → Direct Unstuck → เดินไปจุด Kafra
+  let storageWarped = false;     // legacy flag (v4.189.4 ขาไปไม่ใช้ Direct Teleport)
   let storageWarpRetries = 0;
+  let storageTravelStartedAt = 0;
   function startStorage(reason, returnTo) {
     const kx = (CFG.kafraMapX && CFG.kafraMapX > 0) ? CFG.kafraMapX : CFG.sellNpcX;
     const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
+    if (!currentMap || player.x == null || player.y == null) { log('⚠️ เริ่มฝากไม่ได้ — ยังไม่รู้แมพ/พิกัดตัวละคร'); return false; }
     storageReturnTo = returnTo || { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
-    storageWarpRetries = 0;
-    // ★★ อยู่แมป Kafra แล้ว + ใกล้พอ → ไม่วาร์ป (วาร์ปซ้ำโดน server ดรอป)
-    const dKafra = (player.x != null) ? Math.hypot(player.x - kx, player.y - ky) : Infinity;
-    if (currentMap === CFG.kafraMap && dKafra <= 40) {
-      log('🏦 เริ่มฝากของ (' + reason + ') — อยู่ใกล้ Kafra แล้ว ไม่ต้องวาร์ป');
-      storageWarped = true;
-    } else {
-      log('🏦 เริ่มฝากของ (' + reason + ') → วาร์ปไป', CFG.kafraMap, '@(', kx, ky + ')');
-      sendTeleport(CFG.kafraMap, kx, ky);
-      storageWarped = false;
-    }
-    setStorageState('WARP_TO_KAFRA');
+    storageWarpRetries = 0; storageNpcId = null; kafraNpcRetryAt = 0; storageLastMoveAt = 0; resetRoutineWakeState(storageWakeMove);
+    if (!sendDirectUnstuckPacket()) { storageReturnTo = null; log('⚠️ เริ่มฝากไม่ได้ — ส่ง Direct Unstuck 0x73 ไม่สำเร็จ'); return false; }
+    invalidatePositionAfterRoutineUnstuck();
+    storageTravelStartedAt = nowMs();
+    setStorageState('UNSTUCK_TO_KAFRA');
+    log('🏦 เริ่มฝากของ (' + reason + ') → Unstuck 0x73 → รอ 2 วิ → เดินไป ' + CFG.kafraMap + ' @(' + kx + ',' + ky + ')');
+    return true;
   }
   // ★ สร้าง queue ของที่จะฝาก — แยก equipment vs stackable (mirror bot.js:1947-1987)
   function buildDepositQueue() {
@@ -4425,6 +5297,8 @@
   const storageLoop = setInterval(() => {
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
+    if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
+    if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) return;
     const now = nowMs();
 
     // === trigger (IDLE เท่านั้น) ===
@@ -4439,27 +5313,56 @@
       return;
     }
 
-    // === watchdog: ค้าง >60s → ยกเลิก ===
-    if (now - storageStateAt > 60000) { abortStorage('timeout (' + storageState + ' 60s)'); return; }
+    // === watchdog: เดินจาก Save Point อาจไกล → ให้เวลา state ละ 120s ===
+    if (now - storageStateAt > 120000) { abortStorage('timeout (' + storageState + ' 120s)'); return; }
 
-    if (storageState === 'WARP_TO_KAFRA') {
-      // ★★ รอ 5s หลังวาร์ปจริง ให้ entities โหลด (warp ค้างคิว → รอก่อน / อยู่ใกล้แล้ว → หาได้เลย)
-      const warpSettled = storageWarped || pendingTeleport == null;
-      if (warpSettled && now - storageStateAt > (storageWarped ? 500 : 5000)) {
-        const npc = findKafraNpc();
-        if (npc) { storageNpcId = npc.id; setStorageState('MOVE_TO_KAFRA'); log('🏦 พบ', npc.name, '@(', npc.x, npc.y + ')'); }
-        else if (now - storageStateAt > 10000 && currentMap !== CFG.kafraMap && storageWarpRetries < 2) {
-          // ★★ warp ไม่ถึงแมป Kafra → ยิงซ้ำ (สูงสุด 2)
-          storageWarpRetries++;
-          const kx2 = (CFG.kafraMapX && CFG.kafraMapX > 0) ? CFG.kafraMapX : CFG.sellNpcX;
-          const ky2 = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
-          log('🏦 ยังไม่ถึง', CFG.kafraMap, '(อยู่ ' + currentMap + ') → วาร์ปซ้ำ ครั้ง', storageWarpRetries + '/2');
-          sendTeleport(CFG.kafraMap, kx2, ky2);
-          setStorageState('WARP_TO_KAFRA');
-          return;
+    if (storageState === 'UNSTUCK_TO_KAFRA') {
+      if (now - storageTravelStartedAt < 700) return;
+      if (!requestRoutinePosition('🏦 Kafra', now)) return;
+      if (currentMap !== CFG.kafraMap) {
+        if (now - storageTravelStartedAt > 12000) {
+          abortStorage('Unstuck แล้วอยู่แมพ ' + (currentMap || '?') + ' แต่ Kafra อยู่ ' + CFG.kafraMap + ' — ตั้ง Save Point ให้ตรงแมพ Kafra ก่อน');
         }
-        else if (now - storageStateAt > 15000) { abortStorage('ไม่พบ Kafra ' + CFG.kafraName + ' (หลังรอ 15s)'); return; }
-        // else: ยังไม่เจอ → รอต่อ (entities ยังโหลดไม่ครบ)
+        return;
+      }
+      try { if (currentMap && !gatCache.has(currentMap)) gatLoad(currentMap); } catch (_) {}
+      resetRoutineWakeState(storageWakeMove);
+      setStorageState('WAKE_MOVE');
+      const kx = (CFG.kafraMapX && CFG.kafraMapX > 0) ? CFG.kafraMapX : CFG.sellNpcX;
+      const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
+      log('🏦 ได้พิกัด Save Point จริง @(' + Math.round(player.x) + ',' + Math.round(player.y) + ') → ปลุกการเดินไกล 12–15 ช่องก่อนเข้าทางไป Kafra');
+      routineWakeMove(storageWakeMove, kx, ky, '🏦 Kafra', now);
+      return;
+    }
+    if (storageState === 'WAKE_MOVE') {
+      if (currentMap !== CFG.kafraMap) { abortStorage('หลุดจากแมพ Kafra ระหว่าง Wake Move (' + currentMap + ' ≠ ' + CFG.kafraMap + ')'); return; }
+      const kx = (CFG.kafraMapX && CFG.kafraMapX > 0) ? CFG.kafraMapX : CFG.sellNpcX;
+      const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
+      if (routineWakeMove(storageWakeMove, kx, ky, '🏦 Kafra', now)) {
+        setStorageState('WALK_TO_KAFRA_POINT');
+        storageLastMoveAt = 0;
+        routineWalkTowardPoint(kx, ky, '🏦 Kafra');
+      }
+      return;
+    }
+    if (storageState === 'WALK_TO_KAFRA_POINT') {
+      if (currentMap !== CFG.kafraMap) { abortStorage('หลุดจากแมพ Kafra ระหว่างเดิน (' + currentMap + ' ≠ ' + CFG.kafraMap + ')'); return; }
+      const kx = (CFG.kafraMapX && CFG.kafraMapX > 0) ? CFG.kafraMapX : CFG.sellNpcX;
+      const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
+      const dPoint = Math.hypot(kx - player.x, ky - player.y);
+      if (dPoint <= 4) {
+        const npc = findKafraNpc();
+        if (npc) { storageNpcId = npc.id; setStorageState('MOVE_TO_KAFRA'); log('🏦 ถึงจุด Kafra แล้ว → พบ', npc.name, '@(', npc.x, npc.y + ')'); }
+        else {
+          if (!kafraNpcRetryAt) kafraNpcRetryAt = now;
+          if (now - kafraNpcRetryAt > 12000) { abortStorage('ถึงจุดที่กำหนดแล้วแต่ไม่พบ Kafra ' + CFG.kafraName); kafraNpcRetryAt = 0; }
+        }
+        return;
+      }
+      kafraNpcRetryAt = 0;
+      if (now - storageLastMoveAt > 700) {
+        storageLastMoveAt = now;
+        routineWalkTowardPoint(kx, ky, '🏦 Kafra');
       }
       return;
     }
@@ -4580,6 +5483,42 @@
   //   ทั้งที่ยังอยู่บนจอ → พอขยับ 0x07 สร้างใหม่เป็น kind=0 ผี → หาไม่เจอ ("มอนอยู่รอบตัวแต่บอทบอกไม่เจอมอน")
   //   แก้: ขยับกลับมา → คืนสถานะที่ SPAWN เคยยืนยัน (ไม่ใช่การเดา id ใหม่ — ปลอดภัยเท่าเดิม)
   const recentlyDespawned = new Map();   // id -> {kind, sub, name, isBoss, isMiniBoss, expireAt}
+  // ★ v4.187.1 MONSTER SENSOR FUSION
+  // 1b จาก server มี false-despawn เป็นระยะกับมอนที่ client ยัง render อยู่
+  // ใช้ grace > รอบ false signal (~5s) เพื่อให้ packet ยืนยันรอบถัดไปมีเวลายกเลิก pending
+  const MONSTER_DESPAWN_GRACE_MS = 6500;
+  const TARGET_REACQUIRE_MS = 600;
+  function upsertMonsterEvidence(id, x, y, now, src, extra = null) {
+    if (!id || id === 0xffffffff || id === playerId) return null;
+    if (isStaleId(id, now) || isBeaconPlayer(id, now)) return null;
+    let e = entities.get(id);
+    // ถ้าเคยเป็นมอนที่เพิ่งถูก sweeper ลบ ให้คืน sub/name เดิมก่อน
+    if (!e) {
+      const rd = recentlyDespawned.get(id);
+      if (rd && now < rd.expireAt && rd.kind === 1) {
+        recentlyDespawned.delete(id);
+        e = { id, kind: 1, sub: rd.sub, name: rd.name || '', x, y, alive: true, _lastSeenAt: now, _src: 'restore',
+          ...(rd.isBoss ? { _isBoss: true } : {}), ...(rd.isMiniBoss ? { _isMiniBoss: true } : {}) };
+        entities.set(id, e);
+      }
+    }
+    if (!e) {
+      e = { id, kind: 1, x, y, alive: true, _lastSeenAt: now, name: '', _src: src || 'evidence' };
+      entities.set(id, e);
+    } else {
+      // named player/NPC ที่มีหลักฐานอยู่แล้ว ห้าม promote เป็นมอนจาก packet ตำแหน่งลอย ๆ
+      if (e.kind === 2 || (e.kind === 0 && e.name && e.name.trim())) {
+        e.x = x; e.y = y; e._lastSeenAt = now; e._despawnPendingAt = 0;
+        return e;
+      }
+      e.kind = 1;
+      e.x = x; e.y = y; e.alive = true; e._lastSeenAt = now; e._despawnPendingAt = 0;
+      if (!e._src || e._src === 'move') e._src = src || 'evidence';
+    }
+    if (extra && extra.isBoss) e._isBoss = true;
+    if (extra && extra.isMiniBoss) e._isMiniBoss = true;
+    return e;
+  }
   const monsterAggro = new Map(); // monsterId -> timestamp (มอนจับเราเป็นเป้า)
   const stalePlayerIds = new Map(); // oldPlayerId -> expireAt (กัน phantom entity จาก ID เก่า, 5 นาที)
   function isStaleId(id, now) {
@@ -4601,14 +5540,14 @@
   let invDataVer = 0;          // ★ version ของ inventory/equipment — bump ทุกครั้งที่ข้อมูลเปลี่ยน (modal live-refresh)
   let lastOutEquip = null;     // ★ OUT 0x30 ล่าสุด {idx, action, at} — ให้ IN 0x30 รู้ทิศทาง สวมใส่/ถอด
   let inventoryFull = false;      // true เมื่อ server ส่ง "too full" (0x20)
-  let sellState = 'IDLE';         // IDLE|WARP_TO_NPC|MOVE_TO_NPC|TALK|SELECT_SELL|SELL|WARP_BACK
+  let sellState = 'IDLE';         // IDLE|UNSTUCK_TO_NPC|WAKE_MOVE|WALK_TO_POINT|MOVE_TO_NPC|TALK|SELECT_SELL|SELL|WARP_BACK
   let sellNpcRetryAt = 0;         // ★ NPC retry — กัน abort ทันทีเมื่อ entities โหลดช้า
   let sellStateAt = 0;            // timestamp เข้า state (watchdog)
   let sellReturnTo = null;        // {map,x,y} ที่จะวาร์ปกลับหลังขาย
   let sellNpcId = null;           // NPC entity id (หาจาก entities)
   let lastSellAt = 0;             // throttle interval
   // ---------- AUTO-STORAGE state (mirror bot.js:1817-1824) ----------
-  let storageState = 'IDLE';      // IDLE|WARP_TO_KAFRA|MOVE_TO_KAFRA|TALK_KAFRA|SELECT_STORAGE|STORAGE_OPENED|MOVE_ITEMS|CLOSE_STORAGE|WARP_BACK
+  let storageState = 'IDLE';      // IDLE|UNSTUCK_TO_KAFRA|WAKE_MOVE|WALK_TO_KAFRA_POINT|MOVE_TO_KAFRA|TALK_KAFRA|SELECT_STORAGE|STORAGE_OPENED|MOVE_ITEMS|CLOSE_STORAGE
   let kafraNpcRetryAt = 0;        // ★ Kafra retry — กัน abort ทันทีเมื่อ entities โหลดช้า
   let storageStateAt = 0;         // timestamp เข้า state (watchdog)
   let storageReturnTo = null;     // {map,x,y} ที่จะวาร์ปกลับหลังฝาก
@@ -4689,6 +5628,7 @@
     for (const m of entities.values()) {
       if (m.kind !== 1 || !m.alive || m.x == null) continue;
       if (isStaleId(m.id, now)) continue;   // ★ skip stale player IDs (mirror world.js:1904)
+      if (isBeaconPlayer(m.id, now)) continue; // ★ v4.187.1 defense-in-depth: radar-confirmed player ไม่นับเป็นมอน
       if (Math.hypot(m.x - player.x, m.y - player.y) <= radius) n++;
     }
     return n;
@@ -4937,6 +5877,289 @@
     if (!currentMap) { log('⚠️ วาร์ปหนี: ยังไม่รู้ชื่อแมป'); return false; }
     return sendTeleport(currentMap, -999, -999);
   }
+  // ★ Warp Find: Fly Wing (itemId 601 Rayrag) / Teleport Clip / direct random warp
+  //   ใช้เฉพาะตอนหาเป้าไม่เจอ — ไม่ผูกกับ Auto-Skill timer
+  function sendWarpFind() {
+    // ★ ห้ามวาร์ปหา monster จนกว่าผู้ใช้จะเปิด Combat
+    if (!CFG.combatEnabled) { dbg('🛑 WarpFind ถูกบล็อก: Combat OFF'); return false; }
+    if (!activeWS || activeWS.readyState !== 1) return false;
+
+    // ★ v4.188.5: Fly Wing mode — Rayrag DB ในเกมใช้ Item ID 601
+    if (CFG.warpFindUseFlyWing) {
+      const FLY_WING_ID = 601;
+      const stock = inventory.has(FLY_WING_ID) ? (inventory.get(FLY_WING_ID) || 0) : 0;
+      if (stock <= 0) {
+        log('⚠️ WarpFind: Fly Wing (601) หมด/ไม่พบใน Inventory → รอ ไม่ส่ง packet');
+        return false;
+      }
+      if (sendUseItem(FLY_WING_ID)) {
+        log('🪽 WarpFind → ใช้ Fly Wing (601) · เหลือก่อนใช้ ' + stock + ' ชิ้น');
+        return true;
+      }
+      return false;
+    }
+
+    if (!CFG.warpFindUseTeleportSkill) return sendRandomWarp();
+    if (sp.cur != null && sp.cur < 30) { dbg('🌀 WarpFind Teleport: SP ต่ำกว่า 30 → รอ'); return false; }
+    if (typeof castingUntil !== 'undefined' && nowMs() < castingUntil) return false;
+    if (sendSkill(53, 1, null, null, null)) {
+      log('🌀 WarpFind → ใช้ Teleport Lv.1 (skillId 53 / Teleport Clip)');
+      return true;
+    }
+    return false;
+  }
+  // ★★ v4.188.8 — HP Emergency Flee
+  // sameMap priority: Direct/Database TP (0x40) → Teleport Clip (skill 53) → Fly Wing (601)
+  // Direct TP intentionally respects TELEPORT_MIN_GAP_MS here; if still in gap, skip immediately to Clip.
+  let hpFleeLatched = false;
+  let hpFleePendingClip = null;   // {map,x,y,startedAt}
+  let hpFleeNextTryAt = 0;
+  const HP_FLEE_CLIP_FALLBACK_MS = 450;
+  const HP_FLEE_RETRY_MS = 1500;
+
+  function hpFleeClearCombat() {
+    target = null;
+    monsterAggro.clear();
+    mobAttackers.clear();
+    noMonsterSince = 0;
+    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
+  }
+  function hpFleeUseFlyWing(reason) {
+    const FLY_WING_ID = 601;
+    const stock = inventory.has(FLY_WING_ID) ? (inventory.get(FLY_WING_ID) || 0) : 0;
+    if (stock <= 0) {
+      log('⚠️ HP Flee: ไม่มี Fly Wing (601)' + (reason ? ' · ' + reason : ''));
+      hpFleeNextTryAt = nowMs() + HP_FLEE_RETRY_MS;
+      return false;
+    }
+    if (!sendUseItem(FLY_WING_ID)) {
+      hpFleeNextTryAt = nowMs() + HP_FLEE_RETRY_MS;
+      return false;
+    }
+    log('🪽 HP Flee → Fly Wing (601) · เหลือก่อนใช้ ' + stock + ' ชิ้น' + (reason ? ' · ' + reason : ''));
+    hpFleeClearCombat();
+    hpFleeLatched = true;
+    hpFleePendingClip = null;
+    return true;
+  }
+  function hpFleeTryClipThenWing() {
+    // SP ที่รู้ชัดว่าต่ำกว่า 30 = ข้าม Clip ไป Wing ทันที
+    if (sp.cur != null && sp.cur < 30) {
+      log('⚡ HP Flee: SP < 30 → ข้าม Teleport Clip ไป Fly Wing');
+      return hpFleeUseFlyWing('SP ไม่พอใช้ Clip');
+    }
+    if (typeof castingUntil !== 'undefined' && nowMs() < castingUntil) {
+      return hpFleeUseFlyWing('กำลัง cast อยู่');
+    }
+    const src = { map: currentMap, x: player.x, y: player.y, startedAt: nowMs() };
+    if (!sendSkill(53, 1, null, null, null)) return hpFleeUseFlyWing('ส่ง Teleport Clip ไม่สำเร็จ');
+    hpFleePendingClip = src;
+    hpFleeNextTryAt = nowMs() + HP_FLEE_CLIP_FALLBACK_MS;
+    log('📎 HP Flee → ลอง Teleport Clip (skillId 53) · ถ้าไม่วาร์ปใน ~' + HP_FLEE_CLIP_FALLBACK_MS + 'ms จะใช้ Fly Wing');
+    hpFleeClearCombat();
+    return true;
+  }
+  function hpFleeSameMap() {
+    const now = nowMs();
+    // Priority 1: Direct/Database teleport packet 0x40, but only when local teleport gap is ready.
+    const dbReady = !!currentMap && (now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS);
+    if (dbReady) {
+      log('❤️ HP Flee → Direct/Database TP ก่อน (0x40 same-map random)');
+      if (sendRandomWarp()) {
+        hpFleeClearCombat();
+        hpFleeLatched = true;
+        hpFleePendingClip = null;
+        return true;
+      }
+      log('⚠️ HP Flee: Direct TP ส่งไม่สำเร็จ → fallback Teleport Clip');
+    } else {
+      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
+      dbg('❤️ HP Flee: Direct TP ยังติด gap ' + left + 'ms → fallback Clip ทันที');
+    }
+    // Priority 2 → 3
+    return hpFleeTryClipThenWing();
+  }
+  function triggerHpEmergencyFlee(pct) {
+    if (!CFG.hpFleeEnabled || isDead || pct == null || pct <= 0) return false;
+    if (!activeWS || activeWS.readyState !== 1) return false;
+    if (CFG.hpFleeMode === 'unstuck') {
+      log('❤️ HP ต่ำ ' + pct.toFixed(1) + '% < ' + CFG.hpFleePercent + '% → 🏠 Unstuck ฉุกเฉิน');
+      if (sendDirectUnstuckPacket()) {
+        hpFleeClearCombat();
+        hpFleeLatched = true;
+        hpFleePendingClip = null;
+        return true;
+      }
+      hpFleeNextTryAt = nowMs() + HP_FLEE_RETRY_MS;
+      return false;
+    }
+    log('❤️ HP ต่ำ ' + pct.toFixed(1) + '% < ' + CFG.hpFleePercent + '% → 🌀 หนีในแมพ');
+    return hpFleeSameMap();
+  }
+  const hpEmergencyFleeLoop = setInterval(() => {
+    if (!CFG.hpFleeEnabled) { hpFleeLatched = false; hpFleePendingClip = null; return; }
+    // ★ ถ้ากำลังหนีผู้เล่นแบบ fallback อยู่ ให้ชุดนั้นเป็นเจ้าของการวาร์ปก่อน กัน Clip/Wing ชนกัน
+    if (playerFleePending) return;
+    const now = nowMs();
+    const pct = hpSafetyPct();
+    if (pct == null || hp.max <= 0 || isDead) return;
+
+    // re-arm only after HP clearly recovered; hysteresis prevents threshold flapping.
+    if (pct >= Math.min(100, Number(CFG.hpFleePercent || 30) + 5)) {
+      hpFleeLatched = false;
+      hpFleePendingClip = null;
+      hpFleeNextTryAt = 0;
+      return;
+    }
+
+    // Clip trial: if position changed, it worked. Otherwise fallback to Wing after a short confirmation window.
+    if (hpFleePendingClip) {
+      const p = hpFleePendingClip;
+      const movedMap = !!currentMap && !!p.map && currentMap !== p.map;
+      const movedPos = player.x != null && p.x != null && Math.hypot(player.x - p.x, player.y - p.y) >= 3;
+      if (movedMap || movedPos) {
+        log('✅ HP Flee: Teleport Clip สำเร็จ');
+        hpFleePendingClip = null;
+        hpFleeLatched = true;
+        return;
+      }
+      if (now - p.startedAt >= HP_FLEE_CLIP_FALLBACK_MS) {
+        hpFleePendingClip = null;
+        hpFleeUseFlyWing('Clip ไม่ตอบสนอง/ไม่มี Clip');
+      }
+      return;
+    }
+
+    if (hpFleeLatched || now < hpFleeNextTryAt) return;
+    const threshold = Math.max(1, Math.min(99, Number(CFG.hpFleePercent) || 30));
+    if (pct < threshold) triggerHpEmergencyFlee(pct);
+  }, 100);
+
+  // ★★ v4.189.2 — Player Flee fallback เมื่อ Direct ข้ามแมพติด teleport gap
+  // ลำดับ: Direct target-map พร้อม → ไปทันที
+  //        Direct ยังติด gap → Teleport Clip → (450ms ไม่ย้าย) Fly Wing → รอ gap → target-map
+  function playerFleeClearCombat() {
+    target = null;
+    monsterAggro.clear();
+    mobAttackers.clear();
+    noMonsterSince = 0;
+    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
+  }
+  function playerFleeClearOldWorld() {
+    entities.clear();
+    queue.clear();
+    recentDrops.clear();
+    playerFleeClearCombat();
+  }
+  function playerFleeUseWing(reason) {
+    const FLY_WING_ID = 601;
+    const stock = inventory.has(FLY_WING_ID) ? (inventory.get(FLY_WING_ID) || 0) : 0;
+    if (stock <= 0) {
+      log('⚠️ หนีผู้เล่น: ไม่มี Fly Wing (601)' + (reason ? ' · ' + reason : '') + ' → รอ Direct เปลี่ยนแมพ');
+      return false;
+    }
+    if (!sendUseItem(FLY_WING_ID)) {
+      log('⚠️ หนีผู้เล่น: ส่ง Fly Wing ไม่สำเร็จ' + (reason ? ' · ' + reason : '') + ' → รอ Direct เปลี่ยนแมพ');
+      return false;
+    }
+    log('🪽 หนีผู้เล่น → Fly Wing (601) · เหลือก่อนใช้ ' + stock + ' ชิ้น' + (reason ? ' · ' + reason : ''));
+    playerFleeClearOldWorld();
+    return true;
+  }
+  function playerFleeTryClip(nextMap, nearby) {
+    const now = nowMs();
+    // SP ที่รู้แน่ว่าต่ำกว่า 30 หรือกำลังร่ายอยู่ → ข้าม Clip ไป Wing ทันที
+    if (sp.cur != null && sp.cur < 30) {
+      playerFleePending = { phase:'mapwait', map:nextMap, srcMap:currentMap, x:player.x, y:player.y, startedAt:now, nearby };
+      playerFleeUseWing('SP < 30 ใช้ Clip ไม่พอ');
+      return true;
+    }
+    if (typeof castingUntil !== 'undefined' && now < castingUntil) {
+      playerFleePending = { phase:'mapwait', map:nextMap, srcMap:currentMap, x:player.x, y:player.y, startedAt:now, nearby };
+      playerFleeUseWing('กำลัง cast อยู่');
+      return true;
+    }
+    const p = { phase:'clip', map:nextMap, srcMap:currentMap, x:player.x, y:player.y, startedAt:now, nearby };
+    if (!sendSkill(53, 1, null, null, null)) {
+      playerFleePending = { ...p, phase:'mapwait' };
+      playerFleeUseWing('ส่ง Teleport Clip ไม่สำเร็จ');
+      return true;
+    }
+    playerFleePending = p;
+    playerFleeClearCombat();
+    log('📎 หนีผู้เล่น → Direct เปลี่ยนแมพยังติด gap จึงใช้ Teleport Clip ก่อน · ถ้าไม่ย้ายใน ~' + PLAYER_FLEE_CLIP_FALLBACK_MS + 'ms จะใช้ Fly Wing');
+    return true;
+  }
+  function playerFleeStartChangeMap(nextMap, nearby) {
+    if (!nextMap || !activeWS || activeWS.readyState !== 1) return false;
+    const now = nowMs();
+    const directReady = now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS;
+    if (directReady) {
+      log('🏃 หนีผู้เล่น ' + nearby + ' คน → Direct เปลี่ยนแมพไป ' + nextMap);
+      logImportant('flee', '🏃 หนีผู้เล่น ' + nearby + ' คน → ' + nextMap);
+      // Flee มี priority สูง — ยกเลิก intent วาร์ปเก่าที่อาจรออยู่ เพื่อไม่ให้ยิงแทรกหลังหนี
+      pendingTeleport = null;
+      CFG.farmMap = nextMap;
+      saveConfigDebounced();
+      if (sendTeleport(nextMap, -999, -999)) {
+        playerFleeClearOldWorld();
+        fleeCooldownUntil = now + CFG.fleeWarpCooldownSec * 1000;
+        playerFleePending = null;
+        return true;
+      }
+      // Direct ส่งไม่ได้จริง (เช่น socket race) → fallback ทันที
+      log('⚠️ หนีผู้เล่น: Direct เปลี่ยนแมพส่งไม่สำเร็จ → fallback Clip/Wing');
+    } else {
+      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
+      log('⚡ หนีผู้เล่น: Direct เปลี่ยนแมพยังติด gap ~' + left + 'ms → หนีในแมพทันทีด้วย Clip/Wing แล้วค่อยเปลี่ยนแมพ');
+    }
+    // อย่าเรียก sendTeleport(nextMap) ตอนยังติด gap เพราะ serializer จะคิวแบบเงียบ;
+    // เราต้องหนีทันทีด้วย Clip/Wing ก่อน แล้วค่อยยิง Direct เองเมื่อ gap พร้อม
+    pendingTeleport = null;
+    return playerFleeTryClip(nextMap, nearby);
+  }
+  const playerFleeFallbackLoop = setInterval(() => {
+    const p = playerFleePending;
+    if (!p) return;
+    if (!activeWS || activeWS.readyState !== 1) return;
+    const now = nowMs();
+
+    if (p.phase === 'clip') {
+      const movedMap = !!currentMap && !!p.srcMap && currentMap !== p.srcMap;
+      const movedPos = player.x != null && p.x != null && Math.hypot(player.x - p.x, player.y - p.y) >= 3;
+      if (movedMap || movedPos) {
+        log('✅ หนีผู้เล่น: Teleport Clip สำเร็จ → รอ Direct เปลี่ยนแมพ ' + p.map);
+        p.phase = 'mapwait';
+        p.startedAt = now;
+        playerFleeClearOldWorld();
+      } else if (now - p.startedAt >= PLAYER_FLEE_CLIP_FALLBACK_MS) {
+        p.phase = 'mapwait';
+        p.startedAt = now;
+        playerFleeUseWing('Clip ไม่ตอบสนอง/ไม่มี Clip');
+      }
+      return;
+    }
+
+    if (p.phase === 'mapwait') {
+      // ถ้าถึงแมพเป้าหมายจากเหตุอื่นแล้ว ถือว่าจบ
+      if (currentMap && currentMap === p.map) {
+        playerFleePending = null;
+        fleeCooldownUntil = now + CFG.fleeWarpCooldownSec * 1000;
+        return;
+      }
+      if (now - lastTeleportSentAt < TELEPORT_MIN_GAP_MS) return;
+      pendingTeleport = null;
+      CFG.farmMap = p.map;
+      saveConfigDebounced();
+      log('🗺️ หนีผู้เล่น → Direct พร้อมแล้ว เปลี่ยนไปแมพสำรอง ' + p.map);
+      if (sendTeleport(p.map, -999, -999)) {
+        playerFleeClearOldWorld();
+        fleeCooldownUntil = now + CFG.fleeWarpCooldownSec * 1000;
+        playerFleePending = null;
+      }
+    }
+  }, 100);
+
   // SIT/STAND OUT: [0e][state:1] (1=นั่ง, 0=ยืน) — format ยืนยันจากบอทหลัก protocol.js:381
   function sendSit() {
     if (!activeWS || activeWS.readyState !== 1) return false;
@@ -5074,15 +6297,17 @@
   }
   function acquireTarget(now) {
     // ★ cooldown: กันสลับ target บ่อยเกินไป (สลับได้ทุก 1.5s)
-    if (now - lastTargetSwitchAt < 1500) return null;
+    if (now - lastTargetSwitchAt < TARGET_REACQUIRE_MS) return null;
     // whitelist ว่าง = ตีทุกมอน kind=1 (ตามความหมายของ whitelist); ตั้งค่า = ตีเฉพาะที่ match
     const mobCount = getMobAttackerCount();
     const useLowestHp = CFG.targetLowestHpFirst && mobCount >= 2;
     // ★ progressive search — ค้นจากรัศมีเล็กก่อน ถ้าเจอใช้เลย (mirror bot.js:3957-3963)
     //   ทำให้เลือกมอนใกล้ก่อนเสมอ แม้จะตั้ง maxAcquireDistance ไว้สูง
-    const radii = (Array.isArray(CFG.searchRadii) && CFG.searchRadii.length > 0)
-      ? [...CFG.searchRadii].sort((a, b) => a - b).filter(r => r <= CFG.maxAcquireDistance)   // ★★ ไม่ค้นเกิน maxAcquireDistance
-      : [CFG.maxAcquireDistance];
+    const maxAcquire = Math.max(1, Number(CFG.maxAcquireDistance) || 1);
+    const baseRadii = (Array.isArray(CFG.searchRadii) && CFG.searchRadii.length > 0) ? CFG.searchRadii : [];
+    // ★ v4.187.1: maxAcquireDistance ต้องถูกค้นจริงเสมอ (เดิม searchRadii จบที่ 30 แม้ maxAcquire=90 → 31-90 ไม่เคยถูก scan)
+    const radii = [...new Set(baseRadii.map(Number).filter(r => Number.isFinite(r) && r > 0 && r <= maxAcquire).concat([maxAcquire]))]
+      .sort((a, b) => a - b);
     let found = null;
     let usedRadius = 0;
     for (const r of radii) {
@@ -5110,7 +6335,7 @@
   //   - เลิกสู้เมื่อมอนเลิกตีเราแล้ว 8s (เช่น de-aggro หนีไป) → กลับจุดยืน
   //   - เคารพ blacklist เหมือน combat ปกติ (เว้นแต่เปิด fightBackBlacklisted)
   function acquireGuardTarget(now) {
-    if (now - lastTargetSwitchAt < 1500) return null;
+    if (now - lastTargetSwitchAt < TARGET_REACQUIRE_MS) return null;
     if (player.x == null) return null;
     let best = null, bestD = Infinity;
     for (const [mid, at] of mobAttackers) {
@@ -5203,6 +6428,10 @@
   let fleeMapIdx = 0;
   let fleeCooldownUntil = 0;
   let fleeBurstTimes = [];               // ★ timestamps การหนีล่าสุด — กันหนีถี่ผิดปกติ (dot ผี/วาร์ปล้ม)
+  // ★ v4.189.2 Player Flee change-map fallback
+  // Direct map warp ติด 3s gap → Clip → Wing เพื่อหนีทันที → พอ gap พร้อมค่อยเปลี่ยนแมพสำรอง
+  let playerFleePending = null;          // {phase:'clip'|'mapwait', map, srcMap, x, y, startedAt, nearby}
+  const PLAYER_FLEE_CLIP_FALLBACK_MS = 450;
   let lastFleeDebugAt = 0;
   let lastStatusDbgAt = 0;             // ★ throttle บรรทัดสถานะใน Debug log (ทุก 10s)
   let lastGuardWarpBackAt = 0;         // ★ guard: throttle วาร์ปกลับแมปประจำ (ทุก 5s)
@@ -5238,12 +6467,12 @@
       log('🎯 [auto-login] ค้างหน้าเลือกตัวละคร → คลิก x' + Math.round(pos * 100) + '% + Enter (ครั้ง', csNudgeTries + '/12)');
     } catch (e) {}
   }, 8000);
-  // ★★ despawn sweeper — ลบ entity ที่ 1b mark ไว้จริงเมื่อพ้น 2s ไร้การยืนยัน
+  // ★★ despawn sweeper — ลบ entity ที่ 1b mark ไว้จริงเมื่อพ้น grace โดยไม่มี packet ยืนยัน
   const despawnSweeper = setInterval(() => {
     const nowS = Date.now();
     for (const [id, e] of entities) {
       if (!e._despawnPendingAt) continue;
-      if (nowS - e._despawnPendingAt > 2000) {
+      if (nowS - e._despawnPendingAt > MONSTER_DESPAWN_GRACE_MS) {
         // ★ จำสถานะไว้ 60s — ถ้า id นี้ขยับกลับมา (1b หลอก/ยืนนิ่งนาน) จะได้คืนเป็นมอน ไม่ใช่ผี kind=0
         recentlyDespawned.set(id, { kind: e.kind, sub: e.sub, name: e.name, isBoss: e._isBoss, isMiniBoss: e._isMiniBoss, expireAt: nowS + 60000 });
         entities.delete(id);
@@ -5284,6 +6513,8 @@
     //    farm-guard ส่ง warp กลับฟาร์มสู้กับ warp ของ routine จนลูป "ยังอยู่แมปผิด" นาที)
     if (typeof sellState !== 'undefined' && sellState !== 'IDLE') return;
     if (typeof storageState !== 'undefined' && storageState !== 'IDLE') return;
+    if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return; // ★ ESC→Unstuck→รับ AB→กลับฟาร์ม เป็นเจ้าของตัวละคร
+    if (playerFleePending) return; // ★ v4.189.2 Clip/Wing→รอเปลี่ยนแมพ เป็นเจ้าของตัวละครชั่วคราว
     // ★★ Flee from players — ทำงานไม่สน combat on/off (priority สูงสุด)
     //   ★★ ยกเว้นตอนกำลังขายของ/ฝากของ (ในเมืองมีผู้เล่นเยอะ → ห้ามวาร์ปหนี!)
     const _inSellRoutine = typeof sellState !== 'undefined' && sellState !== 'IDLE';
@@ -5339,21 +6570,11 @@
               }
               return;
             }
-            // ★★ changeMap mode — เปลี่ยนแมป (เดิม)
+            // ★★ changeMap mode — v4.189.2 Direct → Clip → Wing fallback เมื่อ cross-map ยังติด gap
             const next = pickNextFleeMap();
             if (next) {
-              log('🏃 หนีผู้เล่น!', nearby, 'คน' + posInfo + botPos + ' → วาร์ปไป', next);
-              logImportant('flee', '🏃 หนีผู้เล่น ' + nearby + ' คน → ' + next);
-              CFG.farmMap = next;        // ★ auto-set farm map (กัน warpBackToFarm ดึงกลับ)
-              saveConfigDebounced();
-              sendTeleport(next, -999, -999);
-              // ★★ clear entities เลย ไม่รอ MAP_NAME — วาร์ปอาจล้ม (server ยังโหลดแมป)
-              //   ถ้าล้มแล้วไม่ clear → dot/minimap แมปเก่าค้าง 30s → นับเป็นผู้เล่น → หนีรัวไม่จบ
-              //   (ถ้ามีคนจริงอยู่แมปเดิม minimap จะส่ง dot ใหม่มาในไม่กี่วิ → หนีรอบใหม่เอง)
-              entities.clear();
-              fleeCooldownUntil = now + CFG.fleeWarpCooldownSec * 1000;  // ★ ตั้งได้ใน UI — รอให้ entity data โหลด
-              target = null; monsterAggro.clear(); mobAttackers.clear();
-              queue.clear(); recentDrops.clear();   // ★★ เคลียร์ loot แมปเก่า
+              log('🏃 หนีผู้เล่น!', nearby, 'คน' + posInfo + botPos + ' → เป้าหมายแมพสำรอง', next);
+              playerFleeStartChangeMap(next, nearby);
               return;
             }
           }
@@ -5397,6 +6618,8 @@
           if (sendRespawn()) {
             lastRespawnAt = now;
             respawnAttemptCount++;
+            autoRespawnUnstuckPending = true; // ★ v4.188.3: พอเกิดใหม่จริง ต้องส่ง 0x73 ให้ครบ 1 ครั้ง
+            autoRespawnUnstuckReadyAt = 0;
             target = null; monsterAggro.clear(); mobAttackers.clear();
             postRespawnRest = true;   // ★ บังคับนั่งพักหลัง respawn
             log('💀 ตาย! → respawn (ครั้งที่ ' + respawnAttemptCount + '/5)');
@@ -5405,6 +6628,17 @@
         }
       }
       return;
+    }
+    // ★ v4.188.3 — fallback retry: เกิดใหม่แล้วแต่จังหวะ HP packet ส่ง 0x73 ไม่สำเร็จ
+    // ค้าง pending ไว้จน WebSocket พร้อม แล้วส่งสำเร็จเพียง 1 ครั้งก่อนล้าง flag
+    if (autoRespawnUnstuckPending && now >= autoRespawnUnstuckReadyAt && activeWS && activeWS.readyState === 1) {
+      if (sendDirectUnstuckPacket()) {
+        autoRespawnUnstuckPending = false;
+        autoRespawnUnstuckReadyAt = 0;
+        log('💀 Auto Respawn → Direct Unstuck 0x73 ครบ 1 ครั้ง');
+      } else {
+        autoRespawnUnstuckReadyAt = now + 500;
+      }
     }
     if (!activeWS || activeWS.readyState !== 1) return;
     // ★ POST-RESPAWN REST — หลัง respawn บังคับนั่งพักจนเลือดเต็ม (restUntilPercent)
@@ -5458,7 +6692,8 @@
     else if (CFG.warpBackToFarm && CFG.farmMap && currentMap && currentMap !== CFG.farmMap
         && !(inSellRoutine && currentMap === CFG.sellNpcMap)
         && !(inStorageRoutine && currentMap === CFG.kafraMap)
-        && !(typeof buffVisitState !== 'undefined' && buffVisitState !== 'IDLE' && currentMap === CFG.buffVisitMap)) {   // ★ ไปรับบัพ — อยู่แมปบัพอยู่
+        && !(typeof buffVisitState !== 'undefined' && buffVisitState !== 'IDLE' && currentMap === CFG.buffVisitMap)
+        && !(typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE')) {   // ★ ไปรับบัพ/Unstuck AB — ห้าม farm-guard แย่งวาร์ป
       const now2 = nowMs();
       if (now2 - (lastFarmWarpBackAt || 0) > 5000) {
         log('🌀 ยังอยู่แมปผิด (' + currentMap + ') → วาร์ปกลับอีกครั้ง');
@@ -5624,7 +6859,7 @@
     const _mobAtkCount = getMobAttackerCount();
     const _hpPct = hpPct();
     const _breakSticky = _mobAtkCount >= 2 || (_hpPct != null && _hpPct < 50);
-    if (player.x != null && (!_breakSticky || !target) && !(target && target.lastAttackResultAt && now - target.lastAttackResultAt < 5000)) {
+    if (!unstuckBuffAutoFinishPending && player.x != null && (!_breakSticky || !target) && !(target && target.lastAttackResultAt && now - target.lastAttackResultAt < 5000)) {
       let attacker = null, attackerDist = Infinity;
       // ★★ รวม mobAttackers (ตีกายภาพ) + monsterAggro (สกิลเล็งเรา) → ตอบโต้ทุกกรณี
       const threats = new Map();
@@ -5729,6 +6964,9 @@
       const disabled = Array.isArray(CFG.disabledSkillIds) ? CFG.disabledSkillIds : [];
       for (const skill of CFG.skills) {
         if (!skill || skill.skillId == null) continue;
+        // ★ สงวน Teleport skillId 53 ออกจาก Auto-Skill เมื่อ Warp Find ใช้ Teleport Clip หรือ Fly Wing
+        //   Fly Wing mode ต้องไม่ให้ Teleport จาก skill timer แอบวาร์ปแยกอีกทาง
+        if ((CFG.warpFindUseTeleportSkill || CFG.warpFindUseFlyWing) && Number(skill.skillId) === 53) continue;
         if (skill.buffMode) continue;   // ★ buffMode ประมวลใน buffOthersLoop แยก (ไม่ต้องมีมอน/ตี)
         if (disabled.includes(skill.skillId)) continue;
         // ★ สกิลที่ต้องมีเป้า (targeted/ground ไม่ใช่ self/ally) — ไม่มี target ข้าม
@@ -5900,6 +7138,8 @@
 
     // === 4. Acquire new target ===
     if (!target) {
+      // ★ v4.189.0: AB Auto ครบเวลาแล้ว → ห้ามหา/เดินไปมอนตัวใหม่ รอ loot เสร็จแล้ว Unstuck
+      if (unstuckBuffAutoFinishPending) return;
       // ★★ Manual mode: ตีตัวเดียว — target ตาย/หาย → ปิด combat + หยุด (ไม่หาตัวใหม่)
       if (manualMode) {
         manualMode = false;
@@ -5966,8 +7206,8 @@
             } else if (e.kind === 0 && e._src === 'move') _ghost++;
           }
           dbg('🔍 ไม่เจอมอน ' + noMonSec.toFixed(0) + 's → วาร์ป — มอนในระยะ: ' + _inRange + ' (โดน antiKS: ' + _ks + ') | ghost 0x07 ใกล้ ๆ: ' + _ghost);
-          log('🌀 ไม่เจอมอน', noMonSec.toFixed(0) + 's → วาร์ปสุ่ม');
-          if (sendRandomWarp()) noMonsterSince = now;   // สำเร็จ → reset (เริ่มนับใหม่ในแมปใหม่)
+          log('🌀 ไม่เจอมอน', noMonSec.toFixed(0) + 's → ' + (CFG.warpFindUseFlyWing ? 'Fly Wing (601)' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip' : 'วาร์ปสุ่ม')));
+          if (sendWarpFind()) noMonsterSince = now;   // สำเร็จ → reset (เริ่มนับใหม่ในแมปใหม่)
           // fail → ไม่ reset noMonsterSince แต่ lastWarpFindAt คุม cooldown แล้ว ไม่ spam
         } else {
           log('⚠️ warpFind: ยังไม่รู้ชื่อแมป — รอ SELECT_CHAR/MAP_NAME');
@@ -5977,10 +7217,10 @@
       // wander — สุ่มเดิน ≤ walkStepDistance ช่องจากตำแหน่งปัจจุบัน
       //   ★ ถ้าเปิด navWanderUseNav และมีข้อมูลแมป → ใช้ waypoint graph (เดินต่อเนื่อง stateful)
       //   ★ navWander เป็น stateful: track target + arrival → เดินต่อทันทีไม่รอ cooldown
-      //     ใช้ cooldown สั้น 1s แทน wanderCooldownMs (3s) เพื่อความต่อเนื่อง
+      //     ใช้ cooldown สั้น 400ms แทน wanderCooldownMs เพื่อความต่อเนื่อง
       //   ★★ GAT wander มีลำดับก่อน: มีตารางเดินได้ของแมป → เดินตามพื้นที่จริง (A*) ก่อน แล้วค่อย fallback nav ที่เรียนรู้
       const gatActive = CFG.gatWanderEnabled !== false && currentMap && gatCache.has(currentMap);
-      const navCooldown = ((CFG.navWanderUseNav && navHasData()) || gatActive) ? 1000 : CFG.wanderCooldownMs;
+      const navCooldown = ((CFG.navWanderUseNav && navHasData()) || gatActive) ? 400 : CFG.wanderCooldownMs;
       if (CFG.wanderEnabled && now - lastWanderAt > navCooldown && player.x != null) {
         lastWanderAt = now;
         let moved = false;
@@ -6227,7 +7467,7 @@
       // ★★ chain ล่วงหน้า — ยังไม่ถึงเป้า (เหลือ ≤10 ช่อง) ก็ต่อขาถัดไปทันที ไม่มีจังหวะหยุดยืน
       //   timeout 25s (ติดอะไรไป) ก็ข้ามไปขาใหม่เหมือนกัน · เจอมอน = combat ตัดเข้ามาเอง
       if (now - gatWTargetAt > 25000) log('🗺️ GAT timeout 25s @(', Math.round(player.x), Math.round(player.y) + ') เหลือระยะ', d.toFixed(0), 'ช่อง → ขาใหม่');
-      if (d <= 10 || now - gatWTargetAt > 25000) {
+      if (d <= 14 || now - gatWTargetAt > 25000) {
         if (!gatPickTarget() && d <= ARRIVE) {
           gatWanderReset();   // ถึงจริงแล้ว + หาทางต่อไม่ได้ → ยอมให้ fallback รอบนี้ (tick หน้าลองทิศใหม่)
           return false;
@@ -6235,7 +7475,7 @@
       }
     }
     if (!gatWTarget) { if (!gatPickTarget()) return false; }
-    if (now - gatWLastMoveAt < 900) return true;   // throttle การ re-issue move
+    if (now - gatWLastMoveAt < 400) return true;   // throttle การ re-issue move — Continuous Wander
     while (gatWPathIdx < gatWPath.length - 1) {
       const wp = gatWPath[gatWPathIdx];
       if (Math.hypot(wp.x - player.x, wp.y - player.y) <= ARRIVE) gatWPathIdx++;
@@ -6702,7 +7942,10 @@
     }
     const origSend = ws.send.bind(ws);
     ws.send = function (data) {
-      try { const u = syncU8(data); if (u) handleOut(u); } catch (e) {}
+      try {
+        const u = syncU8(data);
+        if (u) { captureUnstuckOutgoing(u); handleOut(u); }
+      } catch (e) {}
       return origSend(data);
     };
     ws.addEventListener('message', async (e) => {
@@ -6973,8 +8216,8 @@
     sellOn()  { CFG.sellEnabled = true;  log('💰 Auto-Sell: ON'); },
     sellOff() { CFG.sellEnabled = false; log('💰 Auto-Sell: OFF'); },
     setSellNpc(name, map) { CFG.sellNpcName = name; if (map) CFG.sellNpcMap = map; log('💰 NPC:', name, '@', CFG.sellNpcMap); },
-    setSellNpcPos(x, y) { CFG.sellNpcX = Math.round(Number(x)); CFG.sellNpcY = Math.round(Number(y)); log('💰 พิกัดวาร์ป NPC:', CFG.sellNpcX, CFG.sellNpcY); },
-    useCurrentPosAsSellWarp() { if (player.x != null && player.y != null) { CFG.sellNpcX = Math.round(player.x); CFG.sellNpcY = Math.round(player.y); log('💰 ใช้พิกัดปัจจุบันเป็นจุดวาร์ป:', CFG.sellNpcMap, '@(', CFG.sellNpcX, CFG.sellNpcY + ')'); } else { log('⚠️ ยังไม่รู้พิกัดตัวละคร'); } },
+    setSellNpcPos(x, y) { CFG.sellNpcX = Math.round(Number(x)); CFG.sellNpcY = Math.round(Number(y)); log('💰 จุดเดินไป NPC หลัง Unstuck:', CFG.sellNpcX, CFG.sellNpcY); },
+    useCurrentPosAsSellWarp() { if (player.x != null && player.y != null) { CFG.sellNpcX = Math.round(player.x); CFG.sellNpcY = Math.round(player.y); if (currentMap) CFG.sellNpcMap = currentMap; log('💰 ใช้พิกัดปัจจุบันเป็นจุดเดินหลัง Unstuck:', CFG.sellNpcMap, '@(', CFG.sellNpcX, CFG.sellNpcY + ')'); } else { log('⚠️ ยังไม่รู้พิกัดตัวละคร'); } },
     setSellInterval(min) { CFG.sellIntervalMin = min; log('💰 ขายทุก', min, 'นาที (0=off)'); },
     toggleSellOnFull(on) { CFG.sellOnFull = !!on; log('💰 ขายตอนเต็ม =', CFG.sellOnFull); },
     setSellItems(...ids) { CFG.sellItemIds = ids; log('💰 ขาย item:', ids.map(nameOf).join(', ')); },
@@ -6997,21 +8240,7 @@
         log('⚠️ ไม่มีของที่จะขายใน inventory' + (wornOnly > 0 ? ' (มี ' + wornOnly + ' ชนิดกำลังสวมอยู่ — ถอดก่อนจึงขายได้)' : ''));
         return;
       }
-      // ★★ รีเซ็ต state ใช้ร่วมทุกตัว (เดิมลืม — retry/warp ค้างจากรอบก่อนฆ่ารอบใหม่เงียบ ๆ
-      //   เช่น relogin ในหน้าเดิม: sellWarpRetries=2 ค้าง → รอบใหม่ห้ามวาร์ปซ้ำ → abort "ไม่พบ NPC")
-      sellWarpRetries = 0; pendingSellEquip = []; sellEquipRoundSent = false; sellEqRetryMode = false;
-      sellReturnTo = { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
-      // ★★ อยู่แมป NPC แล้ว + ใกล้พอ → ไม่วาร์ป (เหมือน trigger อัตโนมัติ — กันวาร์ปซ้ำโดน server ดรอป)
-      const dNpc = Math.hypot(player.x - CFG.sellNpcX, player.y - CFG.sellNpcY);
-      if (currentMap === CFG.sellNpcMap && dNpc <= 40) {
-        sellWarped = true;
-        log('💰 ขายทันที! — อยู่ใกล้ NPC แล้ว ไม่ต้องวาร์ป');
-      } else {
-        sellWarped = false;
-        sendTeleport(CFG.sellNpcMap, CFG.sellNpcX, CFG.sellNpcY);
-        log('💰 ขายทันที! → วาร์ป', CFG.sellNpcMap, '@(', CFG.sellNpcX, CFG.sellNpcY + ')');
-      }
-      setSellState('WARP_TO_NPC');
+      startSellTravel('กดขายเดี๋ยวนี้', null);
     },
     getInventory() { return [...inventory.entries()].map(([id, c]) => ({ id, name: itemDisplayName(id), count: c, action: getItemAction(Number(id)) })).sort((a, b) => b.count - a.count); },
 
@@ -7019,8 +8248,8 @@
     storageOn()  { CFG.storageEnabled = true;  log('🏦 Auto-Storage: ON'); },
     storageOff() { CFG.storageEnabled = false; log('🏦 Auto-Storage: OFF'); },
     setKafra(name, map) { CFG.kafraName = name; if (map) CFG.kafraMap = map; log('🏦 Kafra:', name, '@', CFG.kafraMap); },
-    setKafraPos(x, y) { CFG.kafraMapX = Math.round(Number(x)); CFG.kafraMapY = Math.round(Number(y)); log('🏦 พิกัดวาร์ป Kafra:', CFG.kafraMapX, CFG.kafraMapY); },
-    useCurrentPosAsKafra() { if (player.x != null && player.y != null) { CFG.kafraMapX = Math.round(player.x); CFG.kafraMapY = Math.round(player.y); if (currentMap) CFG.kafraMap = currentMap; log('🏦 ใช้พิกัดปัจจุบันเป็นจุดวาร์ป Kafra:', CFG.kafraMap, '@(', CFG.kafraMapX, CFG.kafraMapY + ')'); } else { log('⚠️ ยังไม่รู้พิกัดตัวละคร'); } },
+    setKafraPos(x, y) { CFG.kafraMapX = Math.round(Number(x)); CFG.kafraMapY = Math.round(Number(y)); log('🏦 จุดเดินไป Kafra หลัง Unstuck:', CFG.kafraMapX, CFG.kafraMapY); },
+    useCurrentPosAsKafra() { if (player.x != null && player.y != null) { CFG.kafraMapX = Math.round(player.x); CFG.kafraMapY = Math.round(player.y); if (currentMap) CFG.kafraMap = currentMap; log('🏦 ใช้พิกัดปัจจุบันเป็นจุดเดิน Kafra หลัง Unstuck:', CFG.kafraMap, '@(', CFG.kafraMapX, CFG.kafraMapY + ')'); } else { log('⚠️ ยังไม่รู้พิกัดตัวละคร'); } },
     toggleDepositOnFull(on) { CFG.depositOnFull = !!on; log('🏦 ฝากตอนเต็ม =', CFG.depositOnFull); },
     toggleDepositAfterSell(on) { CFG.depositAfterSell = !!on; log('🏦 ฝากหลังขาย =', CFG.depositAfterSell); },
     // ★ Warp-to-Boss toggles (สำหรับ remote command)
@@ -7173,10 +8402,19 @@
     combatOn() {
       CFG.combatEnabled = true;
       manualMode = false;   // ★ ผู้ใช้เปิดเอง → ยกเลิก manual mode (auto หาตัวใหม่)
+      // ★ v4.187.6: เริ่มนับรอบ AB auto ใหม่เฉพาะตอนว่าง (ห้ามแตะ routine/manual ที่กำลังทำ)
+      if (typeof unstuckBuffLastAt !== 'undefined' && typeof unstuckBuffState !== 'undefined' && unstuckBuffState === 'IDLE' && !unstuckBuffManualRun) unstuckBuffLastAt = 0;
       if (!CFG.targetWhitelist.length && !CFG.targetBlacklist.length) console.warn('⚠️ whitelist + blacklist ว่าง = ตีทุกมอน (รวม MVP/มอนแรง) — ควรตั้ง whitelist หรือ blacklist กันตาย');
-      log('⚔️ Auto-Combat: ON');
+      log('⚔️ Auto-Combat: ON · Warp Find เปิดใช้งานตามค่าที่ตั้ง และเริ่มนับ AB auto ใหม่');
     },
-    combatOff() { CFG.combatEnabled = false; target = null; log('⚔️ Auto-Combat: OFF'); },
+    combatOff() {
+      CFG.combatEnabled = false; target = null;
+      clearUnstuckBuffAutoFinishPending();
+      // ★ v4.187.6: ไม่ยกเลิก Direct Unstuck/AB ที่เริ่มแล้ว — ป้องกันค้างอยู่จุดเกิด
+      // reset เฉพาะ timer auto ตอน IDLE; manual/capture/direct packet ยังใช้ได้
+      if (typeof unstuckBuffLastAt !== 'undefined' && typeof unstuckBuffState !== 'undefined' && unstuckBuffState === 'IDLE' && !unstuckBuffManualRun) unstuckBuffLastAt = 0;
+      log('⚔️ Auto-Combat: OFF · บล็อก Warp Find/Teleport หามอน + พัก timer AB auto (Direct Unstuck/รับบัพตอนนี้ยังใช้ได้)');
+    },
     setTargetWhitelist(...namesOrIds) {
       CFG.targetWhitelist = namesOrIds;
       log('⚔️ whitelist =', namesOrIds.join(', ') || '(ว่าง = ตีทุกมอน)');
@@ -7190,6 +8428,9 @@
     setFleeWarpCooldown(sec) { CFG.fleeWarpCooldownSec = Math.max(0, Math.min(30, sec)); saveConfigDebounced(); log('🏃 คูลดาวน์วาร์ปหนี:', CFG.fleeWarpCooldownSec + 's' + (CFG.fleeWarpCooldownSec === 0 ? ' (รัวสุด)' : '')); },
     setFleeAggro(n) { CFG.fleeOnAggroCount = n; log('🏃 flee aggro', n, 'ตัว' + (n ? '' : ' (off)')); },
     setFleeProximity(n, radius) { CFG.fleeOnProximityCount = n; if (radius != null) CFG.fleeOnProximityRadius = radius; log('🏃 flee มอนรอบ', n, 'ตัวในระยะ', CFG.fleeOnProximityRadius); },
+    toggleHpFlee(on) { CFG.hpFleeEnabled = !!on; hpFleeLatched = false; hpFleePendingClip = null; hpFleeNextTryAt = 0; saveConfigDebounced(); log('❤️ HP Emergency Flee:', CFG.hpFleeEnabled ? 'ON < ' + CFG.hpFleePercent + '%' : 'OFF'); },
+    setHpFleePercent(pct) { CFG.hpFleePercent = Math.max(1, Math.min(99, Number(pct) || 30)); hpFleeLatched = false; saveConfigDebounced(); log('❤️ HP Flee threshold =', CFG.hpFleePercent + '%'); },
+    setHpFleeMode(mode) { CFG.hpFleeMode = mode === 'unstuck' ? 'unstuck' : 'sameMap'; hpFleeLatched = false; hpFleePendingClip = null; saveConfigDebounced(); log('❤️ HP Flee mode =', CFG.hpFleeMode === 'unstuck' ? 'Unstuck 0x73' : 'หนีในแมพ (DB → Clip → Wing)'); },
     setRanged(range) { CFG.rangedAttackRange = range; log('🏹 ranged range =', range, range ? '' : '(ใช้ attackRange)'); },
     setAttackRange(r) { CFG.attackRange = r; log('⚔️ attackRange =', r); },
     // ★ ปรับ re-issue/abandon timing (pending spam)
@@ -7207,12 +8448,37 @@
     toggleLowestHpFirst(on) { CFG.targetLowestHpFirst = !!on; log('⚔️ targetLowestHpFirst =', CFG.targetLowestHpFirst); },
     toggleWander(on) { CFG.wanderEnabled = !!on; log('⚔️ wander =', CFG.wanderEnabled); },
     toggleWarpFind(on) { CFG.warpFindEnabled = !!on; log('⚔️ warpFind =', CFG.warpFindEnabled); },
+    toggleWarpFindFlyWing(on) {
+      CFG.warpFindUseFlyWing = !!on;
+      if (CFG.warpFindUseFlyWing) CFG.warpFindUseTeleportSkill = false;   // mutual exclusive
+      saveConfigDebounced();
+      log('🪽 WarpFind ใช้ Fly Wing:', CFG.warpFindUseFlyWing ? 'ON (itemId 601)' : 'OFF');
+    },
+    toggleWarpFindTeleportSkill(on) {
+      CFG.warpFindUseTeleportSkill = !!on;
+      if (CFG.warpFindUseTeleportSkill) CFG.warpFindUseFlyWing = false;   // mutual exclusive
+      saveConfigDebounced();
+      log('🌀 WarpFind ใช้ Teleport Clip:', CFG.warpFindUseTeleportSkill ? 'ON (skillId 53)' : 'OFF' + (!CFG.warpFindUseFlyWing ? ' (packet วาร์ปสุ่มเดิม)' : ''));
+    },
     // ★★ GUARD MODE — ยืนประจำตำแหน่ง ตีกลับเฉพาะมอนที่มาตี (เตรียมบอทบัพ)
     toggleGuard(on) { CFG.guardEnabled = !!on; saveConfigDebounced(); if (CFG.guardEnabled) { target = null; guardWasReturning = false; log('🛡️ Guard: ON — ยืนประจำ @(', CFG.guardMap || '(แมปปัจจุบัน)', CFG.guardX + ',' + CFG.guardY + ') ตีกลับเฉพาะมอนที่มาตี'); } else log('🛡️ Guard: OFF'); },
     setGuardPos(map, x, y) { CFG.guardMap = map || ''; CFG.guardX = x; CFG.guardY = y; guardWasReturning = false; saveConfigDebounced(); log('🛡️ Guard จุดยืน =', CFG.guardMap || '(แมปปัจจุบัน)', '@(', x + ',' + y + ')'); },
     // ★★ ไปรับบัพจากบอทอีกตัว (คู่บอท)
     toggleBuffVisit(on) { CFG.buffVisitEnabled = !!on; saveConfigDebounced(); buffVisitState = 'IDLE'; buffVisitLastAt = 0; buffVisitReturnTo = null; log('🔁 ไปรับบัพ:', on ? 'ON' : 'OFF'); },
     setBuffVisitPos(map, x, y, intervalSec, waitSec) { CFG.buffVisitMap = map || ''; CFG.buffVisitX = x; CFG.buffVisitY = y; if (intervalSec > 0) CFG.buffVisitIntervalSec = intervalSec; if (waitSec > 0) CFG.buffVisitWaitSec = waitSec; saveConfigDebounced(); log('🔁 จุดรับบัพ =', CFG.buffVisitMap, '@(', x + ',' + y + ') ทุก', CFG.buffVisitIntervalSec + 's รอ', CFG.buffVisitWaitSec + 's'); },
+    toggleUnstuckBuff(on) { CFG.unstuckBuffEnabled = !!on; unstuckBuffState = 'IDLE'; unstuckBuffLastAt = 0; unstuckBuffManualRun = false; unstuckBuffReturnTo = null; clearUnstuckBuffAutoFinishPending(); saveConfigDebounced(); log('🏠 ESC→Unstuck รับบัพ AB:', CFG.unstuckBuffEnabled ? 'ON' : 'OFF'); },
+    setUnstuckBuff(intervalSec, waitSec) { if (intervalSec >= 30) CFG.unstuckBuffIntervalSec = intervalSec; CFG.unstuckBuffWaitSec = 2; saveConfigDebounced(); log('🏠 รอบ AB = ทุก', CFG.unstuckBuffIntervalSec + 's · กลับหลัง Unstuck 2s (fixed)'); },
+    captureUnstuckButton() { calibrateUnstuckButton(); },
+    resetUnstuckButton() { resetUnstuckButton(); },
+    captureUnstuckPacket() { return startUnstuckPacketCapture(); },
+    stopUnstuckPacketCapture() { return stopUnstuckPacketCapture('ผู้ใช้หยุด'); },
+    clearUnstuckPacket() { clearUnstuckPacketCapture(); },
+    acceptUnstuckPacket() { return acceptUnstuckPacketCandidate(); },
+    getUnstuckPackets() { return unstuckPacketCapturePackets.map(x => ({...x})); },
+    getUnstuckPacketCandidate() { return unstuckPacketCandidate ? {...unstuckPacketCandidate} : null; },
+    sendUnstuckPacketTest() { return sendDirectUnstuckPacket(); },
+    unstuckBuffNow() { startUnstuckBuffNow(); },
+    getUnstuckBuffStatus() { return { enabled: CFG.unstuckBuffEnabled, state: unstuckBuffState, intervalSec: CFG.unstuckBuffIntervalSec, waitSec: CFG.unstuckBuffWaitSec, calibrated: CFG.unstuckBuffClickXRatio != null && CFG.unstuckBuffClickYRatio != null, xRatio: CFG.unstuckBuffClickXRatio, yRatio: CFG.unstuckBuffClickYRatio, directPacketEnabled: !!CFG.unstuckPacketEnabled, directPacketHex: CFG.unstuckPacketHex || '', captureActive: unstuckPacketCaptureActive, captureCount: unstuckPacketCapturePackets.length, candidate: unstuckPacketCandidate, returnTo: unstuckBuffReturnTo }; },
     toggleWarpToMonster(on) { CFG.warpToMonster = !!on; log('⚔️ warpToMonster =', CFG.warpToMonster); },
     // debug
     getEntities() {
@@ -7347,7 +8613,7 @@
     getImportantLogs() { return importantLogBuf.slice(); },
     clearImportantLogs() { importantLogBuf.length = 0; log('🧹 ล้าง log สำคัญ'); },
     stopAll() {
-      clearInterval(healLoop); clearInterval(lootLoop); clearInterval(warpLoop); clearInterval(combatLoop); clearInterval(sellLoop); clearInterval(storageLoop); clearInterval(buffLoop); clearInterval(buffOthersLoop); clearInterval(buffVisitLoop); clearInterval(consoleClearLoop); clearInterval(remoteWalkLoop); clearInterval(teleportFlusher);
+      clearInterval(healLoop); clearInterval(lootLoop); clearInterval(warpLoop); clearInterval(combatLoop); clearInterval(sellLoop); clearInterval(storageLoop); clearInterval(buffLoop); clearInterval(buffOthersLoop); clearInterval(buffVisitLoop); clearInterval(unstuckBuffLoop); clearInterval(unstuckPacketCaptureWatcher); clearInterval(consoleClearLoop); clearInterval(remoteWalkLoop); clearInterval(teleportFlusher); clearInterval(hpEmergencyFleeLoop); clearInterval(playerFleeFallbackLoop);
       if (typeof uiLoop !== 'undefined') clearInterval(uiLoop);
       log('⏹ หยุดระบบทั้งหมดแล้ว');
     },
@@ -8197,7 +9463,6 @@
         <span class="pill" data-monitor style="background:#1a237e;color:#90caf9">🖥️</span>
         <span class="pill" data-remote style="background:#1a3a1a;color:#81c784;display:none">🌐</span>
         <span class="pill" data-logview style="background:#1a2a3a;color:#82b1ff" title="ดู Log">📋</span>
-        <span class="pill" data-chatroom style="background:#1a3a4a;color:#4fc3f7;position:relative" title="ห้องแชท">💬<span id="__assist_chatbadge" style="position:absolute;top:-4px;right:-4px;background:#e74c3c;color:#fff;font-size:8px;border-radius:50%;width:14px;height:14px;display:none;align-items:center;justify-content:center;font-weight:bold"></span></span>
         <span class="pill" data-feedback style="background:#4a2a2a;color:#ff8a80" title="แจ้งปัญหา/ข้อเสนอแนะ">🐞</span>
         <span class="pill" data-changelog style="background:#3a2a1a;color:#ffd54f" title="Update Log">📜</span>
         <span class="expand">⚙</span>
@@ -8286,7 +9551,7 @@
             <div class="field"><label>ไล่ตามมอนสูงสุด (ช่อง) — ไกลกว่านี้ abandon</label><input type="number" id="__assist_maxchase" min="5" max="100" placeholder="40"></div>
             <div class="field"><label>abandon มอนถ้าตีแล้ว server เงียบครบ N ครั้ง (attackPendingMax 1-10)</label><input type="number" id="__assist_pendmax" min="1" max="10" step="1"></div>
             <div class="field"><label>รอเงียบขั้นต่ำก่อน abandon (ms) — นับจากตีครั้งแรก (attackAbandonMs 1000-30000)</label><input type="number" id="__assist_abandonms" min="1000" max="30000" step="500"></div>
-            <div class="field"><label>ดีเลย์หลังสู้เสร็จ/เก็บของเสร็จ (ms) — รอก่อนหาเป้าใหม่ 0 = หาทันที (กันดูเป็นบอท)</label><input type="number" id="__assist_postcombatdelay" min="0" max="10000" step="100"></div>
+            <div class="field"><label>ดีเลย์ทั่วไปหลัง Combat (ms) — Fast Retarget หลังเก็บของจะข้ามค่านี้และหาเป้าใหม่ทันที</label><input type="number" id="__assist_postcombatdelay" min="0" max="10000" step="100"></div>
             <div class="btns">
               <button id="__assist_t_antiks" class="on">antiKS</button>
               <button id="__assist_t_avoidp" class="on">avoidPlayers</button>
@@ -8296,6 +9561,8 @@
             <div class="btns">
               <button id="__assist_t_wander" class="on">🚶 เดินหามอน</button>
               <button id="__assist_t_warpfind" class="off">🌀 วาร์ปหามอน</button>
+              <button id="__assist_t_warpfindwing" class="off" title="ON = เมื่อไม่เจอมอน ใช้ Fly Wing Item ID 601 ตาม Rayrag · ต้องมีของใน Inventory">🪽 Fly Wing</button>
+              <button id="__assist_t_warpfindskill" class="on" title="ON = เมื่อไม่เจอมอน ใช้ Teleport Lv.1 (skillId 53 / Teleport Clip) · เปิดอันนี้จะปิด Fly Wing">📎 Teleport Clip</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
             </div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
@@ -8368,6 +9635,16 @@
             <div class="field"><label>ไปรับทุกกี่วินาที</label><input type="number" id="__assist_bvsec" min="30" max="7200" placeholder="600"><label style="margin-left:8px">รอรับนานสุด (วิ)</label><input type="number" id="__assist_bvwait" min="3" max="300" placeholder="20"></div>
             <div class="btns"><button id="__assist_applybuffvisit">💾 ใช้ค่ารับบัพ</button></div>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ครบกำหนด (ตอนว่าง: ไม่สู้/ไม่นั่งพัก/ของเก็บหมด) → ไปหาบอทบัพ (แมปเดิม+ใกล้=เดิน · ไกล/คนละแมป=วาร์ป)<br>★ ยืนรับ Heal/Buff ตามเวลารอ → วาร์ปกลับฟาร์มแมป+พิกัดเดิม · ระหว่างเดินไม่หามอนใหม่ (โดนตีตีกลับได้)</div>
+            <h4 style="margin-top:14px;">🏠 กลับจุดเกิดรับบัพ AB (Direct Unstuck)</h4>
+            <div class="btns">
+              <button id="__assist_t_unstuckbuff" class="off">🏠 AB Refresh: ?</button>
+              <button id="__assist_unstucknow" class="primary">▶ รับบัพตอนนี้</button>
+            </div>
+            <div id="__assist_unstuckpacketstatus" style="display:none"></div>
+            <div class="field"><label>กลับจุดเกิดทุกกี่วินาที</label><input type="number" id="__assist_ubsec" min="30" max="7200" placeholder="500"><span style="margin-left:10px;color:#9aa0a6;font-size:10px">กลับแมพเดิมหลัง Unstuck 2 วิ (fixed)</span></div>
+            <div class="btns"><button id="__assist_applyunstuckbuff">💾 ใช้ค่า AB Refresh</button></div>
+            <div id="__assist_unstuckstatus" style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.6">Direct Unstuck · state=IDLE</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ใช้ Direct Unstuck 0x73 ที่ยืนยันจากการจับจริง — ไม่ต้อง ESC/คลิก/จับ Candidate อีก<br>★ รอบอัตโนมัติเริ่มนับเมื่อ Combat ON · ▶ รับบัพตอนนี้ = Unstuck ทันที แล้วรีเซ็ตนับ Auto ใหม่<br>★ หลัง Direct Unstuck ครบ 2 วินาที จะวาร์ปกลับแมพ+พิกัดเดิมทันที (ไม่รอ AB เพิ่ม)</div>
           </div>
           <!-- 💉 Heal -->
           <div class="__assist_subpage" data-sub="heal">
@@ -8390,6 +9667,17 @@
             <div class="field"><label>รัศมีตรวจจับผู้เล่น (ช่อง) — 0 = หนีทันทีที่มีผู้เล่นในแผนที่</label><input type="number" id="__assist_fleeradius" min="0" max="200" placeholder="30"></div>
             <div class="field"><label>คูลดาวน์วาร์ปหนี (วินาที) — 0 = หนีรัวสุด ไม่ต้องรอ</label><input type="number" id="__assist_fleecd" min="0" max="30" step="1" placeholder="5"></div>
             <div class="btns"><button id="__assist_applyfleemap">ใช้ค่าหนีผู้เล่น</button></div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ โหมดเปลี่ยนแมพ: Direct 0x40 ไปแมพสำรองก่อน → ถ้ายังติด gap 3s จะใช้ Teleport Clip → ถ้า Clip ไม่ย้ายใน ~0.45s ใช้ Fly Wing 601 → แล้วเปลี่ยนแมพสำรองทันทีเมื่อ Direct พร้อม</div>
+            <hr style="border:none;border-top:1px solid #3a3f4b;margin:8px 0">
+            <h4 style="margin:6px 0">❤️ HP Emergency Flee</h4>
+            <div class="btns">
+              <button id="__assist_t_hpflee" class="off">❤️ HP ต่ำหนี: OFF</button>
+              <button id="__assist_t_hpflee_same" class="on">🌀 หนีในแมพ</button>
+              <button id="__assist_t_hpflee_unstuck" class="off">🏠 Unstuck</button>
+            </div>
+            <div class="field"><label>HP ต่ำกว่ากี่ % ให้หนีทันที</label><input type="number" id="__assist_hpfleepct" min="1" max="99" step="1" placeholder="30"></div>
+            <div class="btns"><button id="__assist_applyhpflee">💾 ใช้ค่า HP Flee</button></div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ หนีในแมพ: Direct/Database TP (0x40) ก่อน → ถ้ายังติด gap 3s ใช้ Teleport Clip → ถ้า Clip ไม่ตอบสนอง ~0.45s ใช้ Fly Wing 601 อัตโนมัติ<br>★ Unstuck: ส่ง 0x73 ทันที 1 ครั้ง · ทำงานแบบฉุกเฉินไม่ต้องรอ Combat target</div>
             <hr style="border:none;border-top:1px solid #3a3f4b;margin:8px 0">
             <div class="field"><label>flee: รุม N ตัว (0=off)</label><input type="number" id="__assist_fleemob" min="0" max="20"></div>
             <div class="field"><label>flee: aggro N ตัว (0=off)</label><input type="number" id="__assist_fleeaggro" min="0" max="20"></div>
@@ -8410,7 +9698,7 @@
             <div class="btns"><button id="__assist_applyrest">ใช้ค่า rest</button></div>
             <h4>💀 Auto-Respawn (เกิดใหม่อัตโนมัติเมื่อตาย)</h4>
             <div class="btns"><button id="__assist_respawnbtn" class="on">Respawn: ?</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ตาย → respawn กลับจุด save → นั่งพักจนเลือดเต็ม → กลับฟาร์ม</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ตาย → Auto Respawn → เกิดใหม่แล้ว Unstuck 0x73 1 ครั้ง → นั่งพักจนเลือดเต็ม → กลับฟาร์ม</div>
           </div>
           <!-- 💰 Sell -->
           <div class="__assist_subpage" data-sub="sell">
@@ -8419,11 +9707,11 @@
               <button id="__assist_sellnow" class="danger">ขายเดี๋ยวนี้</button>
             </div>
             <div class="field"><label>ชื่อ NPC ขายของ</label><input type="text" id="__assist_sellnpc" placeholder="เช่น Tool Dealer"></div>
-            <div class="field"><label>แมปที่ NPC อยู่</label><input type="text" id="__assist_sellmap" placeholder="เช่น izlude_in"></div>
-            <div class="field"><label>พิกัดวาร์ป X</label><input type="number" id="__assist_sellx" placeholder="114"><label style="margin-left:8px">Y</label><input type="number" id="__assist_selly" placeholder="49"><button id="__assist_useselfpos" style="margin-left:8px;font-size:10px">ใช้พิกัดตัวละคร</button></div>
+            <div class="field"><label>แมปที่ NPC อยู่ (ต้องตรงกับ Save Point หลัง Unstuck)</label><input type="text" id="__assist_sellmap" placeholder="เช่น izlude"></div>
+            <div class="field"><label>จุดเดินหลัง Unstuck X</label><input type="number" id="__assist_sellx" placeholder="114"><label style="margin-left:8px">Y</label><input type="number" id="__assist_selly" placeholder="49"><button id="__assist_useselfpos" style="margin-left:8px;font-size:10px">ใช้พิกัดตัวละคร</button></div>
             <div class="field"><label>ขายทุก N นาที (0=off)</label><input type="number" id="__assist_sellinterval" min="0" max="999"></div>
             <div class="btns"><button id="__assist_applysell">ใช้ค่า sell</button><button id="__assist_t_sellfull" class="on">ขายตอนเต็ม</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ เลือก item ที่จะขาย/ฝาก: กดปุ่มสีที่รายการของในสถิติ — วน เก็บ(เทา)→ขาย(ส้ม)→ฝาก(เขียว)→เก็บ</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ขาไปขาย: Unstuck 0x73 → รอ 2 วิ → เดินไปจุด X/Y → คุย NPC · Save Point ต้องอยู่แมพเดียวกับ NPC<br>★ เลือก item ที่จะขาย/ฝาก: กดปุ่มสีที่รายการของในสถิติ — วน เก็บ(เทา)→ขาย(ส้ม)→ฝาก(เขียว)→เก็บ</div>
           </div>
           <!-- 🏦 Storage -->
           <div class="__assist_subpage" data-sub="storage">
@@ -8432,10 +9720,10 @@
               <button id="__assist_depositnow" class="primary">ฝากเดี๋ยวนี้</button>
             </div>
             <div class="field"><label>ชื่อ NPC Kafra</label><input type="text" id="__assist_kafra" placeholder="เช่น Kafra Staff"></div>
-            <div class="field"><label>แมปที่ Kafra อยู่</label><input type="text" id="__assist_kaframap" placeholder="เช่น izlude"></div>
-            <div class="field"><label>พิกัดวาร์ป X</label><input type="number" id="__assist_kafrax" placeholder="0=ใช้ sell"><label style="margin-left:8px">Y</label><input type="number" id="__assist_kafray" placeholder="0=ใช้ sell"><button id="__assist_usekafrapos" style="margin-left:8px;font-size:10px">ใช้พิกัดตัวละคร</button></div>
+            <div class="field"><label>แมปที่ Kafra อยู่ (ต้องตรงกับ Save Point หลัง Unstuck)</label><input type="text" id="__assist_kaframap" placeholder="เช่น izlude"></div>
+            <div class="field"><label>จุดเดินหลัง Unstuck X</label><input type="number" id="__assist_kafrax" placeholder="0=ใช้ sell"><label style="margin-left:8px">Y</label><input type="number" id="__assist_kafray" placeholder="0=ใช้ sell"><button id="__assist_usekafrapos" style="margin-left:8px;font-size:10px">ใช้พิกัดตัวละคร</button></div>
             <div class="field"><label>เมนู choice (0=Save, 1=Storage, 2=Warp)</label><input type="number" id="__assist_kafrachoice" min="0" max="9" placeholder="1"></div>
-            <div class="btns"><button id="__assist_applykafra">ใช้ค่า storage</button><button id="__assist_t_depfull" class="on">ฝากตอนเต็ม</button><button id="__assist_t_depaftersell" class="on">ฝากหลังขาย</button></div>
+            <div class="btns"><button id="__assist_applykafra">ใช้ค่า storage</button><button id="__assist_t_depfull" class="on">ฝากตอนเต็ม</button><button id="__assist_t_depaftersell" class="on">ฝากหลังขาย</button></div><div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ขาไปฝาก: Unstuck 0x73 → รอ 2 วิ → เดินไปจุด X/Y → คุย Kafra · Save Point ต้องอยู่แมพเดียวกับ Kafra</div>
           </div>
           <!-- ⚙️ อื่นๆ -->
           <!-- 🔑 Auto-Login / Auto-Refresh -->
@@ -8458,6 +9746,12 @@
             <div style="font-size:10px;color:#9aa0a6;margin-top:6px;">★ ปกติ server ส่ง packet มาตลอด (regen/beacon ทุกไม่กี่วิ) — เงียบเกินเกณฑ์ = เกมค้าง → refresh แล้ว auto-login เข้ามาใหม่ (ควรเปิด auto-login คู่กัน)</div>
           </div>
           <div class="__assist_subpage" data-sub="misc">
+            <h4>🤝 Auto Trade (คำขอ Trade ที่ผู้เล่นอื่นส่งมา)</h4>
+            <div class="btns">
+              <button id="__assist_trade_accept_all" class="off">✅ Accept-All Trade: OFF</button>
+              <button id="__assist_trade_reject_all" class="off">🚫 Eject-All Trade: OFF</button>
+            </div>
+            <div style="font-size:10px;color:#9aa0a6;margin:5px 0;line-height:1.5;">★ Rayrag verified: request <code>0x7e len=43</code> · Accept/Eject ทำงานอัตโนมัติทันทีเมื่อมีผู้เล่นส่ง Trade</div>
             <h4>🌐 Remote Monitor (ส่งข้อมูลไป relay server — ดูจากมือถือ/เครื่องอื่น)</h4>
             <div class="btns">
               <button id="__assist_relaybtn" class="off">Relay: ?</button>
@@ -8577,8 +9871,7 @@
       return root.contains(t)
         || (t.closest && t.closest('#__assist_itempopup'))
         || (t.closest && t.closest('#__assist_skillpopup'))
-        || (t.closest && t.closest('#__assist_feedback_modal'))
-        || (t.closest && t.closest('#__assist_chatroom_modal'));
+        || (t.closest && t.closest('#__assist_feedback_modal'));
     }
     function ourActiveInput() {
       const ae = document.activeElement;
@@ -8607,33 +9900,7 @@
     window.addEventListener('paste', (e) => {
       const inp = ourActiveInput();
       if (!inp) return;
-      // ★★ ถ้า clipboard มีรูป → ข้าม global handler (ให้ chatroom paste handler จัดการ)
-      const items = e.clipboardData?.items;
-      if (items) {
-        for (const item of items) {
-          if (item.type.startsWith('image/')) return;
-        }
-      }
-      // ★★ ถ้า paste ใน chatroom + ข้อความ >3 บรรทัด → ส่งเป็น text attachment
       const pasteText = (e.clipboardData || window.clipboardData).getData('text');
-      if (pasteText && inp.closest && inp.closest('#__assist_chatroom_modal')) {
-        const lineCount = (pasteText.match(/\n/g) || []).length;
-        if (lineCount > 3) {
-          e.stopPropagation();
-          if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-          e.preventDefault();
-          if (relayWs && relayWs.readyState === 1) {
-            relayWs.send(JSON.stringify({
-              type: 'roomSend',
-              displayName: (localStorage.getItem('roAssistChatName') || 'ผู้ใช้'),
-              message: '',
-              attachment: { type: 'text', text: pasteText, lines: lineCount + 1 },
-            }));
-            log('📄 ส่งข้อความ', lineCount + 1, 'บรรทัด เป็น text attachment');
-          }
-          return;
-        }
-      }
       e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       e.preventDefault();
@@ -8651,19 +9918,16 @@
       if (inp.type === 'number') {
         if (k === 'Backspace') inp.value = inp.value.slice(0, -1);
         else if (k === 'Delete') inp.value = inp.value.slice(1);
-        else if (k === 'Enter') {
-          if (inp.closest('#__assist_chatroom_modal')) { const b = inp.closest('#__assist_chatroom_modal').querySelector('button[data-send]'); if (b) b.click(); return; }
-          inp.blur();
-        }
-        else if (k === 'Escape') { const m = inp.closest('#__assist_feedback_modal') || inp.closest('#__assist_chatroom_modal'); if (m) m.remove(); return; }
+        else if (k === 'Enter') { inp.blur(); }
+        else if (k === 'Escape') { const m = inp.closest('#__assist_feedback_modal'); if (m) m.remove(); return; }
         else if (k.length === 1 && /[\d.\-]/.test(k)) inp.value += k;
         inp.dispatchEvent(new Event('input', { bubbles: true }));
         return;
       }
       const s = inp.selectionStart, en = inp.selectionEnd;
-      // ★ Escape → ปิด modal (feedback หรือ chatroom)
+      // ★ Escape → ปิด feedback modal
       if (k === 'Escape') {
-        const modal = inp.closest && (inp.closest('#__assist_feedback_modal') || inp.closest('#__assist_chatroom_modal'));
+        const modal = inp.closest && inp.closest('#__assist_feedback_modal');
         if (modal) { modal.remove(); return; }
       }
       if (k === 'Backspace') {
@@ -8677,25 +9941,18 @@
       else if (k === 'Home') { inp.selectionStart = inp.selectionEnd = 0; }
       else if (k === 'End') { inp.selectionStart = inp.selectionEnd = inp.value.length; }
       else if (k === 'Enter') {
-        // ★ textarea: Enter = ขึ้นบรรทัด, Ctrl+Enter = ส่ง (feedback/chatroom modal)
-        //   input (1 บรรทัด): Enter = blur หรือ Ctrl+Enter = ส่ง (chatroom)
+        // ★ textarea: Enter = ขึ้นบรรทัด, Ctrl+Enter = ส่ง feedback
+        //   input (1 บรรทัด): Enter = blur
         if (inp.tagName === 'TEXTAREA') {
           if (e.ctrlKey || e.metaKey) {
-            const modal = inp.closest('#__assist_feedback_modal') || inp.closest('#__assist_chatroom_modal');
+            const modal = inp.closest('#__assist_feedback_modal');
             if (modal) { const b = modal.querySelector('button[data-send]'); if (b) b.click(); }
             return;
           }
           inp.value = inp.value.slice(0, s) + '\n' + inp.value.slice(en);
           inp.selectionStart = inp.selectionEnd = s + 1;
         } else {
-          // ★ input 1 บรรทัด: Ctrl+Enter = ส่ง (chatroom), Enter = ส่ง (chatroom) หรือ blur
-          if (inp.closest('#__assist_chatroom_modal')) {
-            const modal = inp.closest('#__assist_chatroom_modal');
-            if (e.ctrlKey || e.metaKey || inp.id === '__assist_chatroom_msg') {
-              const b = modal.querySelector('button[data-send]'); if (b) b.click();
-              return;
-            }
-          }
+          // ★ input 1 บรรทัด: Enter = blur
           inp.blur();
         }
       }
@@ -8749,7 +10006,6 @@
         if (pill.hasAttribute('data-inventory')) { openInventoryModal(); }
         if (pill.hasAttribute('data-remote')) { openRemoteMonitor(); }
         if (pill.hasAttribute('data-feedback')) { openFeedbackModal(); }
-        if (pill.hasAttribute('data-chatroom')) { openChatRoomModal(); }
         if (pill.hasAttribute('data-changelog')) { openChangelogModal(); }
         if (pill.hasAttribute('data-logview')) { openLogViewModal(); }
         return;
@@ -8837,6 +10093,14 @@
     const _bvy2 = root.querySelector('#__assist_bvy'); if (_bvy2) _bvy2.value = CFG.buffVisitY != null && CFG.buffVisitY > -999 ? CFG.buffVisitY : '';
     const _bvs = root.querySelector('#__assist_bvsec'); if (_bvs) _bvs.value = CFG.buffVisitIntervalSec || 600;
     const _bvw = root.querySelector('#__assist_bvwait'); if (_bvw) _bvw.value = CFG.buffVisitWaitSec || 20;
+    // ★★ AB Refresh: Direct Unstuck → 2s → กลับฟาร์มทันที
+    root.querySelector('#__assist_t_unstuckbuff').addEventListener('click', () => ASSIST.toggleUnstuckBuff(!CFG.unstuckBuffEnabled));
+    root.querySelector('#__assist_unstucknow').addEventListener('click', () => ASSIST.unstuckBuffNow());
+    root.querySelector('#__assist_applyunstuckbuff').addEventListener('click', () => {
+      const sec = parseInt(root.querySelector('#__assist_ubsec').value, 10);
+      ASSIST.setUnstuckBuff(!isNaN(sec) ? sec : CFG.unstuckBuffIntervalSec, 2);
+    });
+    const _ubs = root.querySelector('#__assist_ubsec'); if (_ubs) _ubs.value = CFG.unstuckBuffIntervalSec || 600;
     // ---- skill wires ----
     root.querySelector('#__assist_skillbtn').addEventListener('click', () => CFG.skillEnabled ? ASSIST.skillOff() : ASSIST.skillOn());
     root.querySelector('#__assist_skillnow').addEventListener('click', () => ASSIST.skillNow());
@@ -9019,6 +10283,25 @@
       log('🏃 หนีผู้เล่น: แผนที่สำรอง', maps.length, 'แผนที่, รัศมี', CFG.fleePlayerRadius, 'ช่อง' + (radius === 0 ? ' (หนีทันที)' : '') + ', คูลดาวน์', CFG.fleeWarpCooldownSec + 's' + (CFG.fleeWarpCooldownSec === 0 ? ' (รัวสุด)' : ''));
     });
     // ---- flee wires (แยกจาก combat) ----
+    const _hpFleePct = root.querySelector('#__assist_hpfleepct');
+    if (_hpFleePct) _hpFleePct.value = CFG.hpFleePercent;
+    const _hpFleeBtn = root.querySelector('#__assist_t_hpflee');
+    const _hpFleeSame = root.querySelector('#__assist_t_hpflee_same');
+    const _hpFleeUnstuck = root.querySelector('#__assist_t_hpflee_unstuck');
+    const refreshHpFleeBtns = () => {
+      if (_hpFleeBtn) { _hpFleeBtn.className = CFG.hpFleeEnabled ? 'on' : 'off'; _hpFleeBtn.textContent = '❤️ HP ต่ำหนี: ' + (CFG.hpFleeEnabled ? 'ON' : 'OFF'); }
+      if (_hpFleeSame) _hpFleeSame.className = CFG.hpFleeMode !== 'unstuck' ? 'on' : 'off';
+      if (_hpFleeUnstuck) _hpFleeUnstuck.className = CFG.hpFleeMode === 'unstuck' ? 'on' : 'off';
+    };
+    refreshHpFleeBtns();
+    _hpFleeBtn?.addEventListener('click', () => { ASSIST.toggleHpFlee(!CFG.hpFleeEnabled); refreshHpFleeBtns(); });
+    _hpFleeSame?.addEventListener('click', () => { ASSIST.setHpFleeMode('sameMap'); refreshHpFleeBtns(); });
+    _hpFleeUnstuck?.addEventListener('click', () => { ASSIST.setHpFleeMode('unstuck'); refreshHpFleeBtns(); });
+    root.querySelector('#__assist_applyhpflee')?.addEventListener('click', () => {
+      const p = parseInt(root.querySelector('#__assist_hpfleepct')?.value, 10);
+      if (!isNaN(p)) ASSIST.setHpFleePercent(p);
+      refreshHpFleeBtns();
+    });
     root.querySelector('#__assist_applyflee').addEventListener('click', () => {
       const fm = parseInt(root.querySelector('#__assist_fleemob').value, 10);
       const fa = parseInt(root.querySelector('#__assist_fleeaggro').value, 10);
@@ -9090,6 +10373,20 @@
     root.querySelector('#__assist_usekafrapos').addEventListener('click', () => { ASSIST.useCurrentPosAsKafra(); });
     root.querySelector('#__assist_t_depfull').addEventListener('click', () => { CFG.depositOnFull = !CFG.depositOnFull; ASSIST.toggleDepositOnFull(CFG.depositOnFull); });
     root.querySelector('#__assist_t_depaftersell').addEventListener('click', () => { CFG.depositAfterSell = !CFG.depositAfterSell; ASSIST.toggleDepositAfterSell(CFG.depositAfterSell); });
+    // ---- auto trade wires (v4.188.7 verified protocol) ----
+    root.querySelector('#__assist_trade_accept_all').addEventListener('click', () => {
+      CFG.tradeAcceptAll = !CFG.tradeAcceptAll;
+      if (CFG.tradeAcceptAll) CFG.tradeRejectAll = false;
+      saveConfigDebounced();
+      log('🤝 Accept-All Trade:', CFG.tradeAcceptAll ? 'ON' : 'OFF');
+    });
+    root.querySelector('#__assist_trade_reject_all').addEventListener('click', () => {
+      CFG.tradeRejectAll = !CFG.tradeRejectAll;
+      if (CFG.tradeRejectAll) CFG.tradeAcceptAll = false;
+      saveConfigDebounced();
+      log('🚫 Eject-All Trade:', CFG.tradeRejectAll ? 'ON' : 'OFF');
+    });
+
     // ---- relay/remote monitor wires ----
     root.querySelector('#__assist_relaybtn').addEventListener('click', () => {
       CFG.monitorServerEnabled = !CFG.monitorServerEnabled;
@@ -9258,6 +10555,8 @@
     tBtn('#__assist_t_normalatk', (v) => ASSIST.toggleNormalAttack(v), 'normalAttackEnabled');
     tBtn('#__assist_t_wander', (v) => ASSIST.toggleWander(v), 'wanderEnabled');
     tBtn('#__assist_t_warpfind', (v) => ASSIST.toggleWarpFind(v), 'warpFindEnabled');
+    tBtn('#__assist_t_warpfindwing', (v) => ASSIST.toggleWarpFindFlyWing(v), 'warpFindUseFlyWing');
+    tBtn('#__assist_t_warpfindskill', (v) => ASSIST.toggleWarpFindTeleportSkill(v), 'warpFindUseTeleportSkill');
     tBtn('#__assist_t_guard', (v) => ASSIST.toggleGuard(v), 'guardEnabled');
     tBtn('#__assist_t_farmondeath', (v) => { saveConfigDebounced(); log('☠️ ตายเปลี่ยนแมปฟาร์ม:', v ? 'เปิด (' + (Array.isArray(CFG.farmMaps) ? CFG.farmMaps.length : 0) + ' แมปในรายการ)' : 'ปิด'); }, 'farmRotateOnDeath');
     // ★ Guard — ใช้พิกัดตัวละครปัจจุบันเป็นจุดยืน
@@ -9595,204 +10894,6 @@ setInterval(()=>{if(last&&Date.now()-last.t>5000){document.getElementById('dot')
       if (e.key === 'Escape') close();
     });
   }
-  // ★★ Chat Room modal — ห้องแชทสำหรับผู้ใช้บอท (คุยกันผ่าน relay server)
-  // ★★ Chat room upload URL — derive from relay server URL
-  function getChatUploadUrl() {
-    try {
-      const wsUrl = CFG.monitorServerUrl || '';
-      const httpUrl = wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
-      return httpUrl.replace(/\/$/, '') + '/upload';
-    } catch (_) { return ''; }
-  }
-  function getChatFileUrl(filename) {
-    try {
-      const wsUrl = CFG.monitorServerUrl || '';
-      const httpUrl = wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
-      return httpUrl.replace(/\/$/, '') + '/chat-files/' + filename;
-    } catch (_) { return '#'; }
-  }
-  // ★★ อัปโหลดไฟล์ → relay → ส่ง chat message พร้อม attachment
-  async function uploadChatFile(file) {
-    if (!file) return;
-    const allowed = ['image/jpeg','image/png','image/bmp','image/gif','image/webp','application/json','text/javascript','text/plain'];
-    const ext = file.name.match(/\.(\w+)$/)?.[1]?.toLowerCase();
-    if (!allowed.includes(file.type) && !['json','js','txt','jpg','jpeg','png','bmp','gif','webp'].includes(ext)) {
-      log('⚠️ ไม่รองรับไฟล์ประเภทนี้ — รับเฉพาะรูป (jpg/png/bmp/gif) และ .json/.js/.txt'); return;
-    }
-    if (file.size > 1048576) {
-      log('⚠️ ไฟล์ใหญ่เกิน 1MB (' + (file.size/1024).toFixed(0) + 'KB)'); return;
-    }
-    const isJson = file.type === 'application/json' || ext === 'json';
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result.split(',')[1];
-      const uploadUrl = getChatUploadUrl();
-      if (!uploadUrl) { log('⚠️ ไม่รู้ URL relay server'); return; }
-      log('📎 กำลังอัปโหลด', file.name, '(' + (file.size/1024).toFixed(0) + 'KB)...');
-      try {
-        const res = await fetch(uploadUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: base64, mimeType: file.type, filename: file.name }),
-        });
-        const result = await res.json();
-        if (result.ok) {
-          if (relayWs && relayWs.readyState === 1) {
-            relayWs.send(JSON.stringify({
-              type: 'roomSend',
-              displayName: (localStorage.getItem('roAssistChatName') || 'ผู้ใช้'),
-              message: '',
-              attachment: { type: isJson ? 'file' : 'image', filename: result.filename, mimeType: file.type || (isJson ? 'application/json' : 'image/png') },
-            }));
-            log('📎 ส่งไฟล์สำเร็จ');
-          }
-        } else { log('⚠️ อัปโหลดล้มเหลว:', result.error); }
-      } catch (e) { log('⚠️ อัปโหลดล้มเหลว:', e.message); }
-    };
-    reader.readAsDataURL(file);
-  }
-  // ★★ Chat Reaction — ชื่อ emoji ที่เราใช้ reaction ข้อความ (ใครกดได้ทั้งของตัวเองและคนอื่น)
-  const CHAT_REACT_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '🙏'];
-  function chatMyName() {
-    const nameEl = document.getElementById('__assist_chatroom_name');
-    if (nameEl && nameEl.value.trim()) return nameEl.value.trim();
-    try { return localStorage.getItem('roAssistChatName') || ''; } catch (_) { return ''; }
-  }
-  function chatMsgKey(m) { return m.id || ('t' + m.t); }
-  function sendRoomReact(id, emoji, add) {
-    if (!relayWs || relayWs.readyState !== 1) return;
-    const displayName = chatMyName() || 'ผู้ใช้';
-    try { relayWs.send(JSON.stringify({ type: 'roomReact', id, emoji, name: displayName, add: !!add })); } catch (_) {}
-  }
-  function showChatReactPicker(btn) {
-    document.querySelectorAll('.__assist_react_picker').forEach(p => p.remove());
-    const mid = btn.dataset.mid;
-    const picker = document.createElement('div');
-    picker.className = '__assist_react_picker';
-    picker.style.cssText = 'position:fixed;z-index:1000002;background:#1a1a2e;border:1px solid #3a3f4b;border-radius:8px;padding:4px;display:flex;gap:2px;box-shadow:0 4px 12px rgba(0,0,0,.6)';
-    for (const emo of CHAT_REACT_EMOJIS) {
-      const b = document.createElement('button');
-      b.textContent = emo;
-      b.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;padding:2px 4px;border-radius:4px;font-family:inherit';
-      b.onmouseenter = () => b.style.background = '#2a3a4a';
-      b.onmouseleave = () => b.style.background = 'none';
-      b.onclick = (ev) => {
-        ev.stopPropagation();
-        const m = chatMessages.find(x => chatMsgKey(x) === mid);
-        const mine = !!(m && m.reactions && Array.isArray(m.reactions[emo]) && m.reactions[emo].includes(chatMyName()));
-        sendRoomReact(mid, emo, !mine);   // toggle: กดซ้ำ = ยกเลิก
-        picker.remove();
-      };
-      picker.appendChild(b);
-    }
-    document.body.appendChild(picker);
-    const r = btn.getBoundingClientRect();
-    picker.style.left = Math.max(4, Math.min(r.left, innerWidth - 270)) + 'px';
-    picker.style.top = (r.top - 40 < 8 ? r.bottom + 4 : r.top - 40) + 'px';
-    setTimeout(() => {
-      const closer = (ev) => { if (!picker.contains(ev.target)) { picker.remove(); document.removeEventListener('mousedown', closer); } };
-      document.addEventListener('mousedown', closer);
-    }, 0);
-  }
-  function renderChatRoomMessages(modal) {
-    const box = modal.querySelector('#__assist_chatroom_msgs');
-    if (!box) return;
-    box.innerHTML = chatMessages.map(m => {
-      const d = new Date(m.t);
-      const ts = d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
-      const name = (m.displayName || '?').replace(/</g,'&lt;');
-      const text = (m.text || '').replace(/</g,'&lt;');
-      let attachHtml = '';
-      if (m.attachment) {
-        if (m.attachment.type === 'text' && m.attachment.text) {
-          const lines = m.attachment.lines || (m.attachment.text.match(/\n/g) || []).length + 1;
-          const escaped = m.attachment.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          attachHtml = `<br><button class="__assist_text_attach" data-text="${encodeURIComponent(escaped)}" style="background:#2a3a4a;color:#4fc3f7;border:1px solid #3a5a6a;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;margin-top:4px;font-family:inherit">📄 ข้อความ ${lines} บรรทัด (คลิกเพื่อดู)</button>`;
-        } else if (m.attachment.type === 'image' && m.attachment.filename) {
-          const imgUrl = getChatFileUrl(m.attachment.filename);
-          attachHtml = `<br><img src="${imgUrl}" style="max-width:200px;max-height:120px;border-radius:6px;cursor:pointer;margin-top:4px" data-full="${imgUrl}" onerror="this.style.display='none'">`;
-        } else if (m.attachment.type === 'file' && m.attachment.filename) {
-          const fileUrl = getChatFileUrl(m.attachment.filename);
-          attachHtml = `<br><a href="${fileUrl}" target="_blank" style="color:#8ab4f8;font-size:11px">📄 ${m.attachment.filename}</a>`;
-        }
-      }
-      // ★★ reply quote — แสดงข้อความที่ตอบกลับ
-      let replyHtml = '';
-      if (m.replyTo && m.replyTo.displayName) {
-        const rName = m.replyTo.displayName.replace(/</g,'&lt;');
-        const rText = (m.replyTo.text || '').replace(/</g,'&lt;');
-        replyHtml = `<div style="border-left:2px solid #4fc3f7;padding-left:6px;margin-bottom:2px;font-size:10px;color:#888"><span style="color:#4fc3f7">${rName}</span>: ${rText.slice(0,80)}</div>`;
-      }
-      // ★★ reply button
-      const replyBtn = `<button class="__assist_reply_btn" data-reply-name="${encodeURIComponent(name)}" data-reply-text="${encodeURIComponent(text)}" style="background:none;border:none;color:#666;font-size:10px;cursor:pointer;padding:0 2px;opacity:.6" title="ตอบกลับ">↩</button>`;
-      // ★★ reaction — แสดงที่มุมขวาล่างของข้อความ: chip รายการที่มี + ปุ่มเพิ่ม (เฉพาะข้อความใหม่ที่มี id)
-      const mid = chatMsgKey(m);
-      const myName = chatMyName();
-      let reactChips = '';
-      if (m.reactions && typeof m.reactions === 'object') {
-        reactChips = Object.entries(m.reactions).map(([emo, names]) => {
-          const arr = Array.isArray(names) ? names : [];
-          const mine = arr.includes(myName);
-          const tt = arr.map(n => String(n).replace(/"/g, '&quot;').replace(/</g, '&lt;')).join(', ');
-          return `<button class="__assist_react_chip" data-mid="${mid}" data-emoji="${emo}" data-mine="${mine ? 1 : 0}" title="${tt}" style="background:${mine ? '#1a2a3a' : '#23262e'};border:1px solid ${mine ? '#4fc3f7' : '#3a3f4b'};border-radius:10px;color:#ddd;font-size:10px;padding:1px 7px;cursor:pointer;font-family:inherit">${emo} ${arr.length}</button>`;
-        }).join('');
-      }
-      const reactAdd = m.id ? `<button class="__assist_react_add" data-mid="${mid}" style="background:none;border:1px dashed #3a3f4b;border-radius:10px;color:#777;font-size:10px;padding:1px 6px;cursor:pointer;font-family:inherit" title="รีแอ็กชั่น">🙂+</button>` : '';
-      const reactRow = (reactChips || reactAdd) ? `<div style="display:flex;justify-content:flex-end;gap:4px;align-items:center;flex-wrap:wrap;margin-top:2px">${reactChips}${reactAdd}</div>` : '';
-      return `<div style="margin-bottom:6px">${replyHtml}<span style="color:#666;font-size:10px">${ts}</span> <span style="color:#4fc3f7;font-weight:600">${name}</span><span style="color:#888">: </span><span style="color:#e8e8e8">${text}</span>${attachHtml} ${replyBtn}${reactRow}</div>`;
-    }).join('');
-    box.scrollTop = box.scrollHeight;
-    // ★★ wire reaction — คลิก chip = toggle ของเราในอีโมจินั้น · ปุ่ม 🙂+ = เลือกอีโมจิ
-    box.querySelectorAll('.__assist_react_chip').forEach(btn => {
-      btn.onclick = (e) => { e.stopPropagation(); sendRoomReact(btn.dataset.mid, btn.dataset.emoji, btn.dataset.mine !== '1'); };
-    });
-    box.querySelectorAll('.__assist_react_add').forEach(btn => {
-      btn.onclick = (e) => { e.stopPropagation(); showChatReactPicker(btn); };
-    });
-    // ★★ wire image click → fullscreen modal
-    box.querySelectorAll('img[data-full]').forEach(img => {
-      img.onclick = () => {
-        const ov = document.createElement('div');
-        ov.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.9);z-index:999999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
-        ov.innerHTML = `<img src="${img.dataset.full}" style="max-width:95vw;max-height:95vh;border-radius:8px">`;
-        ov.onclick = () => ov.remove();
-        document.body.appendChild(ov);
-      };
-    });
-    // ★★ wire text attachment click → modal ดูข้อความเต็ม
-    box.querySelectorAll('.__assist_text_attach').forEach(btn => {
-      btn.onclick = () => {
-        const raw = decodeURIComponent(btn.dataset.text);
-        const ov = document.createElement('div');
-        ov.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.85);z-index:999999;display:flex;align-items:center;justify-content:center';
-        ov.innerHTML = `<div style="background:#1a1a2e;border:1px solid #3a3f4b;border-radius:12px;padding:20px;width:700px;max-width:92vw;height:80vh;display:flex;flex-direction:column"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span style="color:#4fc3f7;font-size:13px;font-weight:600">📄 ข้อความ</span><button style="background:none;border:none;color:#888;font-size:18px;cursor:pointer">✕</button></div><pre style="flex:1;overflow:auto;background:#0d0d15;border-radius:8px;padding:12px;font-size:11px;line-height:1.5;color:#ccc;white-space:pre-wrap;word-break:break-word;font-family:Consolas,monospace">${raw.replace(/</g,'&lt;')}</pre></div>`;
-        const closeBtn = ov.querySelector('button');
-        closeBtn.onclick = () => ov.remove();
-        ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
-        document.body.appendChild(ov);
-      };
-    });
-    // ★★ wire reply buttons → set reply preview
-    box.querySelectorAll('.__assist_reply_btn').forEach(btn => {
-      btn.onclick = () => {
-        const rName = decodeURIComponent(btn.dataset.replyName || '');
-        const rText = decodeURIComponent(btn.dataset.replyText || '');
-        modal._replyTo = { displayName: rName, text: rText };
-        // แสดง preview bar
-        let preview = modal.querySelector('#__assist_chatroom_reply_preview');
-        if (!preview) {
-          preview = document.createElement('div');
-          preview.id = '__assist_chatroom_reply_preview';
-          preview.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:#1a2a3a;border-radius:6px;margin-bottom:6px;font-size:11px';
-          const msgs = modal.querySelector('#__assist_chatroom_msgs');
-          msgs.parentNode.insertBefore(preview, msgs.nextSibling);
-        }
-        preview.innerHTML = `<span style="color:#4fc3f7">↩ ${rName}:</span> <span style="color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${rText.slice(0,60).replace(/</g,'&lt;')}</span> <button style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;padding:0 4px">✕</button>`;
-        preview.querySelector('button').onclick = () => { modal._replyTo = null; preview.remove(); };
-        modal.querySelector('#__assist_chatroom_msg').focus();
-      };
-    });
-  }
   // ★★ Changelog modal — แสดง Update Log ล่าสุดขึ้นก่อน
   // ★★ Log view modal — ดู log 500 บรรทัดล่าสุด (ชิดขวา + เลื่อนได้ + real-time update)
   function openLogViewModal() {
@@ -9908,6 +11009,11 @@ setInterval(()=>{if(last&&Date.now()-last.t>5000){document.getElementById('dot')
             <button id="__assist_inv_close" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer">✕</button>
           </span>
         </div>
+        <div id="__assist_inv_bulkbar" style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:-2px 0 8px 0;font-size:10px;color:#9aa0a6">
+          <span style="margin-right:auto">เลือกทั้งหมวด: <b id="__assist_inv_bulkcat" style="color:#ffd54f">Item</b></span>
+          <button id="__assist_inv_sellallcat" title="ตั้งไอเทมทั้งหมดที่มีอยู่ในหมวดนี้เป็น ขาย (ยังไม่ขายทันที)" style="background:#4a2c14;color:#ffb74d;border:1px solid #7a4a1e;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:inherit">💰 ขายทั้งหมด</button>
+          <button id="__assist_inv_depositallcat" title="ตั้งไอเทมทั้งหมดที่มีอยู่ในหมวดนี้เป็น ฝาก (ยังไม่ฝากทันที)" style="background:#14324a;color:#81c784;border:1px solid #1e5a7a;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:inherit">🏦 ฝากทั้งหมด</button>
+        </div>
         <div style="display:flex;gap:8px;flex:1;min-height:0">
           <div style="display:flex;flex-direction:column;gap:4px">
             <button class="invtab on" data-tab="usable" style="writing-mode:vertical-rl;text-orientation:mixed;padding:10px 6px;font-size:12px;cursor:pointer;border:none;border-radius:6px;background:#4a3a1a;color:#ffd54f;min-height:110px">Item</button>
@@ -9921,11 +11027,13 @@ setInterval(()=>{if(last&&Date.now()-last.t>5000){document.getElementById('dot')
     document.body.appendChild(overlay);
     const grid = overlay.querySelector('#__assist_inv_grid');
     const cntEl = overlay.querySelector('#__assist_inv_count');
+    const bulkCatEl = overlay.querySelector('#__assist_inv_bulkcat');
 
     function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
     let invCurTab = 'usable';
     function render(tab) {
       invCurTab = tab;
+      if (bulkCatEl) bulkCatEl.textContent = tab === 'usable' ? 'Item' : (tab === 'equip' ? 'Equip' : 'Etc.');
       // ★★ Equip: แสดง "เฉพาะของในถุง" เท่านั้น (ไม่รวมที่สวมอยู่ — ตามผู้ใช้งานต้องการ)
       //   worn จาก login block · สวม/ถอด mid-session อัปเดตผ่าน 0x30 (ชิ้นที่รู้ slot id)
       let items;
@@ -10009,6 +11117,38 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
       });
       if (tipEl) tipEl.style.display = 'none';
     });
+
+    // ★★ Bulk action ต่อหมวด — ใช้เฉพาะไอเทมที่มีอยู่ในแท็บปัจจุบัน (ไม่สั่งขาย/ฝากทันที)
+    function currentInvTabItemIds() {
+      let ids;
+      if (invCurTab === 'equip') {
+        ids = equipmentList.filter(x => !x.worn).map(x => Number(x.id));
+      } else {
+        ids = [...inventory.entries()]
+          .filter(([id, c]) => c > 0 && itemDB.cats[String(id)] === invCurTab)
+          .map(([id]) => Number(id));
+      }
+      return [...new Set(ids.filter(id => Number.isFinite(id) && id > 0))];
+    }
+    function setCurrentInvTabAction(action) {
+      const ids = currentInvTabItemIds();
+      if (!ids.length) {
+        log('⚠️ Inventory:', invCurTab, 'ไม่มีไอเทมให้เลือก');
+        return;
+      }
+      const pick = new Set(ids);
+      // action ต่อ itemId เลือกได้อย่างเดียว: ลบหมวดนี้ออกจากทั้งสอง list ก่อน
+      CFG.sellItemIds = CFG.sellItemIds.filter(id => !pick.has(Number(id)));
+      CFG.depositItemIds = CFG.depositItemIds.filter(id => !pick.has(Number(id)));
+      if (action === 'sell') CFG.sellItemIds = [...new Set([...CFG.sellItemIds, ...ids])];
+      else if (action === 'deposit') CFG.depositItemIds = [...new Set([...CFG.depositItemIds, ...ids])];
+      saveConfigDebounced();
+      const cat = invCurTab === 'usable' ? 'Item' : (invCurTab === 'equip' ? 'Equip' : 'Etc.');
+      log(action === 'sell' ? '💰' : '🏦', cat, action === 'sell' ? '→ เลือกขายทั้งหมด' : '→ เลือกฝากทั้งหมด', ids.length + ' รายการ');
+      render(invCurTab);
+    }
+    overlay.querySelector('#__assist_inv_sellallcat').onclick = (e) => { e.stopPropagation(); setCurrentInvTabAction('sell'); };
+    overlay.querySelector('#__assist_inv_depositallcat').onclick = (e) => { e.stopPropagation(); setCurrentInvTabAction('deposit'); };
 
     overlay.querySelectorAll('.invtab').forEach(btn => {
       btn.onclick = (e) => {
@@ -10108,136 +11248,12 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
       }
     }, true);
   }
-  function openChatRoomModal() {
-    const old = document.getElementById('__assist_chatroom_modal');
-    if (old) old.remove();
-    // ★ reset unread badge
-    chatUnread = 0;
-    const badge = document.getElementById('__assist_chatbadge');
-    if (badge) badge.style.display = 'none';
-    // ★ โหลด displayName จาก localStorage
-    let savedName = '';
-    try { savedName = localStorage.getItem('roAssistChatName') || ''; } catch (_) {}
-    const overlay = document.createElement('div');
-    overlay.id = '__assist_chatroom_modal';
-    // ★ ชิดขวา — ไม่บังจอเกม (เหมือน popup panel)
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:999999;display:flex;align-items:center;justify-content:flex-end;padding-right:10px';
-    overlay.innerHTML = `
-      <div style="background:#1e1e2e;color:#e8e8e8;border-radius:12px;padding:16px;width:480px;max-width:90vw;height:500px;max-height:85vh;display:flex;flex-direction:column;font-family:sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-        <div id="__assist_chatroom_hdr" style="font-size:15px;font-weight:700;margin-bottom:8px;color:#4fc3f7;cursor:move;user-select:none;touch-action:none">🗨️ ห้องแชท</div>
-        <div id="__assist_chatroom_msgs" style="flex:1;overflow-y:auto;background:#15151f;border-radius:8px;padding:10px;font-size:12px;line-height:1.5;margin-bottom:8px"></div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input id="__assist_chatroom_name" type="text" value="${savedName.replace(/"/g,'&quot;')}" placeholder="ชื่อที่จะใช้คุย" style="flex:0 0 130px;background:#2a2d35;color:#e8e8e8;border:1px solid #444;border-radius:6px;padding:8px;font-size:12px;box-sizing:border-box" maxlength="30">
-          <input id="__assist_chatroom_msg" type="text" placeholder="พิมพ์ข้อความ... (Enter = ส่ง)" style="flex:1;background:#2a2d35;color:#e8e8e8;border:1px solid #444;border-radius:6px;padding:8px;font-size:12px;box-sizing:border-box" maxlength="200">
-          <button id="__assist_chatroom_attach" style="padding:8px 10px;border:none;border-radius:6px;background:#444;color:#ccc;cursor:pointer;font-size:14px" title="ส่งรูป/ไฟล์ (สูงสุด 1MB)">📎</button>
-          <button data-send style="padding:8px 16px;border:none;border-radius:6px;background:#1a73e8;color:#fff;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">ส่ง</button>
-        </div>
-        <div style="font-size:10px;color:#666;text-align:center">Enter = ส่ง · Esc = ปิด · 📎 = รูป/ไฟล์ · Ctrl+V = วางรูป</div>
-      </div>`;
-    document.body.appendChild(overlay);
-    renderChatRoomMessages(overlay);
-    // ★★ ลากหน้าต่างย้ายอิสระ — จับที่แถบหัวเรื่อง (เหมือน popup Inventory)
-    {
-      const win = overlay.firstElementChild;
-      const hdr = overlay.querySelector('#__assist_chatroom_hdr');
-      let dragSt = null;
-      hdr.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('button, input')) return;
-        // ★ ตรึงตำแหน่งปัจจุบันก่อนลากครั้งแรก (ถอดจาก flex ชิดขวาของ overlay)
-        if (win.style.position !== 'fixed') {
-          const r0 = win.getBoundingClientRect();
-          overlay.style.display = 'block';
-          overlay.style.paddingRight = '0';
-          win.style.position = 'fixed';
-          win.style.left = r0.left + 'px';
-          win.style.top = r0.top + 'px';
-          win.style.margin = '0';
-        }
-        const r = win.getBoundingClientRect();
-        dragSt = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-        try { hdr.setPointerCapture(e.pointerId); } catch (_) {}
-        e.preventDefault();
-      });
-      hdr.addEventListener('pointermove', (e) => {
-        if (!dragSt) return;
-        // กันลากหลุดจอ — เหลือให้เห็นอย่างน้อย 80×40 px
-        const nx = Math.max(-win.offsetWidth + 80, Math.min(e.clientX - dragSt.dx, innerWidth - 80));
-        const ny = Math.max(0, Math.min(e.clientY - dragSt.dy, innerHeight - 40));
-        win.style.left = nx + 'px'; win.style.top = ny + 'px';
-      });
-      hdr.addEventListener('pointerup', () => { dragSt = null; });
-      hdr.addEventListener('pointercancel', () => { dragSt = null; });
-    }
-    // ★ focus message input (ถ้ามีชื่อแล้ว) หรือ name input (ถ้ายังไม่มีชื่อ)
-    setTimeout(() => { try { (savedName ? overlay.querySelector('#__assist_chatroom_msg') : overlay.querySelector('#__assist_chatroom_name')).focus(); } catch (_) {} }, 0);
-    const close = () => overlay.remove();
-    overlay.onclick = (e) => { if (e.target === overlay) close(); };
-    // ★ กัน Unity ขโมย focus
-    overlay.addEventListener('mousedown', (e) => {
-      if (e.target.matches && e.target.matches('input, select, textarea, button')) {
-        e.stopPropagation();
-        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-          setTimeout(() => { try { e.target.focus(); } catch (_) {} }, 0);
-        }
-      }
-    }, true);
-    // ★★ ปุ่ม 📎 → file picker
-    overlay.querySelector('#__assist_chatroom_attach').onclick = () => {
-      const inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/bmp,image/gif,image/webp,.json,.js,.txt';
-      inp.onchange = () => { if (inp.files[0]) uploadChatFile(inp.files[0]); };
-      inp.click();
-    };
-    // ★★ paste → ตรวจรูปจาก clipboard
-    const msgInput = overlay.querySelector('#__assist_chatroom_msg');
-    msgInput.addEventListener('paste', (e) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const item of items) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (file) uploadChatFile(file);
-          return;
-        }
-      }
-    });
-    // ★ ปุ่มส่ง
-    overlay.querySelector('button[data-send]').onclick = () => {
-      const nameEl = overlay.querySelector('#__assist_chatroom_name');
-      const msgEl = overlay.querySelector('#__assist_chatroom_msg');
-      const displayName = nameEl.value.trim();
-      const msg = msgEl.value.trim();
-      if (!displayName) { nameEl.focus(); return; }
-      if (!msg) { msgEl.focus(); return; }
-      // ★ persist displayName
-      try { localStorage.setItem('roAssistChatName', displayName); } catch (_) {}
-      if (relayWs && relayWs.readyState === 1) {
-        try {
-          const payload = { type: 'roomSend', message: msg, displayName };
-          // ★★ แนบ replyTo ถ้ามี
-          if (overlay._replyTo) { payload.replyTo = overlay._replyTo; overlay._replyTo = null; }
-          const preview = overlay.querySelector('#__assist_chatroom_reply_preview');
-          if (preview) preview.remove();
-          relayWs.send(JSON.stringify(payload));
-          msgEl.value = '';
-          msgEl.focus();
-        } catch (_) {}
-      } else {
-        log('⚠️ ยังไม่ได้เชื่อม relay — เปิด Monitor ก่อน');
-      }
-    };
-  }
   // ★ Remote relay WebSocket state (ประกาศก่อนใช้ — กัน TDZ)
   let relayWs = null;
   let relayReconnectAt = 0;
   let relayStatus = 'disabled';        // 'disabled' | 'connecting' | 'connected' | 'reconnecting' | 'error'
   let relayStatusText = 'ปิด';          // ข้อความสั้น
   let relayConnectedAt = 0;             // เวลาที่เชื่อมต่อสำเร็จ
-  // ★★ Chat Room state
-  let chatMessages = [];                // ข้อความล่าสุด 100 จาก relay
-  let chatUnread = 0;                   // จำนวนข้อความใหม่ที่ยังไม่ได้อ่าน
   let relayLastDataAt = 0;              // เวลาส่งข้อมูลล่าสุด
   let relayDataCount = 0;               // จำนวนครั้งที่ส่งข้อมูลแล้ว
   function sendMonitorData() {
@@ -10436,8 +11452,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
           sendRelayAlert('🌐 เชื่อมต่อระบบ Remote Monitor แล้ว');
         } else {
           log('⚠️ ยังไม่มี player_id — ระบบจะ register ทันทีเมื่อ SPAWN มา');
-          // ★★ เข้าห้องแชทได้แม้ยังไม่มี player_id
-          try { relayWs.send(JSON.stringify({ type: 'roomJoin' })); } catch (_) {}
         }
       };
       relayWs.onclose = (ev) => {
@@ -10553,36 +11567,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
             try { relayWs.send(JSON.stringify({ type: 'chatAck', ok: false, error: 'not connected' })); } catch (_) {}
           }
         }
-        // ★★ Chat Room — รับประวัติแชท (100 ข้อความล่าสุด)
-        else if (m.type === 'roomHistory' && Array.isArray(m.messages)) {
-          chatMessages = m.messages.slice(-100);
-          const modal = document.getElementById('__assist_chatroom_modal');
-          if (modal) renderChatRoomMessages(modal);
-        }
-        // ★★ Chat Room — รับข้อความใหม่ (broadcast)
-        else if (m.type === 'roomMessage' && m.message) {
-          chatMessages.push(m.message);
-          if (chatMessages.length > 100) chatMessages = chatMessages.slice(-100);
-          const modal = document.getElementById('__assist_chatroom_modal');
-          if (modal) {
-            renderChatRoomMessages(modal);
-          } else {
-            // modal ปิดอยู่ → เพิ่ม badge
-            chatUnread++;
-            const badge = document.getElementById('__assist_chatbadge');
-            if (badge) { badge.textContent = chatUnread > 99 ? '99+' : chatUnread; badge.style.display = 'flex'; }
-          }
-        }
-        // ★★ Chat Room — รับ reaction (broadcast): แทนที่ reactions ทั้งชุดของข้อความนั้น
-        else if (m.type === 'roomReact' && m.id) {
-          const target = chatMessages.find(x => chatMsgKey(x) === m.id);
-          if (target) {
-            if (m.reactions && Object.keys(m.reactions).length) target.reactions = m.reactions;
-            else delete target.reactions;
-          }
-          const modal = document.getElementById('__assist_chatroom_modal');
-          if (modal) renderChatRoomMessages(modal);
-        }
       };
     } catch (e) {
       setRelayStatus('error', 'สร้าง WS ไม่ได้');
@@ -10603,8 +11587,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
         }
         // ★ ขอ telegram config status หลัง register (เพื่อแสดงใน UI ว่าตั้งไว้แล้วหรือยัง)
         relayWs.send(JSON.stringify({ type: 'getTelegram' }));
-        // ★★ เข้าห้องแชท — ขอประวัติ 100 ข้อความล่าสุด
-        relayWs.send(JSON.stringify({ type: 'roomJoin' }));
         // ★ ส่งแจ้งเตือนยืนยันการเชื่อมต่อ
         sendRelayAlert('🌐 เชื่อมต่อระบบ Remote Monitor แล้ว');
       } catch (_) {}
@@ -10785,6 +11767,18 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     if (buffBtn) { buffBtn.textContent = 'Buff: ' + (CFG.buffEnabled ? 'ON' : 'OFF'); buffBtn.className = CFG.buffEnabled ? 'on' : 'off'; }
     const bvBtn = root.querySelector('#__assist_t_buffvisit');
     if (bvBtn) { bvBtn.textContent = '🔁 ไปรับบัพ: ' + (CFG.buffVisitEnabled ? 'ON' : 'OFF'); bvBtn.className = CFG.buffVisitEnabled ? 'on' : 'off'; }
+    const ubBtn = root.querySelector('#__assist_t_unstuckbuff');
+    if (ubBtn) { ubBtn.textContent = '🏠 AB Refresh: ' + (CFG.unstuckBuffEnabled ? 'ON' : 'OFF'); ubBtn.className = CFG.unstuckBuffEnabled ? 'on' : 'off'; }
+    const ubStatus = root.querySelector('#__assist_unstuckstatus');
+    if (ubStatus) {
+      const directReady = true;
+      const remain = unstuckBuffLastAt ? Math.max(0, Math.ceil((CFG.unstuckBuffIntervalSec * 1000 - (nowMs() - unstuckBuffLastAt)) / 1000)) : CFG.unstuckBuffIntervalSec;
+      ubStatus.innerHTML = unstuckBuffAutoFinishPending
+        ? ('⏳ AB Auto ครบเวลาแล้ว · ' + (target ? 'กำลังตีมอนตัวล่าสุดให้จบ' : ((queue.size > 0 || warpQueue.size > 0) ? 'กำลังเก็บของตัวล่าสุด' : 'เตรียม Unstuck')) )
+        : (!CFG.combatEnabled && unstuckBuffState === 'IDLE' ? ('✅ Direct Unstuck 0x73 พร้อม · ⏸️ รอบ AB Auto รอ Combat ON · ▶ รับบัพตอนนี้ = เริ่มทันที') : ('✅ Direct Unstuck 0x73 พร้อม · state=' + unstuckBuffState + (unstuckBuffState === 'IDLE' && CFG.unstuckBuffEnabled ? ' · Auto รอบถัดไป ~' + remain + 's' : '')));
+    }
+    const upStatus = root.querySelector('#__assist_unstuckpacketstatus');
+    if (upStatus) { upStatus.textContent = ''; upStatus.style.display = 'none'; }
     const bi = root.querySelector('#__assist_buffitems');
     if (bi && !isEditing(bi)) bi.value = (CFG.buffItems || []).map(x => x.itemId + ',' + x.intervalMin).join('\n');
     const cdEl = root.querySelector('#__assist_buffcountdown');
@@ -10857,6 +11851,11 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncToggle('#__assist_t_fleeplayers', CFG.fleeFromPlayers === true);
     syncToggle('#__assist_t_fleemode_change', CFG.fleeMode !== 'sameMap');
     syncToggle('#__assist_t_fleemode_same', CFG.fleeMode === 'sameMap');
+    syncToggle('#__assist_t_hpflee', CFG.hpFleeEnabled === true);
+    const _hpfb = root.querySelector('#__assist_t_hpflee'); if (_hpfb) _hpfb.textContent = '❤️ HP ต่ำหนี: ' + (CFG.hpFleeEnabled ? 'ON' : 'OFF');
+    syncToggle('#__assist_t_hpflee_same', CFG.hpFleeMode !== 'unstuck');
+    syncToggle('#__assist_t_hpflee_unstuck', CFG.hpFleeMode === 'unstuck');
+    syncInput('#__assist_hpfleepct', CFG.hpFleePercent);
     syncToggle('#__assist_t_stepaside', CFG.stepAsideOnAbandon !== false);
     syncToggle('#__assist_t_fightbackbl', CFG.fightBackBlacklisted !== false);
     // ★ ไม่ sync fleemaps/fleeradius — กันเขียนทับค่าที่กำลังแก้ (Unity แย่ง focus → isEditing คืน false)
@@ -10870,6 +11869,8 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncToggle('#__assist_t_lowhp', CFG.targetLowestHpFirst);
     syncToggle('#__assist_t_wander', CFG.wanderEnabled);
     syncToggle('#__assist_t_warpfind', CFG.warpFindEnabled);
+    syncToggle('#__assist_t_warpfindwing', CFG.warpFindUseFlyWing);
+    syncToggle('#__assist_t_warpfindskill', CFG.warpFindUseTeleportSkill);
     syncToggle('#__assist_t_guard', CFG.guardEnabled);
     syncToggle('#__assist_t_farmondeath', CFG.farmRotateOnDeath);
     syncToggle('#__assist_t_warptomon', CFG.warpToMonster);
@@ -10892,6 +11893,18 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncInput('#__assist_kafrachoice', CFG.kafraChoice);
     syncToggle('#__assist_t_depfull', CFG.depositOnFull);
     syncToggle('#__assist_t_depaftersell', CFG.depositAfterSell);
+    // ★ auto trade status sync
+    const trAcceptBtn = root.querySelector('#__assist_trade_accept_all');
+    if (trAcceptBtn) {
+      trAcceptBtn.textContent = '✅ Accept-All Trade: ' + (CFG.tradeAcceptAll ? 'ON' : 'OFF');
+      trAcceptBtn.className = CFG.tradeAcceptAll ? 'on' : 'off';
+    }
+    const trRejectBtn = root.querySelector('#__assist_trade_reject_all');
+    if (trRejectBtn) {
+      trRejectBtn.textContent = '🚫 Eject-All Trade: ' + (CFG.tradeRejectAll ? 'ON' : 'OFF');
+      trRejectBtn.className = CFG.tradeRejectAll ? 'on' : 'off';
+    }
+
     // ★ relay/remote monitor config sync
     const relayBtn = root.querySelector('#__assist_relaybtn');
     if (relayBtn) {
