@@ -7,13 +7,23 @@ Thumbs.db
 # Logs
 *.log
 
-# Node (ถ้ามี tooling เสริมในอนาคต)
+# Node
 node_modules/
 npm-debug.log*
 yarn-error.log*
 
-# Local config / secrets (กัน token รั่ว)
+# Local config / secrets
 .env
 .env.local
+.env.*
+!.env.example
 *.local
+*.pem
+*.key
 *.7z
+
+# RO Assist runtime state / credentials (NEVER COMMIT)
+telegram-configs.json
+feedback-store.json
+chat-history.json
+chat-files/
