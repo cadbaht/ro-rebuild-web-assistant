@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.23
+// @version      4.189.24
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.23';
+  const VERSION = '4.189.24';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.24', d: '2026-09-25', items: [
+      '🔐 Security Hardening — กัน credentials หลุดผ่าน Backup/Profile และเตรียม Relay patch แบบไม่ฝัง Admin Token',
+      '   · Backup/Export ไม่รวม Telegram Bot Token, Telegram Chat ID, Auto-login Username/Password',
+      '   · Profile ไม่บันทึก credentials และสลับ Profile จะไม่เขียนทับ credentials ที่เก็บเฉพาะเครื่อง',
+      '   · Import backup เก่าจะข้าม credential fields อัตโนมัติ',
+      '   · ล้าง credential fields ที่เคยค้างอยู่ใน Profile เก่าออกจาก localStorage อัตโนมัติ',
+      '   · Relay security bundle: ADMIN_TOKEN ต้องมาจาก environment, ไม่ใช้ ?token= ในหน้า Feedback, runtime secret files ถูก .gitignore',
+    ]},
     { v: '4.189.23', d: '2026-09-25', items: [
       '🔐 Telegram Token Security — ลบ Telegram Bot Token ที่เคย hardcode อยู่ใน source ออกทั้งหมด',
       '   · Feedback ไม่ยิง Telegram API จาก browser โดยตรงอีกต่อไป แต่ส่งผ่าน Relay Server เท่านั้น',
@@ -1340,6 +1348,12 @@
     'tradeAcceptAll', 'tradeRejectAll', 'tradeRequestOpcode', 'tradeRequestLen', 'tradeAcceptPacketHex', 'tradeRejectPacketHex',
     'itemNames',
   ];
+
+  // ★ Security: credentials เก็บได้เฉพาะ local config ของเครื่องนี้ แต่ห้ามออกไปกับ Profile/Backup
+  const SECRET_KEYS = new Set(['telegramBotToken', 'telegramChatId', 'autoLoginUser', 'autoLoginPass']);
+  const PROFILE_KEYS = PERSIST_KEYS.filter(k => !SECRET_KEYS.has(k));
+  const EXPORT_KEYS = PROFILE_KEYS;
+
   function saveConfig() {
     try {
       const out = {};
@@ -1382,16 +1396,30 @@
 
   // ============================================================
   //  PROFILE — ชุดการตั้งค่าแยกหลายชุด (บอทหลายตัว / สไตล์เล่นต่างกัน)
-  //    เก็บ snapshot ของ PERSIST_KEYS ทั้งหมด รวม auto-login (แต่ละบอท = คนละบัญชี)
+  //    ★ Security: Profile เก็บเฉพาะ PROFILE_KEYS — ไม่เก็บ Telegram credentials / auto-login credentials
   //    roAssistProfiles_v1 = { ชื่อ: {config} } · roAssistActiveProfile = ชื่อที่ใช้อยู่
   // ============================================================
   const PROFILES_KEY = 'roAssistProfiles_v1';
   const PROFILE_ACTIVE_KEY = 'roAssistActiveProfile';
-  function loadProfilesObj() { try { return JSON.parse(localStorage.getItem(PROFILES_KEY)) || {}; } catch (e) { return {}; } }
+  function loadProfilesObj() {
+    try {
+      const obj = JSON.parse(localStorage.getItem(PROFILES_KEY)) || {};
+      let scrubbed = 0;
+      for (const p of Object.values(obj)) {
+        if (!p || typeof p !== 'object') continue;
+        for (const k of SECRET_KEYS) { if (k in p) { delete p[k]; scrubbed++; } }
+      }
+      if (scrubbed) {
+        try { localStorage.setItem(PROFILES_KEY, JSON.stringify(obj)); } catch (_) {}
+        log('🔐 ล้าง credentials ที่ค้างใน Profile เก่าแล้ว ' + scrubbed + ' ค่า');
+      }
+      return obj;
+    } catch (e) { return {}; }
+  }
   function saveProfilesObj(obj) { try { localStorage.setItem(PROFILES_KEY, JSON.stringify(obj)); } catch (e) {} }
   function buildPersistObject() {
     const out = {};
-    for (const k of PERSIST_KEYS) if (k in CFG) out[k] = CFG[k];
+    for (const k of PROFILE_KEYS) if (k in CFG) out[k] = CFG[k];
     const sortNum = (arr) => Array.isArray(arr) ? [...arr].sort((a, b) => a - b) : arr;
     if (out.healItems) out.healItems = sortNum(out.healItems);
     if (out.sellItemIds) out.sellItemIds = sortNum(out.sellItemIds);
@@ -8917,7 +8945,7 @@
       obj[cur] = buildPersistObject();   // ★ เซฟของเดิมเข้าชื่อปัจจุบันก่อนสลับ (กันของหาย)
       saveProfilesObj(obj);
       // ★ แทนที่ทั้งชุด: key ที่ profile ใหม่ไม่มี = กลับ default (ไม่ค้างจากชุดเดิม)
-      for (const k of PERSIST_KEYS) CFG[k] = (k in target) ? target[k] : (k in CFG_DEFAULTS ? CFG_DEFAULTS[k] : CFG[k]);
+      for (const k of PROFILE_KEYS) CFG[k] = (k in target) ? target[k] : (k in CFG_DEFAULTS ? CFG_DEFAULTS[k] : CFG[k]);
       try { localStorage.setItem(PROFILE_ACTIVE_KEY, name); } catch (e) {}
       saveConfig();
       log('🔄 สลับ profile:', cur, '→', name, '· (ค่าเดิมเซฟไว้ใน "' + cur + '" แล้ว — แนะนำปิด-เปิด panel ให้ช่องตั้งค่าแสดงค่าใหม่)');
@@ -8935,7 +8963,7 @@
     exportAll() {
       const data = { _version: VERSION, _exportedAt: new Date().toISOString() };
       const cfg = {};
-      for (const k of PERSIST_KEYS) if (k in CFG) cfg[k] = CFG[k];
+      for (const k of EXPORT_KEYS) if (k in CFG) cfg[k] = CFG[k];
       // ★ sort item ID arrays ตามเลขไอดี (เวลา export จะได้มองง่าย)
       const sortNum = (arr) => Array.isArray(arr) ? [...arr].sort((a, b) => a - b) : arr;
       if (cfg.healItems) cfg.healItems = sortNum(cfg.healItems);
@@ -8955,7 +8983,7 @@
       const a = document.createElement('a');
       a.href = url; a.download = 'ro-assist-backup-' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
       URL.revokeObjectURL(url);
-      log('📤 export ข้อมูลทั้งหมด: config + buff + skill + nav');
+      log('📤 export ข้อมูลทั้งหมด: config + buff + skill + nav (ไม่รวม credentials)');
     },
     importAll(json) {
       try {
@@ -8963,7 +8991,9 @@
         if (!data || typeof data !== 'object') throw new Error('รูปแบบผิด');
         let count = 0;
         if (data.config) {
-          for (const k of PERSIST_KEYS) if (k in data.config) { CFG[k] = data.config[k]; count++; }
+          for (const k of EXPORT_KEYS) if (k in data.config) { CFG[k] = data.config[k]; count++; }
+          const skippedSecrets = [...SECRET_KEYS].filter(k => k in data.config).length;
+          if (skippedSecrets) log('🔐 import: ข้าม credentials จาก backup เก่า ' + skippedSecrets + ' ค่า');
           saveConfig();
         }
         if (data.buffTimes) {
@@ -10039,7 +10069,7 @@
               <button id="__assist_profile_use">🔄 ใช้ตัวนี้</button>
               <button id="__assist_profile_del">🗑 ลบ</button>
             </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ บันทึกเป็น: ใช้ชื่อในช่องข้อความ (ว่าง = ทับตัวที่เลือก)<br>★ สลับ: เซฟของเดิมอัตโนมัติก่อนโหลดชุดใหม่ (รวม auto-login)<br>★ buff/skill times + nav data ใช้ร่วมกันทุก profile</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ บันทึกเป็น: ใช้ชื่อในช่องข้อความ (ว่าง = ทับตัวที่เลือก)<br>★ สลับ: เซฟค่าทั่วไปอัตโนมัติก่อนโหลดชุดใหม่<br>★ 🔐 Profile/Backup ไม่เก็บ Telegram Token/Chat ID หรือ Auto-login Username/Password<br>★ buff/skill times + nav data ใช้ร่วมกันทุก profile</div>
             <h4>📤 สำรอง / ย้ายเครื่อง</h4>
             <div class="btns">
               <button id="__assist_exportall">📤 export ทั้งหมด</button>
