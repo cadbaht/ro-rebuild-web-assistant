@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.25
+// @version      4.189.26
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.25';
+  const VERSION = '4.189.26';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.26', d: '2026-09-25', items: [
+      '🧪 Warp Find Test — เพิ่มปุ่มทดสอบระบบวาร์ปหามอนแบบ Manual Diagnostic',
+      '   · กดทดสอบได้ทันทีโดยไม่ต้องรอ noMonsterWarpSec และไม่ต้องเปิด Warp Find ก่อน',
+      '   · Log แสดง Combat/WarpFind state, โหมดที่เลือก, SP, Fly Wing stock และ cooldown ของ Auto',
+      '   · ทดสอบตามโหมดจริง: Fly Wing 601 / Teleport Clip skillId 53 / Direct random warp',
+      '   · หลังส่งคำสั่งจะตรวจตำแหน่งอีกครั้งและแจ้งว่าเห็นการวาร์ปสำเร็จหรือยังไม่เห็น movement update',
+    ]},
     { v: '4.189.25', d: '2026-09-25', items: [
       '🧹 Standalone / No Relay — ตัด Relay Server ออกจาก Userscript ทั้งหมด',
       '   · ลบ Remote Monitor 🌐, Feedback 🐞 และ Telegram Alerts ที่พึ่ง Relay',
@@ -6132,10 +6139,14 @@
   }
   // ★ Warp Find: Fly Wing (itemId 601 Rayrag) / Teleport Clip / direct random warp
   //   ใช้เฉพาะตอนหาเป้าไม่เจอ — ไม่ผูกกับ Auto-Skill timer
-  function sendWarpFind() {
-    // ★ ห้ามวาร์ปหา monster จนกว่าผู้ใช้จะเปิด Combat
-    if (!CFG.combatEnabled) { dbg('🛑 WarpFind ถูกบล็อก: Combat OFF'); return false; }
-    if (!activeWS || activeWS.readyState !== 1) return false;
+  function sendWarpFind(opts) {
+    const manualTest = !!(opts && opts.manualTest);
+    // ★ Auto WarpFind ต้อง Combat ON; ปุ่มทดสอบ manual bypass gate นี้เพื่อแยกปัญหา transport ออกจาก auto-condition
+    if (!manualTest && !CFG.combatEnabled) { dbg('🛑 WarpFind ถูกบล็อก: Combat OFF'); return false; }
+    if (!activeWS || activeWS.readyState !== 1) {
+      if (manualTest) log('❌ WarpFind Test: WebSocket เกมยังไม่พร้อม');
+      return false;
+    }
 
     // ★ v4.188.5: Fly Wing mode — Rayrag DB ในเกมใช้ Item ID 601
     if (CFG.warpFindUseFlyWing) {
@@ -6161,6 +6172,54 @@
     }
     return false;
   }
+
+  // ★ v4.189.26 — Manual Warp Find diagnostic
+  // ไม่รอ noMonster timer / auto cooldown และ bypass Combat gate เฉพาะการกดทดสอบ
+  function testWarpFindNow() {
+    const now = nowMs();
+    const mode = CFG.warpFindUseFlyWing ? 'Fly Wing 601' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip skillId 53' : 'Direct random warp');
+    const wingStock = inventory.has(601) ? (inventory.get(601) || 0) : 0;
+    const autoCooldownLeft = Math.max(0, 3000 - (now - lastWarpFindAt));
+    const before = { map: currentMap, x: player.x, y: player.y };
+
+    log('🧪 WarpFind Test — mode=' + mode
+      + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF')
+      + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF')
+      + ' | noMonster=' + CFG.noMonsterWarpSec + 's'
+      + ' | autoCD=' + autoCooldownLeft + 'ms'
+      + ' | SP=' + (sp.cur == null ? '?' : sp.cur)
+      + ' | Wing=' + wingStock);
+
+    if (!CFG.warpFindEnabled) log('ℹ️ WarpFind Test: ปุ่ม Auto วาร์ปหามอนยัง OFF — Test จะลองวาร์ปให้ แต่ Auto จะไม่ทำงานจนกว่าจะเปิด');
+    if (!CFG.combatEnabled) log('ℹ️ WarpFind Test: Combat ยัง OFF — Test bypass ชั่วคราว แต่ Auto WarpFind จะถูกบล็อก');
+    if (!currentMap) { log('❌ WarpFind Test: ยังไม่รู้ชื่อแมป'); return false; }
+    if (player.x == null || player.y == null) { log('❌ WarpFind Test: ยังไม่รู้พิกัดตัวละคร'); return false; }
+    if (sellState !== 'IDLE' || storageState !== 'IDLE') { log('❌ WarpFind Test: กำลัง Sell/Storage อยู่ — ยกเลิกทดสอบ'); return false; }
+
+    const ok = sendWarpFind({ manualTest: true });
+    if (!ok) {
+      if (CFG.warpFindUseFlyWing && wingStock <= 0) log('❌ WarpFind Test: ไม่มี Fly Wing 601');
+      else if (CFG.warpFindUseTeleportSkill && sp.cur != null && sp.cur < 30) log('❌ WarpFind Test: SP ต่ำกว่า 30 — Teleport Clip ใช้ไม่ได้');
+      else if (CFG.warpFindUseTeleportSkill && typeof castingUntil !== 'undefined' && now < castingUntil) log('❌ WarpFind Test: กำลังติด cast lock อีก ' + Math.max(0, castingUntil - now) + 'ms');
+      else log('❌ WarpFind Test: ส่งคำสั่งไม่สำเร็จ — ดู Debug Log เพิ่มเติม');
+      return false;
+    }
+
+    log('📤 WarpFind Test: ส่งคำสั่ง ' + mode + ' แล้ว — รอตรวจตำแหน่ง ~1.8s');
+    setTimeout(() => {
+      const mapChanged = before.map && currentMap && before.map !== currentMap;
+      const moved = before.x != null && before.y != null && player.x != null && player.y != null
+        ? Math.hypot(player.x - before.x, player.y - before.y) >= 2
+        : false;
+      if (mapChanged || moved) {
+        log('✅ WarpFind Test: เห็นการวาร์ปแล้ว → ' + (currentMap || '?') + ' @(' + Math.round(player.x) + ',' + Math.round(player.y) + ')');
+      } else {
+        log('⚠️ WarpFind Test: ส่งคำสั่งสำเร็จ แต่ยังไม่เห็นตำแหน่งเปลี่ยนหลัง 1.8s — ถ้าในเกมไม่วาร์ปจริงให้ส่ง Log บรรทัดนี้มา');
+      }
+    }, 1800);
+    return true;
+  }
+
   // ★★ v4.188.8 — HP Emergency Flee
   // sameMap priority: Direct/Database TP (0x40) → Teleport Clip (skill 53) → Fly Wing (601)
   // Direct TP intentionally respects TELEPORT_MIN_GAP_MS here; if still in gap, skip immediately to Clip.
@@ -8657,6 +8716,7 @@
     toggleLowestHpFirst(on) { CFG.targetLowestHpFirst = !!on; log('⚔️ targetLowestHpFirst =', CFG.targetLowestHpFirst); },
     toggleWander(on) { CFG.wanderEnabled = !!on; log('⚔️ wander =', CFG.wanderEnabled); },
     toggleWarpFind(on) { CFG.warpFindEnabled = !!on; log('⚔️ warpFind =', CFG.warpFindEnabled); },
+    testWarpFind() { return testWarpFindNow(); },
     toggleWarpFindFlyWing(on) {
       CFG.warpFindUseFlyWing = !!on;
       if (CFG.warpFindUseFlyWing) CFG.warpFindUseTeleportSkill = false;   // mutual exclusive
@@ -9771,6 +9831,7 @@
               <button id="__assist_t_warpfindwing" class="off" title="ON = เมื่อไม่เจอมอน ใช้ Fly Wing Item ID 601 ตาม Rayrag · ต้องมีของใน Inventory">🪽 Fly Wing</button>
               <button id="__assist_t_warpfindskill" class="on" title="ON = เมื่อไม่เจอมอน ใช้ Teleport Lv.1 (skillId 53 / Teleport Clip) · เปิดอันนี้จะปิด Fly Wing">📎 Teleport Clip</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
+              <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ทันที ไม่รอ timer และแสดงสาเหตุใน Log">🧪 ทดสอบวาร์ปหามอน</button>
             </div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
@@ -10613,6 +10674,7 @@
     tBtn('#__assist_t_warpfind', (v) => ASSIST.toggleWarpFind(v), 'warpFindEnabled');
     tBtn('#__assist_t_warpfindwing', (v) => ASSIST.toggleWarpFindFlyWing(v), 'warpFindUseFlyWing');
     tBtn('#__assist_t_warpfindskill', (v) => ASSIST.toggleWarpFindTeleportSkill(v), 'warpFindUseTeleportSkill');
+    root.querySelector('#__assist_testwarpfind').addEventListener('click', () => ASSIST.testWarpFind());
     tBtn('#__assist_t_guard', (v) => ASSIST.toggleGuard(v), 'guardEnabled');
     tBtn('#__assist_t_farmondeath', (v) => { saveConfigDebounced(); log('☠️ ตายเปลี่ยนแมปฟาร์ม:', v ? 'เปิด (' + (Array.isArray(CFG.farmMaps) ? CFG.farmMaps.length : 0) + ' แมปในรายการ)' : 'ปิด'); }, 'farmRotateOnDeath');
     // ★ Guard — ใช้พิกัดตัวละครปัจจุบันเป็นจุดยืน
