@@ -1,29 +1,14 @@
-# OS / Editor
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-
-# Logs
-*.log
-
-# Node
 node_modules/
-npm-debug.log*
-yarn-error.log*
-
-# Local config / secrets
 .env
-.env.local
 .env.*
 !.env.example
-*.local
-*.pem
-*.key
-*.7z
-
-# RO Assist runtime state / credentials (NEVER COMMIT)
 telegram-configs.json
 feedback-store.json
 chat-history.json
 chat-files/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
