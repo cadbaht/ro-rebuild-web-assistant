@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.12
+// @version      4.189.14
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,19 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.12';
+  const VERSION = '4.189.14';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.14', d: '2026-09-25', items: [
+      '⬆ One-Click Update — เมื่อพบเวอร์ชันใหม่ กดปุ่มอัปเดตแล้วเปิดหน้า Update ของ Tampermonkey ทันที',
+      '   · ตัด confirm ซ้ำในหน้า Assist ออก เหลือยืนยัน Update/Install ของ Tampermonkey ตามข้อจำกัดของ extension',
+      '   · ใช้ Raw .user.js จาก GitHub cadbaht โดยตรง และคงค่าตั้งค่าปัจจุบันไว้ก่อนอัปเดต',
+    ]},
+    { v: '4.189.13', d: '2026-09-25', items: [
+      '🔄 Update Check UI — แสดงปุ่มเช็คอัปเดตตลอด ไม่เงียบเมื่อเวอร์ชันเท่ากัน',
+      '   · กดแล้วเห็นสถานะ ⏳ กำลังเช็ค / ✅ ล่าสุด / ⬆ มีเวอร์ชันใหม่ / ⚠ เช็คไม่ได้',
+      '   · ถ้า GitHub มีเวอร์ชันใหม่ ปุ่มเดิมจะเปลี่ยนเป็นปุ่มอัปเดตทันที',
+    ]},
     { v: '4.189.12', d: '2026-09-25', items: [
       '💰🏦 Fix ปุ่มใช้พิกัดตัวละคร — อัปเดตแมป/เมือง + X/Y บน UI ทันทีและบันทึก config',
       '   · Sell และ Kafra ใช้ currentMap ปัจจุบันร่วมกับพิกัดตัวละคร ไม่ต้องกดใช้ค่าซ้ำ',
@@ -9508,7 +9518,7 @@
           <div class="row" style="border-bottom:2px solid #3a3f4b;">
             <span class="k">RO Assist</span>
             <span class="v" data-version>v?</span>
-            <button id="__assist_updatebtn" style="display:none;background:#e67e22;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:inherit;margin-left:6px;">⬆ อัปเดต</button>
+            <button id="__assist_updatebtn" style="background:#455a64;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:inherit;margin-left:6px;">🔄 เช็คอัปเดต</button>
           </div>
           <div class="row"><span class="k">HP</span><span class="v" data-hp>?</span></div>
           <div class="row"><span class="k">ตำแหน่ง</span><span class="v" data-pos>?</span></div>
@@ -10707,7 +10717,17 @@
     });
     root.querySelector('#__assist_clearalert')?.addEventListener('click', () => ASSIST.clearImportantLogs());
     const updBtn = root.querySelector('#__assist_updatebtn');
-    if (updBtn) updBtn.addEventListener('click', () => { if (confirm('อัปเดตเป็นเวอร์ชั่นล่าสุด?\n(หลังอัปเดตต้อง reconnect เกม ปิด-เปิดหน้า)')) ASSIST.update(); });
+    if (updBtn) updBtn.addEventListener('click', () => {
+      if (latestVersion && cmpVer(latestVersion, VERSION) > 0) {
+        // ★ v4.189.14: one-click จาก Assist → เปิดหน้า Update ของ Tampermonkey ทันที
+        // ไม่ถาม confirm ซ้ำในหน้าเกม (Tampermonkey จะมีหน้าจอยืนยันของ extension เอง)
+        ASSIST.update();
+        return;
+      }
+      latestVersion = null;
+      versionCheckError = null;
+      checkVersion();
+    });
 
     log('🖥️ แสดง panel แล้ว (คลิกที่แถบมุมขวาบนเพื่อเปิด)');
     // ★★ สรุปสถานะ auto-login/refresh ตอนสตาร์ท — ให้เห็นชัดว่า config โหลดครบไหม
@@ -11688,7 +11708,27 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     const updAvail = latestVersion && cmpVer(latestVersion, VERSION) > 0;
     if (verEl) verEl.textContent = 'v' + VERSION + (updAvail ? ' (มีใหม่ v' + latestVersion + ')' : '');
     const updBtn = root.querySelector('#__assist_updatebtn');
-    if (updBtn) updBtn.style.display = updAvail ? '' : 'none';
+    if (updBtn) {
+      updBtn.style.display = '';
+      updBtn.disabled = !!updateChecking;
+      updBtn.style.opacity = updateChecking ? '0.65' : '1';
+      if (updateChecking) {
+        updBtn.textContent = '⏳ เช็ค...';
+        updBtn.title = 'กำลังตรวจเวอร์ชันจาก GitHub';
+      } else if (updAvail) {
+        updBtn.textContent = '⬆ อัปเดตทันที v' + latestVersion;
+        updBtn.title = 'มีเวอร์ชันใหม่: v' + VERSION + ' → v' + latestVersion + ' — คลิกเพื่อเปิดหน้า Update ของ Tampermonkey ทันที';
+      } else if (versionCheckError) {
+        updBtn.textContent = '⚠ เช็คใหม่';
+        updBtn.title = 'เช็คอัปเดตไม่สำเร็จ: ' + versionCheckError;
+      } else if (latestVersion) {
+        updBtn.textContent = '✅ ล่าสุด v' + latestVersion;
+        updBtn.title = 'GitHub และสคริปต์ปัจจุบันเป็นเวอร์ชันเดียวกัน — คลิกเพื่อเช็คใหม่';
+      } else {
+        updBtn.textContent = '🔄 เช็คอัปเดต';
+        updBtn.title = 'เช็คเวอร์ชันล่าสุดจาก GitHub';
+      }
+    }
     if (hpEl) hpEl.textContent = hpText;
     if (fill) {
       const w = pctNum != null ? Math.max(0, Math.min(100, pctNum)) : 0;
@@ -12073,6 +12113,8 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
   let lastVersionCheckAt = 0;
   let latestVersion = null;          // เวอร์ชั่นล่าสุดจาก GitHub (null = ยังไม่ได้เช็ค)
   let updateChecking = false;
+  let versionCheckError = null;
+  let versionLastOkAt = 0;
   let versionMismatchWarned = false; // ★ guard @version vs VERSION — เตือนครั้งเดียวพอ
   function parseVersionFromHeader(src) {
     const m = src.match(/@version\s+([\d.]+)/);
@@ -12089,6 +12131,8 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
   async function checkVersion() {
     if (updateChecking) return;
     updateChecking = true;
+    versionCheckError = null;
+    lastVersionCheckAt = Date.now();
     try {
       // ★★ guard: @version ใน header (ตัวที่ Tampermonkey/self-updater ใช้) ต้องตรง const VERSION
       //   เคยพลาดจริง 2 ครั้ง: const VERSION ค้าง 4.147.1 / @version ค้าง 4.172.0 — ถ้าไม่ตรง
@@ -12099,11 +12143,13 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
         log('⚠️ @version ใน header =', _hdrVer, 'ไม่ตรง VERSION =', VERSION, '— ลืมอัปเดต header ก่อนปล่อย!');
         console.warn('[ASSIST] ⚠️ @version (' + _hdrVer + ') != VERSION (' + VERSION + ') — อัปเดตให้ตรงกันก่อนปล่อย!');
       }
-      const res = await fetch(GITHUB_RAW, { cache: 'no-store' });
-      if (!res.ok) return;
+      const res = await fetch(GITHUB_RAW + '?ts=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const src = await res.text();
       const remote = parseVersionFromHeader(src);
-      if (remote) {
+      if (!remote) throw new Error('อ่าน @version จาก GitHub ไม่ได้');
+      versionLastOkAt = Date.now();
+      {
         latestVersion = remote;
         if (cmpVer(remote, VERSION) > 0) {
           log('🔔 มีเวอร์ชั่นใหม่!', VERSION, '→', remote, '(กดปุ่ม ⬆ อัปเดต หรือ ASSIST.update())');
@@ -12115,7 +12161,11 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
           log('✅ เวอร์ชั่นล่าสุดแล้ว (' + VERSION + ')');
         }
       }
-    } catch (e) { /* offline / CORS → ข้าม */ }
+    } catch (e) {
+      versionCheckError = (e && e.message) ? e.message : String(e || 'unknown error');
+      log('❌ เช็คอัปเดตไม่สำเร็จ:', versionCheckError);
+      console.warn('[ASSIST] update check failed:', e);
+    }
     finally { updateChecking = false; }
   }
   async function doUpdate() {
@@ -12124,13 +12174,16 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     // ★ ตรวจว่ารันใน Tampermonkey หรือ console
     const isTampermonkey = (typeof GM_info !== 'undefined') || (typeof GM !== 'undefined') || (typeof unsafeWindow !== 'undefined');
     if (isTampermonkey) {
-      // Tampermonkey: eval ไม่ทำงาน (sandbox) → ใช้ @updateURL ของ Tampermonkey เอง
-      //    บอกผู้ใช้ไปกดใน Tampermonkey dashboard
-      log('📋 Tampermonkey: กดที่ไอคอน Tampermonkey → คลิกที่สคริปต์นี้ → กดปุ่ม Update');
-      log('   หรือเปิด Tampermonkey Dashboard → คลิกรูปเฟือง → Check for updates');
-      // ล้าง latestVersion เพื่อหยุดกระพริบ
-      latestVersion = null;
-      window.open(GITHUB_RAW + '?ts=' + Date.now(), '_blank');
+      // ★ v4.189.14: เปิด Raw .user.js โดยตรงจาก click ของผู้ใช้
+      // Tampermonkey จะ intercept URL และแสดงหน้า Update/Install ของ extension
+      // การกดยืนยันในหน้า Tampermonkey ข้ามไม่ได้ด้วย userscript (security boundary)
+      const installUrl = GITHUB_RAW + '?v=' + encodeURIComponent(latestVersion || VERSION) + '&ts=' + Date.now();
+      log('⬆ เปิดหน้า Update ของ Tampermonkey...');
+      const w = window.open(installUrl, '_blank');
+      if (!w) {
+        log('⚠️ browser บล็อก popup → เปิดหน้า Update ในแท็บปัจจุบันแทน');
+        window.location.href = installUrl;
+      }
       return;
     }
     // Console: eval โหลดเวอร์ชั่นใหม่แทนที่เลย
