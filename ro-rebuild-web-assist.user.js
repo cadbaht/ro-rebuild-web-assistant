@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.24
+// @version      4.189.25
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.24';
+  const VERSION = '4.189.25';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.25', d: '2026-09-25', items: [
+      '🧹 Standalone / No Relay — ตัด Relay Server ออกจาก Userscript ทั้งหมด',
+      '   · ลบ Remote Monitor 🌐, Feedback 🐞 และ Telegram Alerts ที่พึ่ง Relay',
+      '   · ไม่สร้าง WebSocket ไป relay server และไม่มี auto-reconnect เบื้องหลังอีก',
+      '   · ลบ config monitorServer*/telegram relay ออกจาก Profile/Backup; ค่าเก่าจะถูกทำความสะอาดเมื่อบันทึกครั้งถัดไป',
+      '   · คง Monitor ในเครื่อง 🖥️ (BroadcastChannel/localStorage/popup) และระบบบอทหลักทั้งหมดไว้ตามเดิม',
+    ]},
     { v: '4.189.24', d: '2026-09-25', items: [
       '🔐 Security Hardening — กัน credentials หลุดผ่าน Backup/Profile และเตรียม Relay patch แบบไม่ฝัง Admin Token',
       '   · Backup/Export ไม่รวม Telegram Bot Token, Telegram Chat ID, Auto-login Username/Password',
@@ -694,7 +701,7 @@
       '   (ASSIST.toggleGuard / setGuardPos ก็ได้) · ใช้ร่วมกับ Combat: ON',
     ]},
     { v: '4.161.1', d: '2026-08-20', items: [
-      '🐛 แก้ปุ่ม เก็บ/ขาย/ฝาก ใน remote monitor กดแล้วเงียบ — relay server ส่งต่อแค่',
+      '🐛 แก้ปุ่ม เก็บ/ขาย/ฝาก ใน Monitor ในเครื่อง กดแล้วเงียบ — relay server ส่งต่อแค่',
       '   system+action และตัด itemId ทิ้ง → คำสั่ง item action หายกลางทาง',
       '   → relay forward itemId ด้วย + log ชัดเจน',
       '💾 cycleItemAction บันทึก config ถาวรแล้ว (เดิมไม่ save — refresh หายทั้ง UI และ monitor)',
@@ -1327,12 +1334,12 @@
   // ★ v4.189.16: แยก source อัปเดตออกจาก resource ภายในสคริปต์
   // เปลี่ยน repo update ไม่ควรทำให้ DB/icon/GAT resource เปลี่ยนตามไปด้วย
   const ASSET_RAW = 'https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js';
-  // ★ Feedback — ส่งผ่าน Relay Server เท่านั้น (ไม่มี Telegram credential ฝังใน userscript)
+  // ★ Standalone mode — ไม่มี Relay Server / Remote Monitor / Feedback transport
   const CFG_STORAGE_KEY = 'roAssistConfig_v1';
   // keys ที่บันทึก/โหลด (boolean/number/array/string — ไม่เก็บ function หรือ object ซ้อน)
   const PERSIST_KEYS = [
     'healEnabled', 'healAtPercent', 'healItems', 'healMode', 'healDelayMs', 'healAtMax',
-    'buffEnabled', 'buffItems', 'buffRebuffDelayMs', 'buffVisitEnabled', 'buffVisitMap', 'buffVisitX', 'buffVisitY', 'buffVisitIntervalSec', 'buffVisitWaitSec', 'unstuckBuffEnabled', 'unstuckBuffIntervalSec', 'unstuckBuffWaitSec', 'unstuckBuffMenuDelayMs', 'unstuckBuffSpawnTimeoutSec', 'unstuckBuffClickXRatio', 'unstuckBuffClickYRatio', 'unstuckPacketEnabled', 'unstuckPacketHex', 'autoClearConsoleMin', 'monitorServerEnabled', 'monitorServerUrl', 'monitorSendIntervalMs',
+    'buffEnabled', 'buffItems', 'buffRebuffDelayMs', 'buffVisitEnabled', 'buffVisitMap', 'buffVisitX', 'buffVisitY', 'buffVisitIntervalSec', 'buffVisitWaitSec', 'unstuckBuffEnabled', 'unstuckBuffIntervalSec', 'unstuckBuffWaitSec', 'unstuckBuffMenuDelayMs', 'unstuckBuffSpawnTimeoutSec', 'unstuckBuffClickXRatio', 'unstuckBuffClickYRatio', 'unstuckPacketEnabled', 'unstuckPacketHex', 'autoClearConsoleMin',
     'skillEnabled', 'skills', 'disabledSkillIds', 'buffOthersEnabled',
     'lootEnabled', 'lootDelayAfterDropMs', 'lootUseKillPos', 'pickRadiusKill', 'lootRespectOthers', 'filter', 'sendThrottleMs', 'maxAttempts',
     'warpLootEnabled',
@@ -1340,7 +1347,7 @@
     'maxAcquireDistance', 'searchRadii', 'maxChaseDistance', 'attackPendingMax', 'attackAbandonMs', 'antiKS', 'avoidOtherPlayers', 'targetLowestHpFirst',
     'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'hpFleeEnabled', 'hpFleePercent', 'hpFleeMode', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
     'wanderEnabled', 'warpFindEnabled', 'warpFindUseFlyWing', 'warpFindUseTeleportSkill', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
-    'restEnabled', 'restHpPercent', 'restSpPercent', 'restUntilPercent', 'restMaxSec', 'restDelayMs', 'postCombatDelayMs', 'autoRespawnEnabled', 'autoRespawnDelayMs', 'telegramAlertCard', 'telegramAlertFlee', 'telegramAlertBotMention', 'telegramAlertNearby', 'telegramAlertWhisper', 'telegramBotToken', 'telegramChatId',
+    'restEnabled', 'restHpPercent', 'restSpPercent', 'restUntilPercent', 'restMaxSec', 'restDelayMs', 'postCombatDelayMs', 'autoRespawnEnabled', 'autoRespawnDelayMs',
     'sellEnabled', 'sellNpcName', 'sellNpcMap', 'sellNpcX', 'sellNpcY', 'sellIntervalMin', 'sellOnFull', 'sellItemIds',
     'storageEnabled', 'kafraName', 'kafraMap', 'kafraMapX', 'kafraMapY', 'kafraChoice', 'depositOnFull', 'depositAfterSell', 'depositItemIds',
     'farmMap', 'farmMapX', 'farmMapY', 'warpBackToFarm', 'farmMaps', 'farmRotateOnDeath', 'farmMapIdx', 'fleeFromPlayers', 'fleeMode', 'fleeMaps', 'fleePlayerRadius', 'fleeWarpCooldownSec',
@@ -1350,7 +1357,7 @@
   ];
 
   // ★ Security: credentials เก็บได้เฉพาะ local config ของเครื่องนี้ แต่ห้ามออกไปกับ Profile/Backup
-  const SECRET_KEYS = new Set(['telegramBotToken', 'telegramChatId', 'autoLoginUser', 'autoLoginPass']);
+  const SECRET_KEYS = new Set(['autoLoginUser', 'autoLoginPass']);
   const PROFILE_KEYS = PERSIST_KEYS.filter(k => !SECRET_KEYS.has(k));
   const EXPORT_KEYS = PROFILE_KEYS;
 
@@ -1373,10 +1380,6 @@
       if (!raw) return;
       const saved = JSON.parse(raw);
       for (const k of PERSIST_KEYS) if (k in saved) CFG[k] = saved[k];
-      // ★ migrate: monitorSendIntervalMs เก่า default 3000 → ใหม่ 1000
-      //   ถ้า saved = 3000 (= old default) → ปรับเป็น 1000 (new default)
-      //   ถ้า saved เป็นค่าอื่นที่ผู้ใช้ตั้งเอง → เก็บไว้
-      if (saved.monitorSendIntervalMs === 3000) { CFG.monitorSendIntervalMs = 1000; log('⚙️ migrate monitorSendIntervalMs: 3000 → 1000'); }
       // ★ v4.189.1 migrate: Direct Unstuck/AB Auto old default 600s → 500s
       if (saved.unstuckBuffIntervalSec === 600) {
         CFG.unstuckBuffIntervalSec = 500;
@@ -1387,6 +1390,18 @@
       log('💾 โหลดค่าที่บันทึกไว้จากเครื่อง (' + PERSIST_KEYS.filter(k => k in saved).length + ' รายการ)');
     } catch (e) { /* parse fail — ใช้ default */ }
   }
+  // ★ v4.189.25: ล้างค่า Relay/Telegram เก่าที่อาจยังค้างใน localStorage จากเวอร์ชันก่อน
+  try {
+    const raw = localStorage.getItem(CFG_STORAGE_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      const oldKeys = ['monitorServerEnabled','monitorServerUrl','monitorSendIntervalMs','telegramAlertCard','telegramAlertFlee','telegramAlertBotMention','telegramAlertNearby','telegramAlertWhisper','telegramBotToken','telegramChatId'];
+      let changed = false;
+      for (const k of oldKeys) if (k in saved) { delete saved[k]; changed = true; }
+      if (changed) localStorage.setItem(CFG_STORAGE_KEY, JSON.stringify(saved));
+    }
+  } catch (_) {}
+
   // debounce save (กันเขียนถี่เกินไป)
   let saveTimer = null;
   function saveConfigDebounced() {
@@ -1698,11 +1713,6 @@
     // ---------- MISC ----------
     autoClearConsoleMin: 10,       // ★ 0=off, >0=clear browser console ทุก N นาที (กัน log เยอะค้างหน่วย)
 
-    // ---------- REMOTE MONITOR ----------
-    monitorServerEnabled: true,  // ★ เปิดส่งข้อมูลไป relay server (ดูจากมือถือ/เครื่องอื่นได้)
-    monitorServerUrl: 'wss://rayro.catgg.net',  // URL relay server
-    monitorSendIntervalMs: 1000,  // ★ ส่งข้อมูลทุก 1 วิ (real-time)
-
     // ---------- NAVIGATION (บันทึกเส้นทางเดิน + waypoint graph) ----------
     //  เก็บตำแหน่งที่ผู้เล่นคลิกเดิน → สร้าง waypoint graph → bot เดินตามเส้นทางจริง
     //  ★ ข้อมูลเก็บ localStorage (roAssistNav_<map>) + export/import + sync GitHub
@@ -1732,13 +1742,6 @@
 
     // ---------- TELEGRAM ALERT FILTERS ----------
     //   ★ ควบคุมว่าจะส่ง alert ประเภทไหนไป Telegram บ้าง
-    telegramAlertCard: true,       // 🃏 ดรอปการ์ด (logImportant type=card)
-    telegramAlertFlee: true,       // 🚨 หนีมอน/ตาย (logImportant type=flee)
-    telegramAlertBotMention: true, // 💬 แชทที่พูดถึง bot/บอท/บอต (logImportant type=chat)
-    telegramAlertNearby: true,    // 💬 แชท nearby ทุกข้อความ
-    telegramAlertWhisper: false,    // 💬 แชทกระซิบ (whisper) ทุกข้อความ
-    telegramBotToken: '',           // ★ Bot Token (จาก @BotFather) — persist ในเครื่อง + ส่งไป relay
-    telegramChatId: '',             // ★ Chat ID (จาก @userinfobot)
 
     // ---------- AUTO-SELL (★ default OFF) ----------
     //  trigger: ของเต็ม (0x20 'too full') OR ครบเวลา sellIntervalMin
@@ -1940,7 +1943,7 @@
   }
   // ★★ Debug log — แยกจาก log กิจกรรม: ข้อมูลระบบ/parse/detect ที่เยอะและเอาไว้วิเคราะห์
   //   (SPAWN dump, flee scan, SELF-DETECT, despawn guard, ฯลฯ)
-  //   ดูได้ใน Log modal แท็บ "Debug" / แนบไปกับ feedback / ส่ง monitor
+  //   ดูได้ใน Log modal แท็บ "Debug"
   const DBG_BUF_MAX = 300;
   const dbgBuf = [];
   function dbg(...a) {
@@ -1956,15 +1959,8 @@
     importantLogBuf.push({ t: Date.now(), type, msg });
     while (importantLogBuf.length > IMPORTANT_BUF_MAX) importantLogBuf.shift();
     log(msg);   // ส่งไป log ปกติด้วย
-    // ★ ส่ง alert ไป relay server → forward ไป Telegram (ถ้ามี config + เปิด toggle ประเภทนี้)
-    let category = null;
-    if (type === 'card') category = 'telegramAlertCard';
-    else if (type === 'flee') category = 'telegramAlertFlee';
-    else if (type === 'chat') category = 'telegramAlertBotMention';
-    else category = 'telegramAlertCard';   // default = ส่ง
-    if (CFG[category] !== false) sendRelayAlert(msg);
   }
-  // ★ chat history buffer — เก็บแชทล่าสุดสำหรับ monitor
+  // ★ chat history buffer — เก็บแชทล่าสุดสำหรับ Monitor ในเครื่อง
   const CHAT_BUF_MAX = 50;
   const chatBuf = [];
   // ★★ บัพตามคำขอ — จำแชทล่าสุดของแต่ละคน (ชื่อ → ข้อความ+เวลา) เช็ค keyword ก่อนบัพ (buffChatKeyword)
@@ -2026,7 +2022,7 @@
     if (cur === 'keep') { CFG.sellItemIds.push(id); log('💰', nameOf(id), '→ ขาย'); }
     else if (cur === 'sell') { CFG.depositItemIds.push(id); log('🏦', nameOf(id), '→ ฝาก'); }
     else { log('📦', nameOf(id), '→ เก็บ'); }
-    saveConfigDebounced();   // ★ บันทึกถาวร (กดจาก UI หรือ remote monitor เหมือนกัน)
+    saveConfigDebounced();   // ★ บันทึกถาวรจาก UI/การตั้งค่า
     return getItemAction(id);
   }
 
@@ -2469,7 +2465,6 @@
       // ★★ ไปเฉพาะตอนว่างจริง: ไม่นั่งพัก / ไม่มีเป้า / ไม่โดนรุม / ของเก็บหมด / ไม่เดินตาม remote
       if (isResting || target || getMobAttackerCount() > 0) return;
       if (queue.size > 0 || warpQueue.size > 0) return;
-      if (remoteWalkTarget) return;
       // ★ จดจุดฟาร์มปัจจุบัน (กลับมาเดิมหลังรับบัพ)
       buffVisitReturnTo = { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
       buffVisitState = 'GOING';
@@ -2628,7 +2623,6 @@
     kafraCancelCaptureSnapshot = {};
     for (const k of keys) { kafraCancelCaptureSnapshot[k] = CFG[k]; CFG[k] = false; }
     target = null; noMonsterSince = 0;
-    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
   }
   function restoreAfterKafraCancelCapture() {
     if (kafraCancelCaptureSnapshot) for (const [k,v] of Object.entries(kafraCancelCaptureSnapshot)) CFG[k] = v;
@@ -2721,7 +2715,6 @@
     tradeCaptureSnapshot = {};
     for (const k of keys) { tradeCaptureSnapshot[k] = CFG[k]; CFG[k] = false; }
     target = null; noMonsterSince = 0;
-    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
   }
   function restoreAfterTradeCapture() {
     if (tradeCaptureSnapshot) for (const [k,v] of Object.entries(tradeCaptureSnapshot)) CFG[k] = v;
@@ -2815,7 +2808,6 @@
     unstuckPacketCaptureSnapshot = {};
     for (const k of keys) { unstuckPacketCaptureSnapshot[k] = CFG[k]; CFG[k] = false; }
     target = null; noMonsterSince = 0;
-    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
     unstuckBuffState = 'CAPTURE_PACKET';
   }
   function restoreAfterUnstuckCapture() {
@@ -3823,7 +3815,7 @@
           player.x = null; player.y = null;
           isDead = false; postRespawnRest = false; isResting = false;
           autoRespawnUnstuckPending = false; autoRespawnUnstuckReadyAt = 0; // สลับตัวละคร → ห้าม carry pending จากตัวเก่า
-          playerId = eid; selfIdConfirmed = true; relayRegisterPlayer();   // ★ SELECT_CHAR = authoritative ยืนยันเลย
+          playerId = eid; selfIdConfirmed = true;
         } else if (!playerName) {
           // ตัวเดิม re-login แต่ยังไม่รู้ชื่อ — ปล่อยให้ SPAWN ตั้ง
         }
@@ -4109,8 +4101,6 @@
         // ★ ส่งแชท nearby/whisper ทุกข้อความไป Telegram (ถ้าเปิด toggle)
         else {
           const alertMsg = '💬 [' + typeName + '] ' + (name || '?') + ': ' + message;
-          if (chatType === 0 && CFG.telegramAlertNearby !== false) sendRelayAlert(alertMsg);
-          else if (chatType === 2 && CFG.telegramAlertWhisper !== false) sendRelayAlert(alertMsg);
         }
       } catch (e) {}
     }
@@ -4457,7 +4447,7 @@
         //   แก้: เช็คชื่อต้องตรงกับ playerName (defense-in-depth)
         if (flag === 1) {
           if (playerId == null) {
-            playerId = id; log('👤 player_id =', id.toString(16), '(จาก SPAWN flag=1)'); relayRegisterPlayer();
+            playerId = id; log('👤 player_id =', id.toString(16), '(จาก SPAWN flag=1)');
           } else if (playerId !== id) {
             // ★★ guard: ถ้าเรารู้ชื่อตัวเองแล้ว และชื่อใน packet นี้ไม่ตรง → เป็นคนอื่น → ไม่ทับ playerId
             //   (กัน false ID change ในที่คนเยอะ — mirror world.js:1235-1238)
@@ -4470,8 +4460,7 @@
               if (selfIdConfirmed) stalePlayerIds.set(playerId, nowMs() + 300000);  // stale 5 นาที
               entities.clear();
               monsterAggro.clear(); mobAttackers.clear();
-              playerId = id; relayRegisterPlayer();
-              // ★ SPAWN flag=1 ที่ผ่าน guard ชื่อ = ตัวเราแน่ → ยืนยันเลย (ถ้ามีชื่อให้เทียบ)
+              playerId = id;
               selfIdConfirmed = true;
               // ★★ reset HP เฉพาะ respawn/warp (รู้ชื่อตัวเองแล้ว) — ไม่ใช้ตอนเข้าเกมครั้งแรก
               //   แยกด้วย playerName: ครั้งแรกยังไม่รู้ชื่อ → HP เริ่ม null อยู่แล้ว ไม่ต้อง reset
@@ -4609,22 +4598,10 @@
             selfIdConfirmed = true;   // ชื่อตรงเป๊ะ = ตัวเราแน่นอน
             entities.delete(oldId);
             player.x = x; player.y = y;
-            relayRegisterPlayer();
           }
           // ★ เก็บ playerName — ใช้เป็น guard กัน false ID change (mirror world.js:1235)
           if (id === playerId && name && !playerName) {
             playerName = name; selfIdConfirmed = true; log('👤 player_name =', name);
-            // ★ re-register + re-send Telegram config ตอนรู้ชื่อครั้งแรก
-            //   (SELECT_CHAR ส่ง setTelegram ก่อนรู้ชื่อ → relay ปฏิเสธ → ส่งใหม่ตอนนี้)
-            if (relayWs && relayWs.readyState === 1) {
-              try {
-                relayWs.send(JSON.stringify({ type: 'register', playerId: playerId.toString(16), playerName }));
-                if (CFG.telegramBotToken && CFG.telegramChatId) {
-                  relayWs.send(JSON.stringify({ type: 'setTelegram', botToken: CFG.telegramBotToken, chatId: CFG.telegramChatId }));
-                  log('📨 ส่ง Telegram config ไป relay อีกครั้ง (หลังรู้ชื่อ)');
-                }
-              } catch (_) {}
-            }
           }
         }
       } catch (e) { /* SPAWN parse error ข้าม */ }
@@ -4740,7 +4717,6 @@
           entities.delete(oldId);   // ★★ ลบ entity เก่า (กันค้างเป็น "player" → หนีตัวเอง)
           _victimIdCount.clear();
           dbg('🔄 AUTO-DETECT playerId:', oldId != null ? oldId.toString(16) : '?', '→', playerId.toString(16), '(โดนมอนตีซ้ำ', cnt, 'ครั้ง)');
-          relayRegisterPlayer();
         }
         }
       }
@@ -6199,7 +6175,6 @@
     monsterAggro.clear();
     mobAttackers.clear();
     noMonsterSince = 0;
-    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
   }
   function hpFleeUseFlyWing(reason) {
     const FLY_WING_ID = 601;
@@ -6320,7 +6295,6 @@
     monsterAggro.clear();
     mobAttackers.clear();
     noMonsterSince = 0;
-    if (typeof remoteWalkTarget !== 'undefined') remoteWalkTarget = null;
   }
   function playerFleeClearOldWorld() {
     entities.clear();
@@ -6704,8 +6678,6 @@
   }
 
   let combatCooldownUntil = 0;   // ★ หยุด combat ชั่วคราวจนกว่าจะถึงเวลานี้ (post-combat delay)
-  // ★★ Remote walk — คำสั่งเดินจาก remote monitor (คลิกแผนที่)
-  let remoteWalkTarget = null;    // { x, y } — เป้าหมายเดินจาก remote
   // ★★ Manual mode — คลิกมอนจาก monitor ตอน combat off → เปิด combat ชั่วคราว ตีตัวเดียวแล้วปิด
   let manualMode = false;
   // ★★ Flee from players — วาร์ปหนีผู้เล่นไปแผนที่สำรอง
@@ -6869,7 +6841,6 @@
     }
     if (!CFG.combatEnabled) return;
     // ★★ ถ้ากำลังเดินตามคำสั่ง remote → หยุดตีตอนเดิน
-    if (remoteWalkTarget) return;
     // ★★ sync player position จาก entities map — fallback สำคัญ!
     //   หลังล็อกอิน server อาจไม่ส่ง pos ของเราโดยตรง → player.x/y เป็น null → bot ยืนนิ่ง
     //   แต่ SPAWN สร้าง entity ของเราไว้ใน map แล้ว → ดึง pos จากนั้น
@@ -7522,43 +7493,6 @@
     }
   }, CFG.combatTickMs);
 
-  // ★★ Remote walk loop — เดินไปเป้าหมายจาก remote monitor (คลิกแผนที่)
-  //   เช็คทุก 1s: ระยะเหลือเท่าไหร่ → เดินต่อ 20 ช่องจนถึง
-  const remoteWalkLoop = setInterval(() => {
-    if (!remoteWalkTarget) return;
-    if (!activeWS || activeWS.readyState !== 1) return;
-    const now = nowMs();
-    // sync player position จาก entities map (ถ้ายังไม่มี)
-    if (player.x == null && playerId != null) {
-      const me = entities.get(playerId);
-      if (me && me.x != null) { player.x = me.x; player.y = me.y; }
-    }
-    // ★★ ถ้ายังไม่รู้ตำแหน่ง → ส่ง move ตรงไปเป้าหมายเลย
-    //   outgoing 0x07 จะอัปเดต player.x/y → tick ถัดไปจะคำนวณระยะได้
-    if (player.x == null) {
-      if (sendMove(remoteWalkTarget.x, remoteWalkTarget.y)) {
-        log('🚶 Remote walk (pos ยังไม่รู้ → ส่งตรงไปเป้าหมาย)');
-      }
-      return;
-    }
-    // warp guard — รอ pos อัปเดตหลังวาร์ป
-    if (now < warpGuardUntil) return;
-    const dist = Math.hypot(remoteWalkTarget.x - player.x, remoteWalkTarget.y - player.y);
-    if (dist <= 2) {
-      log('📍 ถึงเป้าหมายแล้ว @(', player.x, player.y, ')');
-      remoteWalkTarget = null;
-      return;
-    }
-    // เดินไปทิศทางเป้าหมาย — step ≤ 20 ช่อง
-    const step = Math.min(dist, CFG.walkStepDistance);
-    const angle = Math.atan2(remoteWalkTarget.y - player.y, remoteWalkTarget.x - player.x);
-    const tx = player.x + Math.cos(angle) * step;
-    const ty = player.y + Math.sin(angle) * step;
-    if (sendMove(tx, ty)) {
-      log('🚶 Remote walk: @(', Math.round(tx), Math.round(ty), ') เหลือ', dist.toFixed(0), 'ช่อง');
-    }
-  }, 1000);
-
   // ============================================================
   //  ★★ GAT WALKABILITY — ตารางเดินได้ ground truth จากไฟล์ .gat ของแมป
   //    format: GRAT 1.2 · w×h · cell 20B = ความสูง4มุม + type(u32) · type 0=เดินได้
@@ -8181,21 +8115,6 @@
   // ---------- patch WebSocket ----------
   function attach(ws) {
     if (ws.__loot) return; ws.__loot = true;
-    // ★★ กัน relay WS แทนที่ game WS — เช็ค URL ว่าตรงกับ monitorServerUrl ไหม
-    //   ถ้าใช่ → ไม่ตั้ง activeWS ไม่ hook (relay เป็น text JSON ไม่ใช่ binary game protocol)
-    //   ★★ อย่าใช้ includes('rayrag') — เพราะเกมเชื่อมที่ gamesea01.rayrag.com!
-    const relayUrl = CFG.monitorServerUrl || '';
-    let wsUrl = '';
-    try { wsUrl = ws.url || ''; } catch (_) {}
-    // ★ เช็คแบบตรงไปตรงมา: ตัด scheme ออกแล้วเทียบ host
-    if (relayUrl && wsUrl) {
-      const relayHost = relayUrl.replace(/^wss?:\/\//, '').split('/')[0];
-      const wsHost = wsUrl.replace(/^wss?:\/\//, '').split('/')[0];
-      if (relayHost && wsHost && relayHost === wsHost) {
-        log('🌐 ข้าม attach relay WebSocket (ไม่ใช่เกม):', wsUrl.slice(0, 60));
-        return;
-      }
-    }
     activeWS = ws; log('🔌 ต่อ WebSocket แล้ว');
     try { gameServerUrl = ws.url || ''; } catch (_) {}   // ★ เก็บ URL เซิร์ฟเวอร์เกม
     // ★★ AUTO-LOGIN หลัง WS ต่อ: WS เปิด = เกมกด login แล้วเสมอ (เกมเปิด WS ตอนกด login!)
@@ -8809,7 +8728,7 @@
           cooldownSec: CFG.fleeWarpCooldownSec,
           cooldownLeft: fleeCooldownUntil > now ? (fleeCooldownUntil - now) + 'ms' : 'ready',
         },
-        combat: { enabled: CFG.combatEnabled, manualMode, remoteWalk: remoteWalkTarget ? { x: remoteWalkTarget.x, y: remoteWalkTarget.y } : null },
+        combat: { enabled: CFG.combatEnabled, manualMode },
       };
       console.log('%c 🔍 ASSIST DEBUG ', 'background:#e74c3c;color:#fff;padding:2px 8px;border-radius:4px;font-weight:bold');
       console.table([out]);
@@ -8903,7 +8822,7 @@
     getImportantLogs() { return importantLogBuf.slice(); },
     clearImportantLogs() { importantLogBuf.length = 0; log('🧹 ล้าง log สำคัญ'); },
     stopAll() {
-      clearInterval(healLoop); clearInterval(lootLoop); clearInterval(warpLoop); clearInterval(combatLoop); clearInterval(sellLoop); clearInterval(storageLoop); clearInterval(buffLoop); clearInterval(buffOthersLoop); clearInterval(buffVisitLoop); clearInterval(unstuckBuffLoop); clearInterval(unstuckPacketCaptureWatcher); clearInterval(consoleClearLoop); clearInterval(remoteWalkLoop); clearInterval(teleportFlusher); clearInterval(hpEmergencyFleeLoop); clearInterval(playerFleeFallbackLoop);
+      clearInterval(healLoop); clearInterval(lootLoop); clearInterval(warpLoop); clearInterval(combatLoop); clearInterval(sellLoop); clearInterval(storageLoop); clearInterval(buffLoop); clearInterval(buffOthersLoop); clearInterval(buffVisitLoop); clearInterval(unstuckBuffLoop); clearInterval(unstuckPacketCaptureWatcher); clearInterval(consoleClearLoop); clearInterval(teleportFlusher); clearInterval(hpEmergencyFleeLoop); clearInterval(playerFleeFallbackLoop);
       if (typeof uiLoop !== 'undefined') clearInterval(uiLoop);
       log('⏹ หยุดระบบทั้งหมดแล้ว');
     },
@@ -9753,9 +9672,7 @@
         <span class="pill" data-inventory style="background:#3a2a1a;color:#ffb74d" title="Inventory">🎒</span>
         <span class="pill" data-teleport style="background:#4a2c6a;color:#d1b3ff">🌀</span>
         <span class="pill" data-monitor style="background:#1a237e;color:#90caf9">🖥️</span>
-        <span class="pill" data-remote style="background:#1a3a1a;color:#81c784;display:none">🌐</span>
         <span class="pill" data-logview style="background:#1a2a3a;color:#82b1ff" title="ดู Log">📋</span>
-        <span class="pill" data-feedback style="background:#4a2a2a;color:#ff8a80" title="แจ้งปัญหา/ข้อเสนอแนะ">🐞</span>
         <span class="pill" data-changelog style="background:#3a2a1a;color:#ffd54f" title="Update Log">📜</span>
         <span class="expand">⚙</span>
       </div>
@@ -9777,7 +9694,6 @@
           <div class="row"><span class="k">🗺️ แมป / ฟาร์ม</span><span class="v" data-farmmap>?</span></div>
           <div class="row"><span class="k">player_id</span><span class="v" data-pid>?</span></div>
           <div class="row"><span class="k">สถานะ</span><span class="v" data-state>?</span></div>
-          <div class="row"><span class="k">🌐 Remote Monitor</span><span class="v" data-relay style="color:#9aa0a6">?</span></div>
           <h4>การฟาร์ม</h4>
           <div class="row"><span class="k">ฆ่าได้</span><span class="v" data-kills>0</span></div>
           <div class="row"><span class="k">เก็บของได้</span><span class="v" data-looted>0</span></div>
@@ -9813,7 +9729,6 @@
             <div class="subtab" data-sub="storage">🏦 Storage</div>
             <div class="subtab" data-sub="auto">🔑 Auto</div>
             <div class="subtab" data-sub="misc">⚙️ อื่นๆ</div>
-            <div class="subtab" data-sub="telegram">📨 Telegram</div>
           </div>
           <!-- 🗺️ Farm -->
           <div class="__assist_subpage" data-sub="farm">
@@ -10022,7 +9937,7 @@
             <div class="field" style="opacity:.45"><label>Password (ยังใช้ไม่ได้ — รอแก้ไข)</label><input type="password" id="__assist_alpass" placeholder="ยังไม่รองรับการกรอกเอง" autocomplete="new-password" disabled></div>
             <div class="field"><label>Character slot (เริ่มนับ 0 — ตัวแรก = 0)</label><input type="number" id="__assist_alslot" min="0" max="9" step="1"></div>
             <div class="btns"><button id="__assist_applyauto">💾 ใช้ค่า auto-login</button></div>
-            <div style="font-size:10px;color:#e8a13a;margin-top:6px;">⚠️ username/password จะถูกเก็บใน localStorage ของเบราว์เซอร์ (รอดจาก refresh) — ห้ามใช้ในเครื่องส่วนรวม และค่าเหล่านี้จะไม่ถูกส่งไป monitor/feedback เด็ดขาด</div>
+            <div style="font-size:10px;color:#e8a13a;margin-top:6px;">⚠️ username/password จะถูกเก็บใน localStorage ของเบราว์เซอร์ (รอดจาก refresh) — ห้ามใช้ในเครื่องส่วนรวม และค่าเหล่านี้จะไม่ถูกส่งออกนอกเครื่องโดย RO Assist</div>
             <h4 style="margin-top:14px;">🔄 Auto-Refresh — ค้างนาน → refresh หน้า + login กลับเอง</h4>
             <div class="btns"><button id="__assist_autorefreshbtn" class="off">Auto-Refresh: ?</button></div>
             <div class="field"><label>ถือว่าค้างเมื่อไม่มี packet ต่อเนื่อง (วินาที)</label><input type="number" id="__assist_arstall" min="60" max="1800" step="10"></div>
@@ -10036,15 +9951,6 @@
               <button id="__assist_trade_reject_all" class="off">🚫 Eject-All Trade: OFF</button>
             </div>
             <div style="font-size:10px;color:#9aa0a6;margin:5px 0;line-height:1.5;">★ Rayrag verified: request <code>0x7e len=43</code> · Accept/Eject ทำงานอัตโนมัติทันทีเมื่อมีผู้เล่นส่ง Trade</div>
-            <h4>🌐 Remote Monitor (ส่งข้อมูลไป relay server — ดูจากมือถือ/เครื่องอื่น)</h4>
-            <div class="btns">
-              <button id="__assist_relaybtn" class="off">Relay: ?</button>
-              <button id="__assist_relayreconnect" class="primary">🔄 เชื่อมใหม่</button>
-            </div>
-            <div class="field"><label>URL relay server (wss:// = SSL, ws:// = ไม่มี SSL)</label><input type="text" id="__assist_relayurl" placeholder="wss://rayro.catgg.net"></div>
-            <div class="btns"><button id="__assist_applyrelay">ใช้ค่า relay</button></div>
-            <div class="btns"><button id="__assist_openremote" class="primary" style="display:none">🌐 เปิดดูข้อมูลที่เว็บ</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ เปิดแล้วสคริปต์จะส่งข้อมูลไป relay server ทุก 1 วินาที<br>★ ดูสถานะการเชื่อมต่อได้ที่แท็บ "📊 สถิติ" บรรทัด "🌐 Remote Monitor"<br>★ ตั้งค่า relay server ที่ <code>relay-server.js</code> ฝั่งเซิร์ฟเวอร์</div>
             <h4>🗺️ Navigation (บันทึกเส้นทางเดิน + waypoint graph)</h4>
             <div class="btns">
               <button id="__assist_navrecbtn" class="off">บันทึก: ?</button>
@@ -10069,7 +9975,7 @@
               <button id="__assist_profile_use">🔄 ใช้ตัวนี้</button>
               <button id="__assist_profile_del">🗑 ลบ</button>
             </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ บันทึกเป็น: ใช้ชื่อในช่องข้อความ (ว่าง = ทับตัวที่เลือก)<br>★ สลับ: เซฟค่าทั่วไปอัตโนมัติก่อนโหลดชุดใหม่<br>★ 🔐 Profile/Backup ไม่เก็บ Telegram Token/Chat ID หรือ Auto-login Username/Password<br>★ buff/skill times + nav data ใช้ร่วมกันทุก profile</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ บันทึกเป็น: ใช้ชื่อในช่องข้อความ (ว่าง = ทับตัวที่เลือก)<br>★ สลับ: เซฟค่าทั่วไปอัตโนมัติก่อนโหลดชุดใหม่<br>★ 🔐 Profile/Backup ไม่เก็บ Auto-login Username/Password<br>★ buff/skill times + nav data ใช้ร่วมกันทุก profile</div>
             <h4>📤 สำรอง / ย้ายเครื่อง</h4>
             <div class="btns">
               <button id="__assist_exportall">📤 export ทั้งหมด</button>
@@ -10081,35 +9987,6 @@
               <button id="__assist_resetconfig" class="danger">🔄 รีเซ็ตค่าทั้งหมดกลับเป็น Default</button>
             </div>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ล้างค่าทั้งหมดที่บันทึกไว้ กลับเป็นค่าเริ่มต้น<br>★ ต้องเข้าเกมใหม่หลังรีเซ็ต</div>
-          </div>
-          <!-- 📨 Telegram -->
-          <div class="__assist_subpage" data-sub="telegram">
-            <h4>📨 Telegram Alerts</h4>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;margin-bottom:8px;line-height:1.6;">
-              ★ แจ้งเตือน Log สำคัญ (การ์ด/ตาย/หนีมอน) ไป Telegram<br>
-              ★ สร้าง Bot Token: คุย <code>@BotFather</code> → /newbot<br>
-              ★ หา Chat ID: คุย <code>@userinfobot</code><br>
-              ★ บอทต้องเชื่อม relay server ก่อน (ดูสถานะที่แท็บ สถิติ)
-            </div>
-            <div class="field"><label>Bot Token (จาก @BotFather)</label><input type="text" id="__assist_tg_token" placeholder="วาง Bot Token จาก @BotFather" autocomplete="off"></div>
-            <div class="field"><label>Chat ID (จาก @userinfobot)</label><input type="text" id="__assist_tg_chatid" placeholder="เช่น 123456789" autocomplete="off"></div>
-            <div class="btns">
-              <button id="__assist_tg_save" class="primary">💾 บันทึก</button>
-              <button id="__assist_tg_test">📨 ทดสอบ</button>
-              <button id="__assist_tg_clear" class="danger">🗑 ล้าง</button>
-            </div>
-            <div id="__assist_tg_status" style="font-size:10px;color:#9aa0a6;margin-top:6px;line-height:1.6">(ยังไม่ได้ตั้งค่า)</div>
-            <h4>🔔 ประเภทการแจ้งเตือน</h4>
-            <div class="btns">
-              <button id="__assist_t_tgcard" class="on">🃏 การ์ด</button>
-              <button id="__assist_t_tgflee" class="on">🚨 หนี/ตาย</button>
-              <button id="__assist_t_tgbot" class="on">💬 พูดถึง bot</button>
-            </div>
-            <div class="btns">
-              <button id="__assist_t_tgnearby" class="off">💬 แชทใกล้</button>
-              <button id="__assist_t_tgwhisper" class="on">💭 กระซิบ</button>
-            </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ เปิด/ปิดการส่งแต่ละประเภทไป Telegram</div>
           </div>
         </div>
         <div class="__assist_page" data-page="alert">
@@ -10154,8 +10031,7 @@
       if (!t || !t.closest || !t.matches || !t.matches(ASSIST_INPUT_SEL)) return false;
       return root.contains(t)
         || (t.closest && t.closest('#__assist_itempopup'))
-        || (t.closest && t.closest('#__assist_skillpopup'))
-        || (t.closest && t.closest('#__assist_feedback_modal'));
+        || (t.closest && t.closest('#__assist_skillpopup'));
     }
     function ourActiveInput() {
       const ae = document.activeElement;
@@ -10203,17 +10079,11 @@
         if (k === 'Backspace') inp.value = inp.value.slice(0, -1);
         else if (k === 'Delete') inp.value = inp.value.slice(1);
         else if (k === 'Enter') { inp.blur(); }
-        else if (k === 'Escape') { const m = inp.closest('#__assist_feedback_modal'); if (m) m.remove(); return; }
         else if (k.length === 1 && /[\d.\-]/.test(k)) inp.value += k;
         inp.dispatchEvent(new Event('input', { bubbles: true }));
         return;
       }
       const s = inp.selectionStart, en = inp.selectionEnd;
-      // ★ Escape → ปิด feedback modal
-      if (k === 'Escape') {
-        const modal = inp.closest && inp.closest('#__assist_feedback_modal');
-        if (modal) { modal.remove(); return; }
-      }
       if (k === 'Backspace') {
         if (s === en && s > 0) { inp.value = inp.value.slice(0, s - 1) + inp.value.slice(en); inp.selectionStart = inp.selectionEnd = s - 1; }
         else if (s !== en) { inp.value = inp.value.slice(0, s) + inp.value.slice(en); inp.selectionStart = inp.selectionEnd = s; }
@@ -10225,14 +10095,9 @@
       else if (k === 'Home') { inp.selectionStart = inp.selectionEnd = 0; }
       else if (k === 'End') { inp.selectionStart = inp.selectionEnd = inp.value.length; }
       else if (k === 'Enter') {
-        // ★ textarea: Enter = ขึ้นบรรทัด, Ctrl+Enter = ส่ง feedback
+        // ★ textarea: Enter = ขึ้นบรรทัด
         //   input (1 บรรทัด): Enter = blur
         if (inp.tagName === 'TEXTAREA') {
-          if (e.ctrlKey || e.metaKey) {
-            const modal = inp.closest('#__assist_feedback_modal');
-            if (modal) { const b = modal.querySelector('button[data-send]'); if (b) b.click(); }
-            return;
-          }
           inp.value = inp.value.slice(0, s) + '\n' + inp.value.slice(en);
           inp.selectionStart = inp.selectionEnd = s + 1;
         } else {
@@ -10288,8 +10153,6 @@
         }
         if (pill.hasAttribute('data-monitor')) { openMonitor(); }
         if (pill.hasAttribute('data-inventory')) { openInventoryModal(); }
-        if (pill.hasAttribute('data-remote')) { openRemoteMonitor(); }
-        if (pill.hasAttribute('data-feedback')) { openFeedbackModal(); }
         if (pill.hasAttribute('data-changelog')) { openChangelogModal(); }
         if (pill.hasAttribute('data-logview')) { openLogViewModal(); }
         return;
@@ -10657,84 +10520,6 @@
       saveConfigDebounced();
       log('🚫 Eject-All Trade:', CFG.tradeRejectAll ? 'ON' : 'OFF');
     });
-
-    // ---- relay/remote monitor wires ----
-    root.querySelector('#__assist_relaybtn').addEventListener('click', () => {
-      CFG.monitorServerEnabled = !CFG.monitorServerEnabled;
-      saveConfigDebounced();
-      log('🌐 Remote Monitor:', CFG.monitorServerEnabled ? 'เปิด' : 'ปิด');
-      if (CFG.monitorServerEnabled) {
-        connectRelay();             // พยายามเชื่อมทันที
-        relayRegisterPlayer();      // ส่ง register ทันทีถ้ามี playerId แล้ว
-      } else {
-        // ปิด → ตัดการเชื่อมต่อปัจจุบัน
-        if (relayWs) { try { relayWs.close(); } catch (_) {} relayWs = null; }
-        setRelayStatus('disabled', 'ปิด');
-      }
-    });
-    root.querySelector('#__assist_relayreconnect').addEventListener('click', () => {
-      log('🔄 บังคับเชื่อม relay ใหม่');
-      if (relayWs) { try { relayWs.close(); } catch (_) {} relayWs = null; }
-      relayReconnectAt = 0;          // reset cooldown
-      relayConnectedAt = 0;
-      if (CFG.monitorServerEnabled) { connectRelay(); relayRegisterPlayer(); }
-    });
-    root.querySelector('#__assist_applyrelay').addEventListener('click', () => {
-      const url = root.querySelector('#__assist_relayurl').value.trim();
-      if (url) {
-        const prevUrl = CFG.monitorServerUrl;
-        CFG.monitorServerUrl = url;
-        saveConfigDebounced();
-        log('🌐 relay URL =', url);
-        // ถ้า URL เปลี่ยน → ตัดขาวเชื่อมใหม่
-        if (url !== prevUrl && relayWs) { try { relayWs.close(); } catch (_) {} relayWs = null; relayReconnectAt = 0; relayConnectedAt = 0; }
-        if (CFG.monitorServerEnabled) { connectRelay(); relayRegisterPlayer(); }
-      }
-    });
-    root.querySelector('#__assist_openremote').addEventListener('click', () => openRemoteMonitor());
-    // ---- telegram wires ----
-    root.querySelector('#__assist_tg_save').addEventListener('click', () => {
-      const token = root.querySelector('#__assist_tg_token').value.trim();
-      const chatId = root.querySelector('#__assist_tg_chatid').value.trim();
-      if (!token || !chatId) { updateTelegramStatus('❌ กรุณากรอก Bot Token + Chat ID ให้ครบ', '#e74c3c'); return; }
-      // ★ บันทึกลงเครื่อง (localStorage) — persist ข้าม session
-      CFG.telegramBotToken = token;
-      CFG.telegramChatId = chatId;
-      saveConfigDebounced();
-      if (playerName == null) { updateTelegramStatus('⚠️ บันทึกในเครื่องแล้ว — จะส่งไป relay เมื่อเข้าเกม + เชื่อม relay', '#f39c12'); return; }
-      if (!relayWs || relayWs.readyState !== 1) { updateTelegramStatus('⚠️ บันทึกในเครื่องแล้ว — จะส่งไป relay เมื่อเชื่อมต่อ', '#f39c12'); return; }
-      updateTelegramStatus('⏳ กำลังบันทึก...', '#f39c12');
-      if (sendSetTelegram(token, chatId)) log('📨 บันทึก Telegram config...');
-    });
-    root.querySelector('#__assist_tg_test').addEventListener('click', () => {
-      if (!relayWs || relayWs.readyState !== 1) { updateTelegramStatus('❌ ยังไม่ได้เชื่อม relay server', '#e74c3c'); return; }
-      updateTelegramStatus('⏳ กำลังส่งทดสอบ...', '#f39c12');
-      sendRelayAlert('📨 ทดสอบแจ้งเตือนจาก RO Assist — หากคุณเห็นข้อความนี้ = ใช้งานได้แล้ว!');
-      log('📨 ส่งข้อความทดสอบไป Telegram');
-    });
-    root.querySelector('#__assist_tg_clear').addEventListener('click', () => {
-      if (sendClearTelegram()) {
-        root.querySelector('#__assist_tg_token').value = '';
-        root.querySelector('#__assist_tg_chatid').value = '';
-        updateTelegramStatus('🗑 ล้างการตั้งค่าแล้ว', '#9aa0a6');
-        log('📨 ล้าง Telegram config');
-      }
-    });
-    // ---- telegram alert toggle wires ----
-    const tgToggles = [
-      ['#__assist_t_tgcard', 'telegramAlertCard', '🃏 การ์ด'],
-      ['#__assist_t_tgflee', 'telegramAlertFlee', '🚨 หนี/ตาย'],
-      ['#__assist_t_tgbot', 'telegramAlertBotMention', '💬 พูดถึง bot'],
-      ['#__assist_t_tgnearby', 'telegramAlertNearby', '💬 แชทใกล้'],
-      ['#__assist_t_tgwhisper', 'telegramAlertWhisper', '💭 กระซิบ'],
-    ];
-    tgToggles.forEach(([sel, key, label]) => {
-      const btn = root.querySelector(sel);
-      if (btn) btn.addEventListener('click', () => {
-        CFG[key] = !CFG[key]; saveConfigDebounced();
-        log('📨 Telegram alert', label, CFG[key] ? 'เปิด' : 'ปิด');
-      });
-    });
     // ---- nav wires ----
     root.querySelector('#__assist_navrecbtn').addEventListener('click', () => CFG.navRecording ? ASSIST.navRecordOff() : ASSIST.navRecordOn());
     root.querySelector('#__assist_navwanderbtn').addEventListener('click', () => { CFG.navWanderUseNav = !CFG.navWanderUseNav; ASSIST.navToggleWander(CFG.navWanderUseNav); });
@@ -11070,90 +10855,6 @@ setInterval(()=>{if(last&&Date.now()-last.t>5000){document.getElementById('dot')
     monitorWin.document.write(MONITOR_HTML);
     monitorWin.document.close();
     log('🖥️ เปิด Monitor แล้ว');
-  }
-  // ★ เปิด remote monitor ในแท็บใหม่ — ใช้ relay server URL + player_id ปัจจุบัน
-  //   แสดงเฉพาะเมื่อ relay เชื่อมต่อแล้ว (เช็คใน renderUI)
-  function openRemoteMonitor() {
-    if (!playerId) { log('⚠️ ยังไม่รู้ player_id — รอ SPAWN ก่อน'); return; }
-    const url = CFG.monitorServerUrl
-      .replace(/^wss?:\/\//, '')   // ตัด ws/wss prefix → เหลือ host
-      .replace(/\/.*$/, '');        // ตัด path ถ้ามี
-    // protocol ตามหน้าเกม (https → https, http → http)
-    const proto = location.protocol;
-    const pidHex = playerId.toString(16);
-    const fullUrl = proto + '//' + url + '/#pid=' + pidHex;
-    log('🌐 เปิด Remote Monitor:', fullUrl);
-    window.open(fullUrl, '_blank');
-  }
-  // ★ Feedback modal — แจ้งปัญหา/ข้อเสนอแนะ → ส่งถึงผู้พัฒนาผ่าน Telegram
-  function openFeedbackModal() {
-    const old = document.getElementById('__assist_feedback_modal');
-    if (old) old.remove();
-    const overlay = document.createElement('div');
-    overlay.id = '__assist_feedback_modal';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:999999;display:flex;align-items:center;justify-content:flex-end;padding-right:10px';
-    overlay.innerHTML = `
-      <div style="background:#1e1e2e;color:#e8e8e8;border-radius:12px;padding:20px;width:480px;max-width:90vw;font-family:sans-serif;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-        <div style="font-size:16px;font-weight:700;margin-bottom:4px">💬 แจ้งปัญหา / ข้อเสนอแนะ</div>
-        <div style="font-size:11px;color:#f39c12;margin-bottom:6px;line-height:1.5">📌 กรณีแจ้งปัญหา กรุณาอธิบายโดยละเอียด:<br>• ก่อนเกิดปัญหา บอทกำลังทำอะไรอยู่?<br>• แล้วเกิดอะไรขึ้น? (ยืนนิ่ง/วาร์ปรัว/ไม่ตอบโต้/ฯลฯ)<br>• เกิดตอนไหน บ่อยแค่ไหน?</div>
-        <textarea id="__assist_feedback_text" style="width:100%;height:120px;background:#2a2d35;color:#e8e8e8;border:1px solid #444;border-radius:8px;padding:10px;font-size:13px;resize:vertical;box-sizing:border-box" placeholder="อธิบายปัญหา/ข้อเสนอแนะอย่างละเอียด... (Ctrl+Enter = ส่ง)"></textarea>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#aaa;margin-top:8px;cursor:pointer">
-          <input type="checkbox" id="__assist_feedback_attachlog" checked> 📋 แนบ log ล่าสุด 500 บรรทัด (ช่วยให้วิเคราะห์ปัญหาได้เร็วขึ้น)
-        </label>
-        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
-          <button id="__assist_feedback_cancel" style="padding:8px 16px;border:none;border-radius:8px;background:#444;color:#ccc;cursor:pointer;font-size:13px">ยกเลิก</button>
-          <button id="__assist_feedback_send" style="padding:8px 16px;border:none;border-radius:8px;background:#1a73e8;color:#fff;cursor:pointer;font-size:13px;font-weight:600">📤 ส่ง</button>
-        </div>
-        <div id="__assist_feedback_status" style="font-size:11px;margin-top:8px;text-align:center;min-height:14px"></div>
-      </div>`;
-    document.body.appendChild(overlay);
-    const box = overlay.querySelector('#__assist_feedback_text');
-    setTimeout(() => box.focus(), 0);
-    const close = () => overlay.remove();
-    overlay.querySelector('#__assist_feedback_cancel').onclick = close;
-    overlay.onclick = (e) => { if (e.target === overlay) close(); };
-    // ★ กัน Unity ขโมย focus เวลาคลิก textarea (mirror root mousedown handler)
-    overlay.addEventListener('mousedown', (e) => {
-      if (e.target.matches && e.target.matches('input, select, textarea, button')) {
-        e.stopPropagation();
-        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-        if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
-          setTimeout(() => { try { e.target.focus(); } catch (_) {} }, 0);
-        }
-      }
-    }, true);
-    overlay.querySelector('#__assist_feedback_send').onclick = async () => {
-      const msg = box.value.trim();
-      if (!msg) { box.focus(); return; }
-      const attachLog = overlay.querySelector('#__assist_feedback_attachlog').checked;
-      const statusEl = overlay.querySelector('#__assist_feedback_status');
-      const sendBtn = overlay.querySelector('#__assist_feedback_send');
-      sendBtn.disabled = true; sendBtn.textContent = 'กำลังส่ง...';
-      statusEl.style.color = '#f39c12'; statusEl.textContent = 'กำลังส่ง...';
-      try {
-        // ★ Security: ไม่มี Bot Token/Chat ID ฝังใน browser อีกแล้ว — Feedback ส่งผ่าน Relay เท่านั้น
-        if (!relayWs || relayWs.readyState !== 1) throw new Error('Relay Server ยังไม่เชื่อมต่อ');
-        relayWs.send(JSON.stringify({
-          type: 'feedback',
-          message: msg,
-          log: attachLog ? logBuf.slice(-500).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 200) })) : null,
-          dbgLog: attachLog ? dbgBuf.slice(-300).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 200) })) : null,
-          version: VERSION,
-          map: currentMap || '',
-          playerName: playerName || '',
-        }));
-        statusEl.style.color = '#4caf50'; statusEl.textContent = '✅ ส่งผ่าน Relay แล้ว — ขอบคุณมาก!';
-        log('💬 ส่ง feedback ผ่าน Relay แล้ว' + (attachLog ? ' (พร้อม log ' + logBuf.length + ' บรรทัด)' : ''));
-        setTimeout(close, 1500);
-      } catch (e) {
-        statusEl.style.color = '#f44336'; statusEl.textContent = '❌ ส่งไม่สำเร็จ: ' + e.message;
-        sendBtn.disabled = false; sendBtn.textContent = '📤 ส่ง';
-      }
-    };
-    box.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); overlay.querySelector('#__assist_feedback_send').click(); }
-      if (e.key === 'Escape') close();
-    });
   }
   // ★★ Changelog modal — แสดง Update Log ล่าสุดขึ้นก่อน
   // ★★ Log view modal — ดู log 500 บรรทัดล่าสุด (ชิดขวา + เลื่อนได้ + real-time update)
@@ -11509,17 +11210,9 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
       }
     }, true);
   }
-  // ★ Remote relay WebSocket state (ประกาศก่อนใช้ — กัน TDZ)
-  let relayWs = null;
-  let relayReconnectAt = 0;
-  let relayStatus = 'disabled';        // 'disabled' | 'connecting' | 'connected' | 'reconnecting' | 'error'
-  let relayStatusText = 'ปิด';          // ข้อความสั้น
-  let relayConnectedAt = 0;             // เวลาที่เชื่อมต่อสำเร็จ
-  let relayLastDataAt = 0;              // เวลาส่งข้อมูลล่าสุด
-  let relayDataCount = 0;               // จำนวนครั้งที่ส่งข้อมูลแล้ว
   function sendMonitorData() {
     const now = nowMs();
-    const interval = CFG.monitorSendIntervalMs || 1000;
+    const interval = 1000;
     if (now - lastMonitorSendAt < interval) return;
     lastMonitorSendAt = now;
     const s = ASSIST.getStats();
@@ -11589,16 +11282,14 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
       })(),
       isDead: isDead, isResting: isResting,
       sellState: sellState, storageState: storageState,
-      // ★ relay server status (ส่งไปแสดงใน remote monitor ด้วย)
-      relay: { ...relayStatusInfo(), url: CFG.monitorServerUrl, enabled: CFG.monitorServerEnabled },
       // ★ chat history — ส่งแชทล่าสุด 30 ข้อความ
       chatHistory: chatBuf.slice(-30),
       // ★ important log — ส่ง log สำคัญล่าสุด 30 รายการ
       alerts: importantLogBuf.slice(-30),
-      // ★★ normal log — ส่ง log ล่าสุด 200 รายการ (สำหรับ remote monitor)
+      // ★★ normal log — ส่ง log ล่าสุด 200 รายการ (สำหรับ Monitor ในเครื่อง)
       logs: logBuf.slice(-500).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 150) })),
       dbgLogs: dbgBuf.slice(-200).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 150) })),
-      // ★ map entities — สำหรับแสดง dots บนแผนที่ใน remote monitor
+      // ★ map entities — สำหรับแสดง dots บนแผนที่ใน Monitor ในเครื่อง
       mapEntities: (() => {
         const now = nowMs(); const out = [];
         const STALE_MS = 60000;
@@ -11660,225 +11351,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     if (monitorWin && !monitorWin.closed) {
       try { if (monitorWin.onData) monitorWin.onData(payload); } catch (_) {}
     }
-    // ★ ส่งไป relay server (ดูจากมือถือ/เครื่องอื่นได้)
-    if (relayWs && relayWs.readyState === 1 && playerId != null) {
-      try { relayWs.send(JSON.stringify({ type: 'data', payload })); relayLastDataAt = nowMs(); relayDataCount++; } catch (_) {}
-    }
   }
-  function setRelayStatus(status, text) {
-    relayStatus = status;
-    relayStatusText = text;
-    if (status === 'connected' && relayConnectedAt === 0) relayConnectedAt = nowMs();
-  }
-  function relayStatusInfo() {
-    if (!CFG.monitorServerEnabled) return { status: 'disabled', text: 'ปิด', color: '#9aa0a6' };
-    if (relayStatus === 'connected') {
-      const uptime = relayConnectedAt > 0 ? fmtMs(nowMs() - relayConnectedAt) : '—';
-      const sinceData = relayLastDataAt > 0 ? Math.round((nowMs() - relayLastDataAt) / 1000) + 'วิที่แล้ว' : '—';
-      return { status: 'connected', text: `🟢 เชื่อมแล้ว ${uptime} • ${relayDataCount}ครั้ง • ${sinceData}`, color: '#2ecc71' };
-    }
-    if (relayStatus === 'connecting')  return { status: 'connecting',  text: '🟡 กำลังเชื่อม...', color: '#f1c40f' };
-    if (relayStatus === 'reconnecting') {
-      const wait = relayReconnectAt > 0 ? Math.max(0, Math.ceil((relayReconnectAt - nowMs()) / 1000)) : 0;
-      return { status: 'reconnecting', text: `🔄 รอเชื่อมใหม่ใน ${wait}วิ`, color: '#e67e22' };
-    }
-    if (relayStatus === 'error')       return { status: 'error',       text: '🔴 ผิดพลาด (รอเชื่อมใหม่)', color: '#e74c3c' };
-    return { status: 'idle', text: '⚪ ยังไม่เชื่อม', color: '#9aa0a6' };
-  }
-  function connectRelay() {
-    if (!CFG.monitorServerEnabled || !CFG.monitorServerUrl) { setRelayStatus('disabled', 'ปิด'); return; }
-    if (relayWs && (relayWs.readyState === 0 || relayWs.readyState === 1)) return;  // กำลังเชื่อมหรือเชื่อมแล้ว
-    if (nowMs() < relayReconnectAt) {
-      // แสดงสถานะ "รอเชื่อมใหม่" ถ้ายังอยู่ใน cooldown
-      if (relayStatus !== 'connected' && relayStatus !== 'connecting') setRelayStatus('reconnecting', 'รอเชื่อมใหม่');
-      return;
-    }
-    setRelayStatus('connecting', 'กำลังเชื่อม...');
-    try {
-      log('🌐 กำลังเชื่อม relay server:', CFG.monitorServerUrl);
-      relayWs = new WebSocket(CFG.monitorServerUrl);
-      relayWs.onopen = () => {
-        setRelayStatus('connected', 'เชื่อมแล้ว');
-        relayConnectedAt = nowMs();
-        log('✅ เชื่อม relay server แล้ว:', CFG.monitorServerUrl);
-        // ส่ง register
-        if (playerId != null) {
-          try { relayWs.send(JSON.stringify({ type: 'register', playerId: playerId.toString(16), playerName: playerName || '' })); } catch (_) {}
-          // ★ ส่ง telegram config ทันที (ถ้ามี) — sync ไป relay server
-          if (CFG.telegramBotToken && CFG.telegramChatId) {
-            try { relayWs.send(JSON.stringify({ type: 'setTelegram', botToken: CFG.telegramBotToken, chatId: CFG.telegramChatId })); } catch (_) {}
-            log('📨 ส่ง Telegram config ไป relay แล้ว');
-          }
-          // ★ ส่งแจ้งเตือนยืนยันการเชื่อมต่อ
-          sendRelayAlert('🌐 เชื่อมต่อระบบ Remote Monitor แล้ว');
-        } else {
-          log('⚠️ ยังไม่มี player_id — ระบบจะ register ทันทีเมื่อ SPAWN มา');
-        }
-      };
-      relayWs.onclose = (ev) => {
-        const wasConnected = relayStatus === 'connected';
-        relayWs = null;
-        relayConnectedAt = 0;
-        relayReconnectAt = nowMs() + 5000;   // reconnect ใน 5s
-        setRelayStatus('reconnecting', 'รอเชื่อมใหม่ใน 5วิ');
-        log(`🔌 หลุดจาก relay server (code=${ev.code}) — เชื่อมใหม่ใน 5วิ`, CFG.monitorServerUrl);
-        if (ev.code === 1006 && !wasConnected) {
-          log('💡 หมายเหตุ: code=1006 มักเกิดจากเซิร์ฟเวอร์ตอบกลับไม่ได้/proxy ผิด/SSL ไม่ตรง — ตรวจสอบว่า relay server รันอยู่และ nginx ส่ง WS ผ่าน');
-        }
-      };
-      relayWs.onerror = () => {
-        setRelayStatus('error', 'ผิดพลาด');
-        log('❌ relay server error:', CFG.monitorServerUrl);
-        try { relayWs.close(); } catch (_) {}
-      };
-      relayWs.onmessage = (ev) => {
-        // ★ รับ message จาก relay server (telegramSaved, telegramConfig)
-        let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
-        if (m.type === 'telegramSaved') {
-          if (m.ok) {
-            log('📨 บันทึก Telegram config แล้ว');
-            updateTelegramStatus('✅ บันทึกแล้ว — แจ้งเตือนจะส่งไป Telegram เมื่อมี log สำคัญ', '#2ecc71');
-          } else {
-            log('⚠️ บันทึก Telegram config ล้มเหลว:', m.error || '?');
-            updateTelegramStatus('❌ บันทึกไม่สำเร็จ: ' + (m.error || '?'), '#e74c3c');
-          }
-        } else if (m.type === 'telegramConfig') {
-          // relay บอกว่ามี config อยู่แล้วหรือไม่
-          if (m.configured) {
-            updateTelegramStatus('✅ ตั้งค่าแล้ว (Chat ID: ' + m.chatId + ') — แจ้งเตือนจะส่งไป Telegram', '#2ecc71');
-          } else {
-            updateTelegramStatus('⚠️ ยังไม่ได้ตั้งค่า — กรอก Bot Token + Chat ID แล้วกด บันทึก', '#f39c12');
-          }
-        }
-        // ★★ move command จาก remote monitor → เดิน/วาร์ป ไปพิกัด (คลิกแผนที่)
-        else if (m.type === 'command' && m.system === 'move' && m.action && m.x != null && m.y != null) {
-          if (m.action === 'warp') {
-            if (currentMap && sendTeleport(currentMap, m.x, m.y)) {
-              target = null;   // ยกเลิก target เดิม
-              log('🌀 Remote warp → (', m.x, m.y, ')');
-            }
-          } else if (m.action === 'walk') {
-            remoteWalkTarget = { x: m.x, y: m.y };
-            target = null;   // ยกเลิก target เดิม (กัน combat แย่ง)
-            log('🚶 Remote walk → (', m.x, m.y, ')');
-          }
-          try { relayWs.send(JSON.stringify({ type: 'commandAck', system: 'move', action: m.action, ok: true })); } catch (_) {}
-        }
-        // ★★ attack command จาก remote monitor → โจมตีมอนที่คลิก (คลิก dot บนแผนที่)
-        else if (m.type === 'command' && m.system === 'attack' && m.action === 'target' && m.targetId != null) {
-          const eid = typeof m.targetId === 'string' ? parseInt(m.targetId, 16) : Number(m.targetId);
-          const m2 = entities.get(eid);
-          if (m2 && m2.alive && m2.x != null) {
-            // ยกเลิก remote walk (ถ้ากำลังเดินอยู่)
-            remoteWalkTarget = null;
-            // ตั้งเป็น target ใหม่
-            target = { id: eid, x: m2.x, y: m2.y, acquiredAt: nowMs(), engageAt: 0, lastAttackAt: 0, lastAttackResultAt: 0, pendingAttacks: 0, firstAttackAt: 0, stuckCount: 0, warpCount: 0 };
-            lastTargetSwitchAt = nowMs();
-            // ★ คลิกมอน: ถ้า combat off → เปิดชั่วคราว (manual mode) ตีตัวเดียวแล้วปิด
-            if (!CFG.combatEnabled) {
-              CFG.combatEnabled = true; manualMode = true;
-              log('🎯 Manual attack: เปิด combat ชั่วคราว (ตีตัวเดียวแล้วหยุด)');
-            }
-            log('🎯 Remote attack →', m2.name || eid.toString(16), '@(', m2.x, m2.y, ')');
-          } else {
-            log('⚠️ Remote attack: ไม่พบมอน ID', m.targetId);
-          }
-          try { relayWs.send(JSON.stringify({ type: 'commandAck', system: 'attack', action: 'target', ok: !!m2 })); } catch (_) {}
-        }
-        // ★★ itemAction จาก remote monitor → วน toggle เก็บ→ขาย→ฝาก ของชิ้นนั้น (เหมือนคลิกใน UI)
-        else if (m.type === 'command' && m.system === 'item' && m.itemId != null) {
-          const iid = Number(m.itemId);
-          if (iid > 0) {
-            const newAct = cycleItemAction(iid);
-            log('🎮 Remote item action:', nameOf(iid), '→', newAct);
-            try { relayWs.send(JSON.stringify({ type: 'commandAck', system: 'item', action: newAct, ok: true })); } catch (_) {}
-          }
-        }
-        // ★ command จาก remote monitor → toggle on/off หรือ action (sellNow, depositNow)
-        else if (m.type === 'command' && m.system && m.action) {
-          // ★ action พิเศษ (ไม่ใช่ toggle): sellNow, depositNow, buffNow, skillNow
-          if (m.action === 'now') {
-            const actionMethod = m.system + 'Now';
-            if (typeof ASSIST[actionMethod] === 'function') {
-              ASSIST[actionMethod]();
-              log('🎮 Remote action:', m.system, 'now');
-              try { relayWs.send(JSON.stringify({ type: 'commandAck', system: m.system, action: m.action, ok: true })); } catch (_) {}
-            } else {
-              try { relayWs.send(JSON.stringify({ type: 'commandAck', system: m.system, action: m.action, ok: false, error: 'unknown action' })); } catch (_) {}
-            }
-          } else {
-            const method = m.system + (m.action === 'off' ? 'Off' : 'On');
-            if (typeof ASSIST[method] === 'function') {
-              ASSIST[method]();
-              log('🎮 Remote command:', m.system, m.action);
-              try { relayWs.send(JSON.stringify({ type: 'commandAck', system: m.system, action: m.action, ok: true })); } catch (_) {}
-            } else {
-              log('⚠️ Remote command: method "' + method + '" ไม่มี');
-              try { relayWs.send(JSON.stringify({ type: 'commandAck', system: m.system, action: m.action, ok: false, error: 'unknown method' })); } catch (_) {}
-            }
-          }
-        }
-        // ★ chat จาก remote monitor → ส่งไป game server
-        else if (m.type === 'chat' && m.message != null) {
-          if (sendChat(m.message, m.chatType || 0)) {
-            log('💬 Remote chat (' + (m.chatType === 1 ? 'shout' : 'nearby') + '):', m.message);
-            try { relayWs.send(JSON.stringify({ type: 'chatAck', ok: true })); } catch (_) {}
-          } else {
-            log('⚠️ Remote chat: ส่งไม่ได้ (activeWS ไม่พร้อม?)');
-            try { relayWs.send(JSON.stringify({ type: 'chatAck', ok: false, error: 'not connected' })); } catch (_) {}
-          }
-        }
-      };
-    } catch (e) {
-      setRelayStatus('error', 'สร้าง WS ไม่ได้');
-      log('❌ สร้าง relay WebSocket ไม่ได้:', e.message);
-      relayReconnectAt = nowMs() + 5000;
-    }
-  }
-  // ★ ส่ง register ทันทีเมื่อได้ player_id (เรียกจาก SPAWN/SELECT_CHAR handler)
-  function relayRegisterPlayer() {
-    if (relayWs && relayWs.readyState === 1 && playerId != null) {
-      try {
-        relayWs.send(JSON.stringify({ type: 'register', playerId: playerId.toString(16), playerName: playerName || '' }));
-        log('📡 ลงทะเบียน (register) player_id ' + playerId.toString(16) + ' ไปยัง relay แล้ว');
-        // ★ ส่ง telegram config ทันที (ถ้ามี) — sync ไป relay server
-        if (CFG.telegramBotToken && CFG.telegramChatId) {
-          relayWs.send(JSON.stringify({ type: 'setTelegram', botToken: CFG.telegramBotToken, chatId: CFG.telegramChatId }));
-          log('📨 ส่ง Telegram config ไป relay แล้ว');
-        }
-        // ★ ขอ telegram config status หลัง register (เพื่อแสดงใน UI ว่าตั้งไว้แล้วหรือยัง)
-        relayWs.send(JSON.stringify({ type: 'getTelegram' }));
-        // ★ ส่งแจ้งเตือนยืนยันการเชื่อมต่อ
-        sendRelayAlert('🌐 เชื่อมต่อระบบ Remote Monitor แล้ว');
-      } catch (_) {}
-    }
-  }
-  // ★ ส่ง alert ไป relay server (relay จะ forward ไป Telegram ถ้ามี config)
-  function sendRelayAlert(msg) {
-    if (relayWs && relayWs.readyState === 1 && playerId != null) {
-      try { relayWs.send(JSON.stringify({ type: 'alert', msg })); } catch (_) {}
-    }
-  }
-  // ★ บันทึก telegram config (botToken + chatId) ที่ relay server
-  function sendSetTelegram(botToken, chatId) {
-    if (relayWs && relayWs.readyState === 1) {
-      try { relayWs.send(JSON.stringify({ type: 'setTelegram', botToken, chatId: String(chatId) })); return true; } catch (_) {}
-    }
-    return false;
-  }
-  // ★ ลบ telegram config (ส่งค่าว่างไป)
-  function sendClearTelegram() {
-    if (relayWs && relayWs.readyState === 1) {
-      try { relayWs.send(JSON.stringify({ type: 'setTelegram', botToken: '', chatId: '' })); return true; } catch (_) {}
-    }
-    return false;
-  }
-  // ★ อัปเดตสถานะ Telegram ใน UI
-  function updateTelegramStatus(text, color) {
-    const el = document.getElementById('__assist_tg_status');
-    if (el) { el.innerHTML = text; el.style.color = color || '#9aa0a6'; }
-  }
-
   // ---------- render loop ----------
   function fmtMs(ms) {
     const s = Math.floor(ms / 1000);
@@ -11963,19 +11436,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     }
     set('[data-pid]', playerId ? playerId.toString(16) : '?');
     set('[data-state]', isDead ? '☠️ ตาย' : (isResting ? '🪑 นั่งพัก' : (activeWS && activeWS.readyState === 1 ? '🟢 เชื่อมต่อ' : '🔴 ไม่ได้ต่อ')));
-    // ★ Remote Monitor status (relay server) + แสดง/ซ่อนปุ่ม 🌐 ใน mini-bar
-    {
-      const r = relayStatusInfo();
-      const el = root.querySelector('[data-relay]');
-      if (el) { el.textContent = r.text; el.style.color = r.color; }
-      // ★ ปุ่ม 🌐 แสดงเฉพาะเมื่อ relay เชื่อมต่อแล้ว + มี player_id
-      const showRemote = (r.status === 'connected' && playerId);
-      const remoteBtn = root.querySelector('[data-remote]');
-      if (remoteBtn) remoteBtn.style.display = showRemote ? '' : 'none';
-      // ★ ปุ่มเปิด remote monitor ใน sub-tab อื่นๆ ก็แสดงเมื่อเชื่อมต่อแล้วเช่นกัน
-      const openRemoteBtn = root.querySelector('#__assist_openremote');
-      if (openRemoteBtn) openRemoteBtn.style.display = showRemote ? '' : 'none';
-    }
     set('[data-kills]', s.kills);
     set('[data-looted]', s.itemsLooted);
     set('[data-exp]', s.expGained.toLocaleString());
@@ -12185,26 +11645,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
       trRejectBtn.textContent = '🚫 Eject-All Trade: ' + (CFG.tradeRejectAll ? 'ON' : 'OFF');
       trRejectBtn.className = CFG.tradeRejectAll ? 'on' : 'off';
     }
-
-    // ★ relay/remote monitor config sync
-    const relayBtn = root.querySelector('#__assist_relaybtn');
-    if (relayBtn) {
-      const r = relayStatusInfo();
-      relayBtn.textContent = 'Relay: ' + (CFG.monitorServerEnabled ? 'ON' : 'OFF') + ' — ' + r.text;
-      relayBtn.className = CFG.monitorServerEnabled ? 'on' : 'off';
-    }
-    syncInput('#__assist_relayurl', CFG.monitorServerUrl);
-    // ★ telegram alert toggle sync
-    syncToggle('#__assist_t_tgcard', CFG.telegramAlertCard !== false);
-    syncToggle('#__assist_t_tgflee', CFG.telegramAlertFlee !== false);
-    syncToggle('#__assist_t_tgbot', CFG.telegramAlertBotMention !== false);
-    syncToggle('#__assist_t_tgnearby', CFG.telegramAlertNearby === true);
-    syncToggle('#__assist_t_tgwhisper', CFG.telegramAlertWhisper !== false);
-    // ★ sync telegram token/chatId จาก CFG ลง input fields
-    const tgToken = root.querySelector('#__assist_tg_token');
-    if (tgToken && !isEditing(tgToken) && CFG.telegramBotToken) tgToken.value = CFG.telegramBotToken;
-    const tgChatId = root.querySelector('#__assist_tg_chatid');
-    if (tgChatId && !isEditing(tgChatId) && CFG.telegramChatId) tgChatId.value = CFG.telegramChatId;
     // nav config sync + stats display
     const navRecBtn = root.querySelector('#__assist_navrecbtn');
     if (navRecBtn) { navRecBtn.textContent = 'บันทึก: ' + (CFG.navRecording ? 'ON 🔴' : 'OFF'); navRecBtn.className = CFG.navRecording ? 'on' : 'off'; }
@@ -12417,7 +11857,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     uiLoop = setInterval(() => {
       renderUI();
       sendMonitorData();   // ★ ส่งไป monitor.html
-      connectRelay();      // ★ เชื่อม relay server (auto-reconnect)
       // auto-save config ทุก ~5 วิ ถ้าค่าเปลี่ยน
       const now = Date.now();
       if (now - lastAutoSaveAt > 5000) {
