@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.16
+// @version      4.189.17
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.16';
+  const VERSION = '4.189.17';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.17', d: '2026-09-25', items: [
+      '🏦🔬 Kafra Cancel Packet Capture — เพิ่มปุ่มดัก packet ชั่วคราวเพื่อจับคำสั่ง Cancel หลังฝากของเสร็จ',
+      '   · แสดง IN/OUT opcode, length, hex และ CLICK marker รอบจังหวะกด Cancel ในเกม',
+      '   · ระหว่าง Capture จะพัก storage state ชั่วคราว เพื่อไม่ให้วาร์ปกลับก่อนผู้ใช้กด Cancel',
+      '   · ยังไม่ส่ง Cancel อัตโนมัติ จนกว่าจะยืนยัน packet จาก capture จริง',
+    ]},
     { v: '4.189.16', d: '2026-09-25', items: [
       '💰🏦 Fix Manual Sell/Storage Walk — กดขาย/ฝากเดี๋ยวนี้แล้วเดินต่อจนถึง NPC/Kafra ได้เสถียรขึ้น',
       '   · จุด X/Y เปลี่ยนเป็น navigation anchor: ถ้าเห็น NPC ในระยะใกล้จะเข้าหา NPC ต่อทันที ไม่บังคับแตะจุด anchor ให้เป๊ะก่อน',
@@ -2609,6 +2615,77 @@
   }
   // v4.188.7: Trade Capture listener removed — protocol verified
 
+  // ★★ v4.189.17 — Kafra Cancel packet capture (temporary calibration)
+  let kafraCancelCaptureActive = false;
+  let kafraCancelCaptureStartedAt = 0;
+  let kafraCancelCaptureRecords = [];   // packet + CLICK markers
+  let kafraCancelCaptureTimer = null;
+  let kafraCancelCaptureStopTimer = null;
+  const KAFRA_CANCEL_CAPTURE_MS = 12000;
+  const KAFRA_CANCEL_CAPTURE_MAX = 80;
+
+  function kafraCancelCaptureStatusText() {
+    const head = kafraCancelCaptureActive
+      ? '🔬 CAPTURE KAFRA CANCEL กำลังทำงาน — กด Cancel ในเมนู Kafra ของเกม 1 ครั้ง'
+      : 'สถานะ: ' + (kafraCancelCaptureRecords.length ? 'มีข้อมูล capture ล่าสุด' : 'ยังไม่ได้จับ packet');
+    const rows = kafraCancelCaptureRecords.slice(-32).map(r => {
+      if (r.kind === 'click') return '+' + r.dt + 'ms  🖱️ CLICK game @(' + r.x + ',' + r.y + ')';
+      const op = '0x' + r.opcode.toString(16).padStart(2,'0');
+      const hex = r.hex.length > 240 ? r.hex.slice(0,240) + ' …' : r.hex;
+      return '+' + r.dt + 'ms  ' + r.dir + ' ' + op + ' len=' + r.len + ' [' + hex + ']';
+    });
+    return head + (rows.length ? '\n' + rows.join('\n') : '');
+  }
+  function updateKafraCancelCaptureUI() {
+    const root = document.getElementById('__assist_root');
+    if (!root) return;
+    const el = root.querySelector('#__assist_kafra_cancel_capture_status');
+    if (el) el.textContent = kafraCancelCaptureStatusText();
+    const btn = root.querySelector('#__assist_kafra_cancel_capture');
+    if (btn) btn.textContent = kafraCancelCaptureActive ? '⏹ หยุดจับ Kafra Cancel' : '🔬 จับ Kafra Cancel';
+  }
+  function captureKafraCancelPacket(dir, u) {
+    if (!kafraCancelCaptureActive || !u || !u.length) return;
+    kafraCancelCaptureRecords.push({kind:'packet', dir, dt:Math.max(0,nowMs()-kafraCancelCaptureStartedAt), opcode:u[0], len:u.length, hex:u8ToHex(u)});
+    while (kafraCancelCaptureRecords.length > KAFRA_CANCEL_CAPTURE_MAX) kafraCancelCaptureRecords.shift();
+    updateKafraCancelCaptureUI();
+  }
+  function stopKafraCancelCapture(reason) {
+    if (!kafraCancelCaptureActive) return false;
+    kafraCancelCaptureActive = false;
+    if (kafraCancelCaptureTimer) { clearTimeout(kafraCancelCaptureTimer); kafraCancelCaptureTimer = null; }
+    if (kafraCancelCaptureStopTimer) { clearTimeout(kafraCancelCaptureStopTimer); kafraCancelCaptureStopTimer = null; }
+    log('🏦🔬 จบ Kafra Cancel Capture (' + (reason || 'หยุด') + ') — ' + kafraCancelCaptureRecords.filter(r=>r.kind==='packet').length + ' packet');
+    updateKafraCancelCaptureUI();
+    return true;
+  }
+  function startKafraCancelCapture() {
+    if (!activeWS || activeWS.readyState !== 1) { log('⚠️ Kafra Cancel Capture: ยังไม่ได้เชื่อม game WebSocket'); return false; }
+    if (kafraCancelCaptureActive) { stopKafraCancelCapture('กดหยุด'); return false; }
+    kafraCancelCaptureRecords = [];
+    kafraCancelCaptureStartedAt = nowMs();
+    kafraCancelCaptureActive = true;
+    log('🏦🔬 เริ่มจับ Kafra Cancel — กดปุ่ม Cancel จริงในเมนู Kafra ของเกม 1 ครั้ง');
+    kafraCancelCaptureTimer = setTimeout(() => stopKafraCancelCapture('ครบเวลา 12s'), KAFRA_CANCEL_CAPTURE_MS);
+    updateKafraCancelCaptureUI();
+    return true;
+  }
+  function clearKafraCancelCapture() {
+    if (kafraCancelCaptureActive) stopKafraCancelCapture('ล้าง');
+    kafraCancelCaptureRecords = [];
+    updateKafraCancelCaptureUI();
+  }
+  function kafraCancelCaptureCanvasClick(e) {
+    if (!kafraCancelCaptureActive) return;
+    try { if (e.target && e.target.closest && e.target.closest('#__assist_root')) return; } catch (_) {}
+    kafraCancelCaptureRecords.push({kind:'click', dt:Math.max(0,nowMs()-kafraCancelCaptureStartedAt), x:Math.round(e.clientX||0), y:Math.round(e.clientY||0)});
+    while (kafraCancelCaptureRecords.length > KAFRA_CANCEL_CAPTURE_MAX) kafraCancelCaptureRecords.shift();
+    updateKafraCancelCaptureUI();
+    if (kafraCancelCaptureStopTimer) clearTimeout(kafraCancelCaptureStopTimer);
+    kafraCancelCaptureStopTimer = setTimeout(() => stopKafraCancelCapture('หลังคลิก 1.5s'), 1500);
+  }
+  document.addEventListener('click', kafraCancelCaptureCanvasClick, true);
+
   // ★★ v4.188.7 — Auto Trade protocol verified from Rayrag capture
   // Incoming request: 0x7e len=43
   // Accept click: [78 01] then [78 00]
@@ -3324,6 +3401,7 @@
   // ---------- ประมวลผล packet ----------
   function handleIn(u) {
     if (!u.length) return;
+    captureKafraCancelPacket('IN', u);
     handleAutoTradeInbound(u);
     lastGamePacketAt = Date.now();   // ★★ auto-refresh watchdog — เกมส่งอะไรมา = ยังไม่ค้าง
     // ★★ Packet capture
@@ -5184,6 +5262,7 @@
     if (isDead) return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
     if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) return;
+    if (typeof kafraCancelCaptureActive !== 'undefined' && kafraCancelCaptureActive) return;   // ★ v4.189.17: รอผู้ใช้กด Cancel เพื่อจับ packet
     const now = nowMs();
 
     // === trigger (เฉพาะ IDLE) ===
@@ -8004,7 +8083,7 @@
     ws.send = function (data) {
       try {
         const u = syncU8(data);
-        if (u) { captureUnstuckOutgoing(u); handleOut(u); }
+        if (u) { captureUnstuckOutgoing(u); captureKafraCancelPacket('OUT', u); handleOut(u); }
       } catch (e) {}
       return origSend(data);
     };
@@ -9797,7 +9876,11 @@
             <div class="field"><label>แมปที่ Kafra อยู่ (ต้องตรงกับ Save Point หลัง Unstuck)</label><input type="text" id="__assist_kaframap" placeholder="เช่น izlude"></div>
             <div class="field"><label>จุดเดินหลัง Unstuck X</label><input type="number" id="__assist_kafrax" placeholder="0=ใช้ sell"><label style="margin-left:8px">Y</label><input type="number" id="__assist_kafray" placeholder="0=ใช้ sell"><button id="__assist_usekafrapos" style="margin-left:8px;font-size:10px">ใช้พิกัดตัวละคร</button></div>
             <div class="field"><label>เมนู choice (0=Save, 1=Storage, 2=Warp)</label><input type="number" id="__assist_kafrachoice" min="0" max="9" placeholder="1"></div>
-            <div class="btns"><button id="__assist_applykafra">ใช้ค่า storage</button><button id="__assist_t_depfull" class="on">ฝากตอนเต็ม</button><button id="__assist_t_depaftersell" class="on">ฝากหลังขาย</button></div><div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ขาไปฝาก: Unstuck 0x73 → รอ 2 วิ → เดินไปจุด X/Y → คุย Kafra · Save Point ต้องอยู่แมพเดียวกับ Kafra</div>
+            <div class="btns"><button id="__assist_applykafra">ใช้ค่า storage</button><button id="__assist_t_depfull" class="on">ฝากตอนเต็ม</button><button id="__assist_t_depaftersell" class="on">ฝากหลังขาย</button></div>
+            <div class="btns" style="margin-top:6px"><button id="__assist_kafra_cancel_capture">🔬 จับ Kafra Cancel</button><button id="__assist_kafra_cancel_clear">🧹 ล้าง Capture</button></div>
+            <pre id="__assist_kafra_cancel_capture_status" style="white-space:pre-wrap;word-break:break-all;max-height:150px;overflow:auto;background:#171a20;border:1px solid #343b46;border-radius:6px;padding:6px;margin:5px 0 0;font-size:9px;line-height:1.35;color:#cfd8dc">สถานะ: ยังไม่ได้จับ packet</pre>
+            <div style="font-size:10px;color:#ffd166;margin-top:4px;line-height:1.45">★ ชั่วคราว: หลังฝากเสร็จและเห็นเมนู Kafra → กด “จับ Kafra Cancel” → กด Cancel ในเกม 1 ครั้ง → ส่งภาพ Capture มาให้ยืนยัน packet</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;">★ ขาไปฝาก: Unstuck 0x73 → รอ 2 วิ → เดินไปจุด X/Y → คุย Kafra · Save Point ต้องอยู่แมพเดียวกับ Kafra</div>
           </div>
           <!-- ⚙️ อื่นๆ -->
           <!-- 🔑 Auto-Login / Auto-Refresh -->
@@ -10412,6 +10495,8 @@
     // ---- storage wires ----
     root.querySelector('#__assist_storagebtn').addEventListener('click', () => CFG.storageEnabled ? ASSIST.storageOff() : ASSIST.storageOn());
     root.querySelector('#__assist_depositnow').addEventListener('click', () => ASSIST.depositNow());
+    root.querySelector('#__assist_kafra_cancel_capture').addEventListener('click', () => { startKafraCancelCapture(); updateKafraCancelCaptureUI(); });
+    root.querySelector('#__assist_kafra_cancel_clear').addEventListener('click', () => clearKafraCancelCapture());
     root.querySelector('#__assist_applykafra').addEventListener('click', () => {
       const kn = root.querySelector('#__assist_kafra').value.trim();
       const km = root.querySelector('#__assist_kaframap').value.trim();
