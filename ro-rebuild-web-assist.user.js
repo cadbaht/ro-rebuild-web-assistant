@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.22
+// @version      4.189.23
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.22';
+  const VERSION = '4.189.23';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.23', d: '2026-09-25', items: [
+      '🔐 Telegram Token Security — ลบ Telegram Bot Token ที่เคย hardcode อยู่ใน source ออกทั้งหมด',
+      '   · Feedback ไม่ยิง Telegram API จาก browser โดยตรงอีกต่อไป แต่ส่งผ่าน Relay Server เท่านั้น',
+      '   · ลบ Feedback Chat ID ที่ฝังใน source และลบตัวอย่าง token รูปแบบจริงออกจาก placeholder',
+      '   · Telegram Alerts ที่ผู้ใช้ตั้งเองยังใช้งานผ่าน Relay ได้เหมือนเดิม โดยไม่มี token ผู้พัฒนาฝังใน userscript',
+    ]},
     { v: '4.189.22', d: '2026-09-25', items: [
       '⚔️🏠 Combat-gated Return — หลังขาย/ฝากเสร็จ ถ้า Combat OFF จะไม่วาร์ปกลับแมพฟาร์ม',
       '   · Sell/Storage จะค้างสถานะ WAIT_COMBAT_RETURN อยู่ในเมืองจนกด Combat ON',
@@ -1313,9 +1319,7 @@
   // ★ v4.189.16: แยก source อัปเดตออกจาก resource ภายในสคริปต์
   // เปลี่ยน repo update ไม่ควรทำให้ DB/icon/GAT resource เปลี่ยนตามไปด้วย
   const ASSET_RAW = 'https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js';
-  // ★ Feedback — ส่งปัญหา/ข้อเสนอแนะถึงผู้พัฒนาผ่าน Telegram
-  const FEEDBACK_BOT_TOKEN = '7932077955:AAEc2u3FaKLY-6iY6VjseK5_GPJXgYK3ORA';
-  const FEEDBACK_CHAT_ID = '-5021728172';
+  // ★ Feedback — ส่งผ่าน Relay Server เท่านั้น (ไม่มี Telegram credential ฝังใน userscript)
   const CFG_STORAGE_KEY = 'roAssistConfig_v1';
   // keys ที่บันทึก/โหลด (boolean/number/array/string — ไม่เก็บ function หรือ object ซ้อน)
   const PERSIST_KEYS = [
@@ -10057,7 +10061,7 @@
               ★ หา Chat ID: คุย <code>@userinfobot</code><br>
               ★ บอทต้องเชื่อม relay server ก่อน (ดูสถานะที่แท็บ สถิติ)
             </div>
-            <div class="field"><label>Bot Token (จาก @BotFather)</label><input type="text" id="__assist_tg_token" placeholder="เช่น 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ" autocomplete="off"></div>
+            <div class="field"><label>Bot Token (จาก @BotFather)</label><input type="text" id="__assist_tg_token" placeholder="วาง Bot Token จาก @BotFather" autocomplete="off"></div>
             <div class="field"><label>Chat ID (จาก @userinfobot)</label><input type="text" id="__assist_tg_chatid" placeholder="เช่น 123456789" autocomplete="off"></div>
             <div class="btns">
               <button id="__assist_tg_save" class="primary">💾 บันทึก</button>
@@ -11096,40 +11100,20 @@ setInterval(()=>{if(last&&Date.now()-last.t>5000){document.getElementById('dot')
       const sendBtn = overlay.querySelector('#__assist_feedback_send');
       sendBtn.disabled = true; sendBtn.textContent = 'กำลังส่ง...';
       statusEl.style.color = '#f39c12'; statusEl.textContent = 'กำลังส่ง...';
-      const ts = new Date().toISOString().slice(0, 16).replace('T', ' ');
-      // ★ Telegram: ส่งเฉพาะข้อความผู้ใช้ (ไม่ส่ง log — กัน 400 bad request จาก HTML parse)
-      const text = [
-        '💬 Feedback', '', msg, '',
-        '— — —',
-        '🤖 v' + VERSION,
-        '👤 ' + (playerName || '?'),
-        '🗺️ ' + (currentMap || '?'),
-        '⏰ ' + ts,
-      ].join('\n');
       try {
-        // ★ ส่งข้อความหลัก (ไม่ใช้ parse_mode — กัน 400 เมื่อข้อความมี < > &)
-        const res = await fetch('https://api.telegram.org/bot' + FEEDBACK_BOT_TOKEN + '/sendMessage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: FEEDBACK_CHAT_ID, text, disable_web_page_preview: true }),
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        // ★★ ส่งไป relay server (เก็บในระบบ + log ถ้าแนบ)
-        if (relayWs && relayWs.readyState === 1) {
-          try {
-            relayWs.send(JSON.stringify({
-              type: 'feedback',
-              message: msg,
-              log: attachLog ? logBuf.slice(-500).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 200) })) : null,
-              dbgLog: attachLog ? dbgBuf.slice(-300).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 200) })) : null,
-              version: VERSION,
-              map: currentMap || '',
-              playerName: playerName || '',
-            }));
-          } catch (_) {}
-        }
-        statusEl.style.color = '#4caf50'; statusEl.textContent = '✅ ส่งแล้ว — ขอบคุณมาก!';
-        log('💬 ส่ง feedback แล้ว' + (attachLog ? ' (พร้อม log ' + logBuf.length + ' บรรทัด)' : ''));
+        // ★ Security: ไม่มี Bot Token/Chat ID ฝังใน browser อีกแล้ว — Feedback ส่งผ่าน Relay เท่านั้น
+        if (!relayWs || relayWs.readyState !== 1) throw new Error('Relay Server ยังไม่เชื่อมต่อ');
+        relayWs.send(JSON.stringify({
+          type: 'feedback',
+          message: msg,
+          log: attachLog ? logBuf.slice(-500).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 200) })) : null,
+          dbgLog: attachLog ? dbgBuf.slice(-300).map(l => ({ t: l.t, m: (l.msg || '').slice(0, 200) })) : null,
+          version: VERSION,
+          map: currentMap || '',
+          playerName: playerName || '',
+        }));
+        statusEl.style.color = '#4caf50'; statusEl.textContent = '✅ ส่งผ่าน Relay แล้ว — ขอบคุณมาก!';
+        log('💬 ส่ง feedback ผ่าน Relay แล้ว' + (attachLog ? ' (พร้อม log ' + logBuf.length + ' บรรทัด)' : ''));
         setTimeout(close, 1500);
       } catch (e) {
         statusEl.style.color = '#f44336'; statusEl.textContent = '❌ ส่งไม่สำเร็จ: ' + e.message;
