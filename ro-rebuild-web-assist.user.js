@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.10
+// @version      4.189.12
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js
-// @downloadURL  https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js
+// @updateURL    https://raw.githubusercontent.com/cadbaht/ro-rebuild-web-assistant/main/ro-rebuild-web-assist.user.js
+// @downloadURL  https://raw.githubusercontent.com/cadbaht/ro-rebuild-web-assistant/main/ro-rebuild-web-assist.user.js
 // ==/UserScript==
 
 /* ==========================================================================
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.10';
+  const VERSION = '4.189.12';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.12', d: '2026-09-25', items: [
+      '💰🏦 Fix ปุ่มใช้พิกัดตัวละคร — อัปเดตแมป/เมือง + X/Y บน UI ทันทีและบันทึก config',
+      '   · Sell และ Kafra ใช้ currentMap ปัจจุบันร่วมกับพิกัดตัวละคร ไม่ต้องกดใช้ค่าซ้ำ',
+    ]},
+    { v: '4.189.11', d: '2026-09-25', items: [
+      '🔄 เปลี่ยนแหล่งอัปเดตเป็น GitHub ของ cadbaht/ro-rebuild-web-assistant',
+      '   · @updateURL / @downloadURL / GITHUB_RAW ใช้ Raw URL จาก branch main ของ repo ใหม่',
+    ]},
     { v: '4.189.10', d: '2026-09-25', items: [
       '❤️ HP Authoritative Sync บนฐาน v4.189.7 — UI/Heal/Rest ใช้ HP จาก STAT/SPAWN ของ server เท่านั้น',
       '🛡️ แยก safety HP สำหรับ HP Emergency Flee เพื่อหนีเร็ว โดยไม่ทำให้ตัวเลข HP บน UI drift',
@@ -1259,7 +1267,7 @@
       '🔍 ASSIST.debug() — ดูสถานะ combat ครบทุกอย่าง',
     ]},
   ];
-  const GITHUB_RAW = 'https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js';
+  const GITHUB_RAW = 'https://raw.githubusercontent.com/cadbaht/ro-rebuild-web-assistant/main/ro-rebuild-web-assist.user.js';
   // ★ Feedback — ส่งปัญหา/ข้อเสนอแนะถึงผู้พัฒนาผ่าน Telegram
   const FEEDBACK_BOT_TOKEN = '7932077955:AAEc2u3FaKLY-6iY6VjseK5_GPJXgYK3ORA';
   const FEEDBACK_CHAT_ID = '-5021728172';
@@ -8217,7 +8225,18 @@
     sellOff() { CFG.sellEnabled = false; log('💰 Auto-Sell: OFF'); },
     setSellNpc(name, map) { CFG.sellNpcName = name; if (map) CFG.sellNpcMap = map; log('💰 NPC:', name, '@', CFG.sellNpcMap); },
     setSellNpcPos(x, y) { CFG.sellNpcX = Math.round(Number(x)); CFG.sellNpcY = Math.round(Number(y)); log('💰 จุดเดินไป NPC หลัง Unstuck:', CFG.sellNpcX, CFG.sellNpcY); },
-    useCurrentPosAsSellWarp() { if (player.x != null && player.y != null) { CFG.sellNpcX = Math.round(player.x); CFG.sellNpcY = Math.round(player.y); if (currentMap) CFG.sellNpcMap = currentMap; log('💰 ใช้พิกัดปัจจุบันเป็นจุดเดินหลัง Unstuck:', CFG.sellNpcMap, '@(', CFG.sellNpcX, CFG.sellNpcY + ')'); } else { log('⚠️ ยังไม่รู้พิกัดตัวละคร'); } },
+    useCurrentPosAsSellWarp() {
+      if (player.x != null && player.y != null) {
+        CFG.sellNpcX = Math.round(player.x);
+        CFG.sellNpcY = Math.round(player.y);
+        if (currentMap) CFG.sellNpcMap = currentMap;
+        saveConfigDebounced();
+        log('💰 ใช้พิกัดปัจจุบันเป็นจุดเดินหลัง Unstuck:', CFG.sellNpcMap, '@(', CFG.sellNpcX, CFG.sellNpcY + ')');
+        return true;
+      }
+      log('⚠️ ยังไม่รู้พิกัดตัวละคร');
+      return false;
+    },
     setSellInterval(min) { CFG.sellIntervalMin = min; log('💰 ขายทุก', min, 'นาที (0=off)'); },
     toggleSellOnFull(on) { CFG.sellOnFull = !!on; log('💰 ขายตอนเต็ม =', CFG.sellOnFull); },
     setSellItems(...ids) { CFG.sellItemIds = ids; log('💰 ขาย item:', ids.map(nameOf).join(', ')); },
@@ -8249,7 +8268,18 @@
     storageOff() { CFG.storageEnabled = false; log('🏦 Auto-Storage: OFF'); },
     setKafra(name, map) { CFG.kafraName = name; if (map) CFG.kafraMap = map; log('🏦 Kafra:', name, '@', CFG.kafraMap); },
     setKafraPos(x, y) { CFG.kafraMapX = Math.round(Number(x)); CFG.kafraMapY = Math.round(Number(y)); log('🏦 จุดเดินไป Kafra หลัง Unstuck:', CFG.kafraMapX, CFG.kafraMapY); },
-    useCurrentPosAsKafra() { if (player.x != null && player.y != null) { CFG.kafraMapX = Math.round(player.x); CFG.kafraMapY = Math.round(player.y); if (currentMap) CFG.kafraMap = currentMap; log('🏦 ใช้พิกัดปัจจุบันเป็นจุดเดิน Kafra หลัง Unstuck:', CFG.kafraMap, '@(', CFG.kafraMapX, CFG.kafraMapY + ')'); } else { log('⚠️ ยังไม่รู้พิกัดตัวละคร'); } },
+    useCurrentPosAsKafra() {
+      if (player.x != null && player.y != null) {
+        CFG.kafraMapX = Math.round(player.x);
+        CFG.kafraMapY = Math.round(player.y);
+        if (currentMap) CFG.kafraMap = currentMap;
+        saveConfigDebounced();
+        log('🏦 ใช้พิกัดปัจจุบันเป็นจุดเดิน Kafra หลัง Unstuck:', CFG.kafraMap, '@(', CFG.kafraMapX, CFG.kafraMapY + ')');
+        return true;
+      }
+      log('⚠️ ยังไม่รู้พิกัดตัวละคร');
+      return false;
+    },
     toggleDepositOnFull(on) { CFG.depositOnFull = !!on; log('🏦 ฝากตอนเต็ม =', CFG.depositOnFull); },
     toggleDepositAfterSell(on) { CFG.depositAfterSell = !!on; log('🏦 ฝากหลังขาย =', CFG.depositAfterSell); },
     // ★ Warp-to-Boss toggles (สำหรับ remote command)
@@ -10355,7 +10385,15 @@
       if (!isNaN(sx) && !isNaN(sy)) ASSIST.setSellNpcPos(sx, sy);
       if (!isNaN(interval)) ASSIST.setSellInterval(interval);
     });
-    root.querySelector('#__assist_useselfpos').addEventListener('click', () => { ASSIST.useCurrentPosAsSellWarp(); });
+    root.querySelector('#__assist_useselfpos').addEventListener('click', () => {
+      if (!ASSIST.useCurrentPosAsSellWarp()) return;
+      const mapEl = root.querySelector('#__assist_sellmap');
+      const xEl = root.querySelector('#__assist_sellx');
+      const yEl = root.querySelector('#__assist_selly');
+      if (mapEl) mapEl.value = CFG.sellNpcMap || '';
+      if (xEl) xEl.value = CFG.sellNpcX;
+      if (yEl) yEl.value = CFG.sellNpcY;
+    });
     root.querySelector('#__assist_t_sellfull').addEventListener('click', () => { CFG.sellOnFull = !CFG.sellOnFull; ASSIST.toggleSellOnFull(CFG.sellOnFull); });
     // ---- storage wires ----
     root.querySelector('#__assist_storagebtn').addEventListener('click', () => CFG.storageEnabled ? ASSIST.storageOff() : ASSIST.storageOn());
@@ -10370,7 +10408,15 @@
       if (!isNaN(kx) && !isNaN(ky)) ASSIST.setKafraPos(kx, ky);
       if (!isNaN(kc)) CFG.kafraChoice = kc;
     });
-    root.querySelector('#__assist_usekafrapos').addEventListener('click', () => { ASSIST.useCurrentPosAsKafra(); });
+    root.querySelector('#__assist_usekafrapos').addEventListener('click', () => {
+      if (!ASSIST.useCurrentPosAsKafra()) return;
+      const mapEl = root.querySelector('#__assist_kaframap');
+      const xEl = root.querySelector('#__assist_kafrax');
+      const yEl = root.querySelector('#__assist_kafray');
+      if (mapEl) mapEl.value = CFG.kafraMap || '';
+      if (xEl) xEl.value = CFG.kafraMapX;
+      if (yEl) yEl.value = CFG.kafraMapY;
+    });
     root.querySelector('#__assist_t_depfull').addEventListener('click', () => { CFG.depositOnFull = !CFG.depositOnFull; ASSIST.toggleDepositOnFull(CFG.depositOnFull); });
     root.querySelector('#__assist_t_depaftersell').addEventListener('click', () => { CFG.depositAfterSell = !CFG.depositAfterSell; ASSIST.toggleDepositAfterSell(CFG.depositAfterSell); });
     // ---- auto trade wires (v4.188.7 verified protocol) ----
