@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.27
+// @version      4.189.33
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,56 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.27';
+  const VERSION = '4.189.33';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.33', d: '2026-09-25', items: [
+      '🧹 Market Cleanup — เอา Packet Capture ออกจาก Market Search ทั้งหมด',
+      '   · ลบ Advanced: Packet Capture, ปุ่ม Capture/Copy/Clear และหน้าต่าง log packet',
+      '   · ลบ runtime packet hook ของ Market และ API marketCapture*',
+      '   · คง Market Scanner / Search / Price Compare / 🛒 เปิดร้าน ไว้ครบ',
+      '   · ย่อหน้าต่าง Market ลงอีก เพราะไม่มีส่วน Capture ด้านล่างแล้ว',
+    ]},
+    { v: '4.189.32', d: '2026-09-25', items: [
+      '🪟 Market Compact UI — ย่อหน้าต่าง Market Search ให้กะทัดรัดขึ้น',
+      '   · ค่าเริ่มต้น 700×560px (ไม่เกิน 92vw / 64vh) และลากขอบปรับขนาดเองได้',
+      '   · ตารางรายการใช้พื้นที่หลักของหน้าต่างและยืด/หดตามขนาดหน้าต่าง',
+      '   · ย้าย Packet Capture ทั้งชุดเข้า Advanced แบบพับจริง — ปิดอยู่จะไม่กินพื้นที่',
+      '   · ลด padding/ปุ่ม/หัวตารางเล็กน้อย แต่คง Search / Scan / Open Shop ครบ',
+    ]},
+    { v: '4.189.31', d: '2026-09-25', items: [
+      '🛒 Market Open Shop — เพิ่มปุ่มเปิดร้านจริงจากผลค้นหาได้ทันที',
+      '   · แต่ละแถวสินค้าเพิ่มปุ่ม 🛒 เปิดร้าน ใช้ Shop Open ID ที่ Market Scanner เก็บไว้',
+      '   · กดแล้วเปิดหน้าร้านจริงค้างไว้สำหรับเลือกซื้อ ไม่ปิดอัตโนมัติเหมือนตอนสแกน',
+      '   · รอตรวจ IN 0x6b เพื่อยืนยันว่าร้านยังเปิดอยู่; ถ้าข้อมูลเก่า/ร้านปิดแล้วจะแจ้งเปิดไม่สำเร็จ',
+      '   · เมื่อเปิดสำเร็จ Market Search จะซ่อนให้อัตโนมัติ เพื่อเห็นหน้าร้านในเกมทันที',
+    ]},
+    { v: '4.189.30', d: '2026-09-25', items: [
+      '🔎 Market Scanner Fix — แก้ช่องค้นหาพิมพ์ไม่ได้ + เปลี่ยนวิธีหา Shop ID ที่ถูกต้อง',
+      '   · ช่องค้นชื่อ/Item ID ในหน้าต่าง Market รับคีย์ได้แล้ว แม้ Unity WebGL แย่ง focus',
+      '   · ยกเลิกการเดา Shop ID จาก player entity (ผลจริงตรวจ 50 คน = 0 ร้าน เพราะ ID คนละชุด)',
+      '   · เพิ่ม Shop-ID Discovery: เก็บ packet ตอนเข้าแมป แล้วเรียนรู้แหล่ง Shop ID จากการเปิดร้านด้วยมือ 1 ครั้ง',
+      '   · เมื่อเรียนรู้ signature ได้ จะสกัด Shop ID ของร้านอื่นจาก packet ที่ Client รับไว้ แล้วปุ่มสแกนใช้ ID ชุดนี้แทน player ID',
+      '   · จำ signature ที่เรียนรู้ไว้ในเครื่อง; รอบถัดไปหลังเข้าแมปสามารถสแกนร้านที่ค้นพบได้โดยไม่ต้อง calibrate ซ้ำ',
+      '   · ถ้ายังเรียนรู้ไม่ได้ UI จะแจ้งตรงๆ ว่าต้อง Reload/เข้าแมปใหม่แล้วเปิดร้าน 1 ร้านเพื่อ Calibration แทนการขึ้น เจอ 0 ร้าน แบบกำกวม',
+    ]},
+    { v: '4.189.29', d: '2026-09-25', items: [
+      '🔎 Market Index / Price Compare — ถอด protocol ร้านค้าจาก capture จริงแล้ว',
+      '   · OUT 0x6b len=5 = ขอเปิดร้าน, IN 0x6b = ชื่อร้าน + จำนวนรายการ + item/qty/price, OUT 0x6a = ปิดร้าน',
+      '   · รองรับ record สินค้า 2 แบบ: stackable type=1 (15 bytes) และ equipment type=2 (49 bytes)',
+      '   · เปิดร้านด้วยมือครั้งเดียว Assist จะบันทึกสินค้า ราคา ร้าน ผู้ขาย พิกัด และเวลาให้อัตโนมัติ',
+      '   · เพิ่มหน้าค้นหา Item ID/ชื่อ + เรียงราคาถูก→แพง + ทำเครื่องหมาย ⭐ ราคาถูกสุด',
+      '   · เพิ่ม 🔄 สแกนร้านรอบตัว (ทดลอง) ไล่ query ผู้เล่นที่ Client มองเห็นทีละคนแบบ rate-limit และเก็บเฉพาะร้านที่ตอบ 0x6b',
+      '   · Market index เก็บในเครื่องและล้างได้จากหน้าต่าง 🔎; Capture เดิมยังอยู่สำหรับ debug protocol',
+    ]},
+    { v: '4.189.28', d: '2026-09-25', items: [
+      '🔎 Market Packet Capture — เพิ่มเครื่องมือจับ protocol ร้านค้าเพื่อทำระบบค้นหา/เทียบราคาแบบใบหาของในขั้นถัดไป',
+      '   · เพิ่มปุ่ม 🔎 ใน mini-bar เปิดหน้าต่าง Capture โดยไม่บังการคลิกร้านในเกม',
+      '   · จับทั้ง IN/OUT พร้อม opcode, length, full hex และ CLICK marker เพื่อเทียบ packet ก่อน/หลังเปิดร้าน',
+      '   · Capture 30 วินาทีและ pause automation ชั่วคราวเพื่อลด packet รบกวน แล้วคืนค่าระบบเดิมอัตโนมัติ',
+      '   · แสดงสรุป signature ของ packet + ปุ่ม 📋 คัดลอกผล เพื่อส่งกลับมาวิเคราะห์ได้โดยไม่ต้องเดา opcode',
+      '   · ยังไม่สแกน/ซื้อของอัตโนมัติ — เวอร์ชันนี้ใช้เรียนรู้ Shop/Search Store protocol จริงของเซิร์ฟเวอร์ก่อน',
+    ]},
     { v: '4.189.27', d: '2026-09-25', items: [
       '💬 Chat Alert + Pause — เมื่อมี nearby/whisper จากผู้เล่นอื่น ให้หยุดการเคลื่อนไหว/ต่อสู้อัตโนมัติชั่วคราว',
       '   · ไม่ตอบอัตโนมัติ: แสดงกล่องแจ้งเตือนพร้อมปุ่มตอบด่วน 👋 / ครับ / แป๊บนึงครับ — ต้องกดเองทุกครั้ง',
@@ -2692,6 +2739,439 @@
     if (kafraCancelCaptureStopTimer) clearTimeout(kafraCancelCaptureStopTimer);
     kafraCancelCaptureStopTimer = setTimeout(() => stopKafraCancelCapture('เก็บหลังคลิกครบ 2500ms'), 2500);
   }
+  // ★★ v4.189.29 — Market Index / parser จาก packet จริง
+  const MARKET_INDEX_KEY = 'ro_assist_market_index_v1';
+  const MARKET_INDEX_MAX_SHOPS = 500;
+  let marketShopIndex = new Map();      // key -> {map,vendorEntityId,responseShopId,shopName,sellerName,x,y,t,items}
+  let marketLastOpenRequest = null;     // {entityId,t,source}
+  let marketScanActive = false;
+  let marketScanCancel = false;
+  let marketScanWaiter = null;
+  let marketScanSnapshot = null;
+  let marketScanStatus = '';
+
+  // ★ v4.189.30 — Shop-ID discovery
+  // Shop open id (OUT 0x6b + u32) ไม่ใช่ player entity id; ต้องเรียนรู้จาก packet ที่ประกาศร้านตอนเข้าแมป
+  const MARKET_DISCOVERY_KEY = 'ro_assist_market_shopid_signature_v1';
+  const MARKET_PROBE_MAX = 2600;
+  const MARKET_PROBE_TTL_MS = 180000;
+  let marketProbePackets = [];          // {t,map,op,len,data}
+  let marketShopIdSignature = null;     // {op,offset,fromEnd?,support,learnedAt}
+  let marketSignatureEvidence = new Map(); // key -> Set(shopOpenId)
+  let marketKnownOpenIds = new Set();
+
+  function marketLoadDiscovery() {
+    try {
+      const x = JSON.parse(localStorage.getItem(MARKET_DISCOVERY_KEY) || 'null');
+      if (x && Number.isInteger(x.op) && Number.isInteger(x.offset)) marketShopIdSignature = x;
+    } catch (_) {}
+    try {
+      for (const sh of marketShopIndex.values()) if (sh && sh.vendorEntityId) marketKnownOpenIds.add(Number(sh.vendorEntityId) >>> 0);
+    } catch (_) {}
+  }
+  function marketSaveDiscovery() {
+    try { if (marketShopIdSignature) localStorage.setItem(MARKET_DISCOVERY_KEY, JSON.stringify(marketShopIdSignature)); } catch (_) {}
+  }
+  function marketProbeRemember(u) {
+    if (!u || !u.length) return;
+    // เก็บ packet ขาเข้าแบบ ring-buffer ตั้งแต่ document-start เพื่อใช้หาแหล่ง shopOpenId หลังผู้ใช้เปิดร้าน 1 ครั้ง
+    try {
+      const now = Date.now();
+      marketProbePackets.push({ t: now, map: currentMap || '', op: u[0], len: u.length, data: new Uint8Array(u) });
+      if (marketProbePackets.length > MARKET_PROBE_MAX) marketProbePackets.splice(0, marketProbePackets.length - MARKET_PROBE_MAX);
+      while (marketProbePackets.length && now - marketProbePackets[0].t > MARKET_PROBE_TTL_MS) marketProbePackets.shift();
+    } catch (_) {}
+  }
+  function marketU32LEBytes(id) { id >>>= 0; return [id&255,(id>>>8)&255,(id>>>16)&255,(id>>>24)&255]; }
+  function marketFindIdHits(id) {
+    const b = marketU32LEBytes(id), hits=[];
+    for (const rec of marketProbePackets) {
+      const u=rec.data; if (!u || u.length < 5) continue;
+      for (let o=1; o<=u.length-4; o++) {
+        if (u[o]===b[0] && u[o+1]===b[1] && u[o+2]===b[2] && u[o+3]===b[3]) {
+          hits.push({op:rec.op,offset:o,len:rec.len,fromEnd:rec.len-(o+4),t:rec.t,map:rec.map});
+        }
+      }
+    }
+    return hits;
+  }
+  function marketLearnShopIdSource(id) {
+    id = Number(id) >>> 0; if (!id) return;
+    marketKnownOpenIds.add(id);
+    const hits = marketFindIdHits(id);
+    if (!hits.length) {
+      dbg('🔎 Market Discovery: shopOpenId '+id.toString(16)+' ไม่พบใน probe ย้อนหลัง — น่าจะเริ่มเก็บหลังเข้าแมปแล้ว');
+      return;
+    }
+    // ตัด packet noise ที่เราใช้เป็น movement/stat/radar อยู่แล้วก่อน; ถ้าเหลือว่างค่อยใช้ทั้งหมด
+    let useful = hits.filter(h => ![0x07,0x25,0x3c,0x33,0x0d,0x0f].includes(h.op));
+    if (!useful.length) useful = hits;
+    for (const h of useful) {
+      for (const mode of ['start','end']) {
+        const off = mode==='start' ? h.offset : h.fromEnd;
+        const key = h.op+':'+mode+':'+off;
+        let set=marketSignatureEvidence.get(key); if(!set){set=new Set();marketSignatureEvidence.set(key,set);} set.add(id);
+      }
+    }
+    // เลือก signature support สูงสุด; 1 ร้านใช้ provisional ได้ ถ้าผล candidate ไม่บวม, 2 ร้านขึ้นไปถือว่ายืนยัน
+    let best=null;
+    for (const [key,set] of marketSignatureEvidence) {
+      const [opS,mode,offS]=key.split(':'); const cand={op:Number(opS),mode,offset:Number(offS),support:set.size};
+      if (!best || cand.support>best.support) best=cand;
+    }
+    if (best) {
+      const discovered = marketDiscoverIdsBySignature(best, 400);
+      if (best.support >= 2 || (best.support >= 1 && discovered.length >= 2 && discovered.length <= 250)) {
+        marketShopIdSignature={op:best.op,mode:best.mode,offset:best.offset,support:best.support,learnedAt:Date.now()};
+        marketSaveDiscovery();
+        marketScanStatus='เรียนรู้ Shop ID แล้ว · พบ candidate '+discovered.length+' ร้าน';
+        log('✅ Market Discovery: signature IN 0x'+best.op.toString(16).padStart(2,'0')+' '+best.mode+'@'+best.offset+' · support '+best.support+' · candidate '+discovered.length);
+      } else {
+        marketScanStatus='กำลังเรียนรู้ Shop ID ('+best.support+'/2) · เปิดร้านอีก 1 ร้าน';
+        log('🧭 Market Discovery: เจอ candidate signature แล้ว — เปิดร้านอีก 1 ร้านเพื่อยืนยัน');
+      }
+      renderMarketIndexUI();
+    }
+  }
+  function marketReadIdBySignature(rec, sig) {
+    if (!rec || !sig || rec.op!==sig.op || !rec.data) return 0;
+    const u=rec.data;
+    const off = sig.mode==='end' ? (u.length - 4 - sig.offset) : sig.offset;
+    if (off < 1 || off+4>u.length) return 0;
+    return u32(u, off) >>> 0;
+  }
+  function marketDiscoverIdsBySignature(sig, limit=300) {
+    const out=[], seen=new Set(); const now=Date.now();
+    for (const rec of marketProbePackets) {
+      if (now-rec.t > MARKET_PROBE_TTL_MS) continue;
+      if (currentMap && rec.map && rec.map!==currentMap) continue;
+      const id=marketReadIdBySignature(rec,sig); if(!id || seen.has(id) || id===playerId) continue;
+      seen.add(id); out.push(id); if(out.length>=limit) break;
+    }
+    return out;
+  }
+
+  function marketEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function marketDecodeUtf8(u, start, len) {
+    try { return new TextDecoder('utf-8', {fatal:false}).decode(u.slice(start, start + len)).replace(/\0/g,'').trim(); }
+    catch (_) { return ''; }
+  }
+  function marketLoadIndex() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(MARKET_INDEX_KEY) || '[]');
+      if (Array.isArray(arr)) for (const sh of arr.slice(-MARKET_INDEX_MAX_SHOPS)) {
+        if (!sh || !Array.isArray(sh.items)) continue;
+        const key = sh.key || ((sh.map||'?') + ':' + (sh.vendorEntityId || ('r'+sh.responseShopId)));
+        marketShopIndex.set(key, {...sh, key});
+      }
+    } catch (_) {}
+  }
+  function marketSaveIndex() {
+    try {
+      const arr = [...marketShopIndex.values()].sort((a,b)=>(a.t||0)-(b.t||0)).slice(-MARKET_INDEX_MAX_SHOPS);
+      localStorage.setItem(MARKET_INDEX_KEY, JSON.stringify(arr));
+    } catch (_) {}
+  }
+  marketLoadIndex();
+  marketLoadDiscovery();
+
+  function marketObserveOutgoing(u) {
+    if (!u || !u.length) return;
+    if (u[0] === 0x6b && u.length === 5) {
+      const entityId = u32(u, 1) >>> 0;
+      const source = marketScanActive ? 'scan' : 'manual';
+      marketLastOpenRequest = { entityId, t: Date.now(), source };
+      marketKnownOpenIds.add(entityId);
+      if (source === 'manual') marketLearnShopIdSource(entityId);
+    }
+  }
+
+  function marketParseShopPacket(u) {
+    if (!u || u[0] !== 0x6b || u.length < 11) return null;
+    try {
+      const responseShopId = u32(u, 1);
+      const titleLen = u16(u, 5);
+      let p = 7;
+      if (titleLen < 0 || p + titleLen + 4 > u.length) return null;
+      const shopName = marketDecodeUtf8(u, p, titleLen); p += titleLen;
+      const itemCount = u32(u, p); p += 4;
+      if (itemCount > 500) return null;
+      const items = [];
+      for (let i=0; i<itemCount; i++) {
+        if (p + 10 > u.length) break;
+        const listingId = u32(u, p);
+        const type = u[p + 4];
+        const itemId = u32(u, p + 5);
+        if (type === 1) {
+          if (p + 15 > u.length) break;
+          const qty = u16(u, p + 9);
+          const price = u32(u, p + 11);
+          items.push({listingId,type,itemId,qty,price});
+          p += 15;
+        } else if (type === 2) {
+          if (p + 49 > u.length) break;
+          const qty = u[p + 9] || 1;
+          const refine = u[p + 12] || 0;
+          const instanceId = u32(u, p + 13);
+          const equipDataHex = u8ToHex(u.slice(p + 17, p + 45));
+          const price = u32(u, p + 45);
+          items.push({listingId,type,itemId,qty,price,refine,instanceId,equipDataHex});
+          p += 49;
+        } else {
+          log('⚠️ Market parser: ไม่รู้ item record type=' + type + ' @' + p + ' — หยุด parse ร้านนี้');
+          break;
+        }
+      }
+      const req = (marketLastOpenRequest && Date.now() - marketLastOpenRequest.t < 2500) ? marketLastOpenRequest : null;
+      const vendorEntityId = req ? req.entityId : 0;
+      const ent = vendorEntityId ? entities.get(vendorEntityId) : null;
+      const key = (currentMap || '?') + ':' + (vendorEntityId || ('r' + responseShopId));
+      const shop = {
+        key, map: currentMap || '', vendorEntityId, responseShopId, shopName,
+        sellerName: ent && ent.name ? ent.name : '',
+        x: ent && ent.x != null ? ent.x : null,
+        y: ent && ent.y != null ? ent.y : null,
+        t: Date.now(), items
+      };
+      marketShopIndex.set(key, shop);
+      if (vendorEntityId) marketKnownOpenIds.add(vendorEntityId >>> 0);
+      while (marketShopIndex.size > MARKET_INDEX_MAX_SHOPS) {
+        const oldest=[...marketShopIndex.values()].sort((a,b)=>(a.t||0)-(b.t||0))[0];
+        if (!oldest) break; marketShopIndex.delete(oldest.key);
+      }
+      marketSaveIndex();
+      const low = items.length ? Math.min(...items.map(x=>x.price||0).filter(x=>x>0)) : 0;
+      log('🛒 Market: ' + (shopName || '(ไม่มีชื่อร้าน)') + ' · ' + items.length + '/' + itemCount + ' รายการ' + (low ? ' · เริ่ม ' + low.toLocaleString() + 'z' : ''));
+      if (marketScanWaiter && (!vendorEntityId || marketScanWaiter.entityId === vendorEntityId)) {
+        const w = marketScanWaiter; marketScanWaiter = null; try { w.resolve(shop); } catch (_) {}
+      }
+      updateMarketUI();
+      return shop;
+    } catch (e) { log('⚠️ Market parser error: ' + e.message); return null; }
+  }
+
+  function marketObserveIncoming(u) {
+    marketProbeRemember(u);
+    if (u && u[0] === 0x6b) marketParseShopPacket(u);
+  }
+  function marketAllRows() {
+    const rows=[];
+    for (const sh of marketShopIndex.values()) for (const it of (sh.items||[])) rows.push({shop:sh,item:it});
+    return rows;
+  }
+  function marketAgeText(t) {
+    const sec=Math.max(0,Math.floor((Date.now()-(t||0))/1000));
+    if (sec<60) return sec+'วิ'; if (sec<3600) return Math.floor(sec/60)+'น'; return (sec/3600).toFixed(1)+'ชม';
+  }
+  function marketClearIndex() {
+    marketShopIndex.clear(); marketSaveIndex(); updateMarketUI(); log('🧹 ล้าง Market Index แล้ว');
+  }
+  function marketFilteredRows(q) {
+    q=String(q||'').trim().toLowerCase();
+    let rows=marketAllRows();
+    if (q) rows=rows.filter(r=>{
+      const id=String(r.item.itemId);
+      let nm=''; try { nm=String(nameOf(r.item.itemId)||''); } catch (_) {}
+      return id.includes(q) || nm.toLowerCase().includes(q) || String(r.shop.shopName||'').toLowerCase().includes(q) || String(r.shop.sellerName||'').toLowerCase().includes(q);
+    });
+    rows.sort((a,b)=>(a.item.price||0)-(b.item.price||0) || (b.shop.t||0)-(a.shop.t||0));
+    return rows;
+  }
+  function renderMarketIndexUI() {
+    const panel=document.getElementById('__assist_market_panel'); if(!panel) return;
+    const summary=panel.querySelector('[data-market-index-summary]');
+    const body=panel.querySelector('[data-market-results]');
+    const inp=panel.querySelector('[data-market-search]');
+    const rows=marketFilteredRows(inp ? inp.value : '');
+    const shops=marketShopIndex.size, listings=marketAllRows().length;
+    if(summary) summary.textContent='ดัชนี: '+shops+' ร้าน · '+listings+' รายการ'+(marketScanStatus ? ' · '+marketScanStatus : '');
+    const disc=panel.querySelector('[data-market-discovery]');
+    if(disc){
+      const n = marketShopIdSignature ? marketDiscoverIdsBySignature(marketShopIdSignature,300).length : 0;
+      disc.textContent = marketShopIdSignature
+        ? ('Shop-ID: ✅ learned IN 0x'+marketShopIdSignature.op.toString(16).padStart(2,'0')+' '+marketShopIdSignature.mode+'@'+marketShopIdSignature.offset+' · candidates '+n)
+        : ('Shop-ID: ⚠️ ยังไม่ learned · Reload/เข้าแมปใหม่แล้วเปิดร้านด้วยมือ 1 ร้านเพื่อ Calibration');
+    }
+    if(!body) return;
+    if(!rows.length){ body.innerHTML='<div style="padding:10px;color:#777">ยังไม่มีผล — เปิดร้านด้วยมือ 1 ร้าน หรือกด 🔄 สแกนร้านรอบตัว</div>'; return; }
+    const cheapestByItem=new Map();
+    for(const r of rows){ const id=r.item.itemId; if(!cheapestByItem.has(id) || r.item.price < cheapestByItem.get(id)) cheapestByItem.set(id,r.item.price); }
+    body.innerHTML=rows.slice(0,300).map(r=>{
+      const sh=r.shop,it=r.item; let nm='item_'+it.itemId; try { nm=nameOf(it.itemId)||nm; } catch(_){}
+      const cheap=it.price===cheapestByItem.get(it.itemId);
+      const pos=(sh.x!=null&&sh.y!=null)?('@'+Math.round(sh.x)+','+Math.round(sh.y)):'@?';
+      const refine = it.type===2 && it.refine ? (' +'+it.refine) : '';
+      const openId = Number(sh.vendorEntityId || 0) >>> 0;
+      return '<div style="display:grid;grid-template-columns:minmax(120px,1.6fr) 95px 55px minmax(150px,1.4fr) 55px 72px;gap:6px;align-items:center;padding:5px 7px;border-bottom:1px solid #242434;font-size:10px">'
+        +'<div><span style="color:'+(cheap?'#ffd54f':'#e8e8e8')+'">'+(cheap?'⭐ ':'')+marketEsc(nm)+refine+'</span><div style="color:#666">ID '+it.itemId+(it.type===2?' · equip':'')+'</div></div>'
+        +'<div style="text-align:right;color:#81c784;font-weight:700">'+Number(it.price||0).toLocaleString()+'z</div>'
+        +'<div style="text-align:right;color:#aaa">×'+Number(it.qty||0).toLocaleString()+'</div>'
+        +'<div title="'+marketEsc(sh.shopName)+'"><div style="color:#90caf9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+marketEsc(sh.shopName||'(ไม่มีชื่อร้าน)')+'</div><div style="color:#777">'+marketEsc(sh.sellerName||'seller ?')+' '+pos+'</div></div>'
+        +'<div style="text-align:right;color:#777">'+marketAgeText(sh.t)+'</div>'
+        +'<button data-market-open-shop="'+openId+'" data-market-open-name="'+marketEsc(sh.shopName||'')+'" '+(openId?'':'disabled')+' title="'+(openId?'เปิดหน้าร้านนี้ในเกม':'ไม่มี Shop Open ID')+'" style="background:'+(openId?'#214a32':'#292929')+';color:'+(openId?'#a5d6a7':'#666')+';border:1px solid '+(openId?'#3f7c53':'#444')+';border-radius:5px;padding:4px 6px;font-size:9px;cursor:'+(openId?'pointer':'not-allowed')+'">🛒 เปิด</button></div>';
+    }).join('');
+  }
+
+  function marketScanPauseAutomation() {
+    const keys=['combatEnabled','wanderEnabled','warpFindEnabled','lootEnabled','skillEnabled','buffEnabled','sellEnabled','storageEnabled','buffVisitEnabled','unstuckBuffEnabled'];
+    marketScanSnapshot={}; for(const k of keys){ marketScanSnapshot[k]=CFG[k]; CFG[k]=false; } target=null; noMonsterSince=0;
+  }
+  function marketScanRestoreAutomation(){ if(marketScanSnapshot){for(const [k,v] of Object.entries(marketScanSnapshot)) CFG[k]=v;} marketScanSnapshot=null; }
+  function marketSendShopOpen(entityId) {
+    if(!activeWS || activeWS.readyState!==1) return false;
+    const b=new Uint8Array(5); b[0]=0x6b; b[1]=entityId&255; b[2]=(entityId>>>8)&255; b[3]=(entityId>>>16)&255; b[4]=(entityId>>>24)&255;
+    activeWS.send(b); return true;
+  }
+  function marketSendShopClose(){ if(!activeWS || activeWS.readyState!==1) return false; activeWS.send(new Uint8Array([0x6a])); return true; }
+
+  // ★ v4.189.31 — เปิดร้านจาก Market Search แล้วปล่อยหน้าร้านค้างไว้ให้ผู้ใช้ซื้อเอง
+  async function marketOpenSelectedShop(entityId, shopName) {
+    entityId = Number(entityId) >>> 0;
+    if (!entityId) { log('❌ Market: ไม่มี Shop Open ID สำหรับร้านนี้'); return false; }
+    if (marketScanActive) {
+      marketScanStatus = 'กำลังสแกนอยู่ — หยุดสแกนก่อนเปิดร้าน';
+      renderMarketIndexUI();
+      log('⚠️ Market: กรุณาหยุดสแกนก่อนเปิดร้านที่เลือก');
+      return false;
+    }
+    if (!activeWS || activeWS.readyState !== 1) {
+      marketScanStatus = 'เปิดร้านไม่ได้: WebSocket เกมยังไม่พร้อม';
+      renderMarketIndexUI();
+      log('❌ Market: WebSocket เกมยังไม่พร้อม');
+      return false;
+    }
+
+    marketScanStatus = 'กำลังเปิดร้าน ' + (shopName || ('#' + entityId)) + '…';
+    renderMarketIndexUI();
+    const waitShop = marketWaitShop(entityId, 1600);
+    marketLastOpenRequest = { entityId, t: Date.now(), source: 'select' };
+    if (!marketSendShopOpen(entityId)) {
+      if (marketScanWaiter && marketScanWaiter.entityId === entityId) marketScanWaiter = null;
+      marketScanStatus = 'เปิดร้านไม่สำเร็จ';
+      renderMarketIndexUI();
+      return false;
+    }
+    log('🛒 Market: ขอเปิดร้าน ' + (shopName || '') + ' · shopId=' + entityId);
+    const sh = await waitShop;
+    if (!sh) {
+      marketScanStatus = 'ร้านไม่ตอบสนอง — อาจปิดร้าน/Shop ID หมดอายุ';
+      renderMarketIndexUI();
+      log('⚠️ Market: เปิดร้านไม่สำเร็จ/ร้านอาจปิดแล้ว · shopId=' + entityId);
+      return false;
+    }
+    marketScanStatus = 'เปิดร้านแล้ว: ' + (sh.shopName || shopName || ('#' + entityId));
+    renderMarketIndexUI();
+    log('✅ Market: เปิดร้านแล้ว — ' + (sh.shopName || shopName || entityId));
+    const panel = document.getElementById('__assist_market_panel');
+    if (panel) setTimeout(() => { panel.style.display = 'none'; }, 120);
+    return true;
+  }
+
+  function marketWaitShop(entityId, timeoutMs) {
+    return new Promise(resolve=>{
+      const timer=setTimeout(()=>{ if(marketScanWaiter && marketScanWaiter.entityId===entityId) marketScanWaiter=null; resolve(null); }, timeoutMs);
+      marketScanWaiter={entityId,resolve:(shop)=>{clearTimeout(timer);resolve(shop);}};
+    });
+  }
+  const marketSleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+  async function marketScanVisible(radius) {
+    if(marketScanActive){ marketScanCancel=true; marketScanStatus='กำลังหยุด…'; renderMarketIndexUI(); return false; }
+    if(!activeWS || activeWS.readyState!==1){ log('⚠️ Market Scan: WebSocket เกมยังไม่พร้อม'); return false; }
+    radius=Math.max(5,Math.min(60,Number(radius)||25)); // เก็บไว้เพื่อ UI compatibility; Shop-ID discovery ไม่อิง player radius
+
+    // ★ v4.189.30: 0x6b ต้องใช้ Shop Open ID ไม่ใช่ player entity ID
+    const discovered = marketShopIdSignature ? marketDiscoverIdsBySignature(marketShopIdSignature, 300) : [];
+    const ids=[]; const seen=new Set();
+    for(const id of [...discovered, ...marketKnownOpenIds]){ const n=Number(id)>>>0; if(n && !seen.has(n)){seen.add(n);ids.push(n);} }
+
+    if(!ids.length){
+      marketScanStatus='ยังไม่รู้ Shop ID — Reload/เข้าแมปใหม่ แล้วเปิดร้านด้วยมือ 1 ร้านเพื่อ Calibration';
+      renderMarketIndexUI();
+      log('🧭 Market Scan: Shop Open ID ไม่ใช่ player entity ID จึงสแกนผู้เล่นตรงๆ ไม่ได้');
+      log('   → Reload/เข้าแมปตลาดใหม่ด้วย v'+VERSION+' แล้วเปิดร้านด้วยมือ 1 ร้าน; Assist จะเรียนรู้แหล่ง Shop ID จาก packet ตอนเข้าแมป');
+      return false;
+    }
+
+    marketScanActive=true; marketScanCancel=false; marketScanPauseAutomation();
+    let found=0,checked=0; const max=Math.min(120,ids.length);
+    marketScanStatus='เริ่มสแกน Shop ID '+max+' รายการ'; renderMarketIndexUI();
+    log('🔎 Market Scan เริ่ม — '+max+' shop-id candidates'+(marketShopIdSignature?' · learned signature':' · known IDs'));
+    try{
+      for(let i=0;i<max;i++){
+        if(marketScanCancel) break;
+        const id=ids[i]; checked++;
+        marketScanStatus='สแกน '+checked+'/'+max+' · เจอ '+found+' ร้าน'; renderMarketIndexUI();
+        marketLastOpenRequest={entityId:id,t:Date.now(),source:'scan'};
+        const waitShop=marketWaitShop(id,650);
+        if(!marketSendShopOpen(id)) { marketScanWaiter=null; break; }
+        const sh=await waitShop;
+        if(sh){ found++; marketSendShopClose(); await marketSleep(100); }
+        await marketSleep(100);
+      }
+    } finally {
+      marketScanActive=false; marketScanCancel=false; marketScanWaiter=null; marketScanRestoreAutomation();
+      marketScanStatus='ล่าสุด: ตรวจ '+checked+' · เจอ '+found+' ร้าน'; renderMarketIndexUI();
+      log('✅ Market Scan จบ — ตรวจ '+checked+' / เจอ '+found+' ร้าน');
+    }
+    return true;
+  }
+
+  // ★ v4.189.33 — Market UI updater (Packet Capture removed)
+  function updateMarketUI() {
+    const panel = document.getElementById('__assist_market_panel');
+    if (!panel) return;
+    renderMarketIndexUI();
+    const scanBtn = panel.querySelector('[data-market-scan]');
+    if (scanBtn) scanBtn.textContent = marketScanActive ? '⏹ หยุดสแกน' : '🔄 สแกนร้านรอบตัว';
+  }
+
+  function openMarketPanel() {
+    let panel = document.getElementById('__assist_market_panel');
+    if (panel) { panel.style.display='flex'; updateMarketUI(); return; }
+    panel = document.createElement('div');
+    panel.id='__assist_market_panel';
+    panel.style.cssText='position:fixed;right:12px;bottom:12px;width:min(700px,92vw);height:min(52vh,440px);min-width:min(520px,92vw);min-height:300px;max-width:96vw;max-height:90vh;z-index:999999;background:#12121e;color:#e8e8e8;border:1px solid #3a3f4b;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.65);display:flex;flex-direction:column;padding:10px;font-family:Segoe UI,system-ui,sans-serif;resize:both;overflow:hidden';
+    panel.innerHTML=`
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex:0 0 auto">
+        <div><b style="color:#ffd54f;font-size:14px">🔎 Market Search / Price Compare</b> <span style="font-size:9px;color:#777">v${VERSION}</span></div>
+        <button data-market-close style="background:none;border:none;color:#aaa;font-size:17px;cursor:pointer;padding:0 2px">✕</button>
+      </div>
+      <div style="background:#181824;border-radius:8px;padding:7px;min-height:0;display:flex;flex-direction:column;flex:1 1 auto;overflow:hidden">
+        <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:5px;flex:0 0 auto">
+          <input data-market-search placeholder="ค้นชื่อ / Item ID / ร้าน" style="flex:1;min-width:160px;background:#0d0d15;color:#eee;border:1px solid #3a3f4b;border-radius:6px;padding:5px 7px;font-size:10px">
+          <input data-market-radius type="number" min="5" max="60" value="25" title="รัศมีสแกน" style="width:48px;background:#0d0d15;color:#eee;border:1px solid #3a3f4b;border-radius:6px;padding:5px;font-size:10px">
+          <button data-market-scan style="background:#124a3a;color:#80cbc4;border:1px solid #287a66;border-radius:6px;padding:5px 8px;cursor:pointer;font-size:10px">🔄 สแกน</button>
+          <button data-market-index-clear style="background:#4a2020;color:#ef9a9a;border:1px solid #6a3030;border-radius:6px;padding:5px 8px;cursor:pointer;font-size:10px">🧹 ล้าง</button>
+        </div>
+        <div data-market-index-summary style="font-size:9px;color:#90caf9;margin-bottom:2px;flex:0 0 auto">ดัชนี: 0 ร้าน · 0 รายการ</div>
+        <div data-market-discovery style="font-size:8px;color:#b39ddb;margin-bottom:4px;flex:0 0 auto">Shop-ID: กำลังรอเรียนรู้</div>
+        <div style="display:grid;grid-template-columns:minmax(110px,1.6fr) 78px 45px minmax(120px,1.3fr) 52px;gap:5px;padding:3px 6px;color:#777;font-size:8px;border-bottom:1px solid #2a2a3a;flex:0 0 auto"><div>สินค้า</div><div style="text-align:right">ราคา</div><div style="text-align:right">จำนวน</div><div>ร้าน</div><div style="text-align:right">อายุ</div></div>
+        <div data-market-results style="min-height:120px;flex:1 1 auto;overflow:auto;background:#0b0b12;border-radius:6px"></div>
+      </div>`;
+    document.body.appendChild(panel);
+    // ★ v4.189.30: Market panel อยู่นอก #__assist_root — ต้องกัน Unity canvas แย่ง mouse/focus เอง
+    panel.addEventListener('mousedown', (e) => {
+      e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      const f=e.target && e.target.matches && e.target.matches('input,select,textarea') ? e.target : null;
+      if(f) setTimeout(()=>{ try{ f.focus(); }catch(_){} },0);
+    }, true);
+    // bubble phase: ปล่อย target onclick ทำงานก่อน แล้วค่อยกัน event ไหลออกไปหา Unity/window
+    panel.addEventListener('click', (e) => { e.stopPropagation(); }, false);
+    panel.querySelector('[data-market-close]').onclick=()=>{ panel.style.display='none'; };
+    panel.querySelector('[data-market-search]').addEventListener('input', renderMarketIndexUI);
+    panel.querySelector('[data-market-results]').addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest('[data-market-open-shop]') : null;
+      if (!btn || btn.disabled) return;
+      const id = Number(btn.getAttribute('data-market-open-shop')) >>> 0;
+      const name = btn.getAttribute('data-market-open-name') || '';
+      marketOpenSelectedShop(id, name);
+    });
+    panel.querySelector('[data-market-scan]').onclick=()=> marketScanVisible(panel.querySelector('[data-market-radius]').value);
+    panel.querySelector('[data-market-index-clear]').onclick=()=> marketClearIndex();
+    updateMarketUI();
+    renderMarketIndexUI();
+  }
+
   // ★★ v4.188.6 — Trade Packet Capture / calibration (Rayrag-specific)
   let tradeCaptureActive = false;
   let tradeCaptureMode = '';       // 'accept' | 'reject'
@@ -8248,12 +8728,12 @@
     ws.send = function (data) {
       try {
         const u = syncU8(data);
-        if (u) { captureUnstuckOutgoing(u); handleOut(u); }
+        if (u) { marketObserveOutgoing(u); captureUnstuckOutgoing(u); handleOut(u); }
       } catch (e) {}
       return origSend(data);
     };
     ws.addEventListener('message', async (e) => {
-      try { const u = await toU8(e.data); if (u) { handleIn(u); } } catch (err) {}
+      try { const u = await toU8(e.data); if (u) { marketObserveIncoming(u); handleIn(u); } } catch (err) {}
     });
   }
   const NativeWS = window.WebSocket;
@@ -8887,6 +9367,13 @@
     // ---------- ทั่วไป ----------
     name(id, label) { CFG.itemNames[id] = label; log('🏷️', id, '=', label); },
     config() { return CFG; },
+    // ★★ Market Search / Price Compare
+    marketOpenShop(shopId) { return marketOpenSelectedShop(shopId, ''); },
+    marketSearch(q) { return marketFilteredRows(q || '').map(r=>({itemId:r.item.itemId,name:nameOf(r.item.itemId),price:r.item.price,qty:r.item.qty,shop:r.shop.shopName,seller:r.shop.sellerName,map:r.shop.map,x:r.shop.x,y:r.shop.y,ageMs:Date.now()-r.shop.t})); },
+    marketOpen() { openMarketPanel(); },
+    marketScan(radius) { openMarketPanel(); return marketScanVisible(radius || 25); },
+    marketDiscoveryStatus() { return {signature:marketShopIdSignature,probePackets:marketProbePackets.length,knownShopIds:[...marketKnownOpenIds],discovered:marketShopIdSignature?marketDiscoverIdsBySignature(marketShopIdSignature,300):[]}; },
+    marketClearIndex() { marketClearIndex(); },
     // ★★ Packet capture — สำหรับวิเคราะห์ protocol
     //   ASSIST.captureStart(10) → capture 10 วินาที → log hex ทุก packet ขาเข้า
     //   ASSIST.captureStop() → หยุด + return array ของ packets ทั้งหมด
@@ -9791,6 +10278,7 @@
         <span class="pill off" data-flee>🏃</span>
         <span class="pill off" data-auto>🤖</span>
         <span class="pill" data-inventory style="background:#3a2a1a;color:#ffb74d" title="Inventory">🎒</span>
+        <span class="pill" data-market style="background:#263238;color:#80cbc4" title="Market Search / Price Compare">🔎</span>
         <span class="pill" data-teleport style="background:#4a2c6a;color:#d1b3ff">🌀</span>
         <span class="pill" data-monitor style="background:#1a237e;color:#90caf9">🖥️</span>
         <span class="pill" data-logview style="background:#1a2a3a;color:#82b1ff" title="ดู Log">📋</span>
@@ -10155,7 +10643,8 @@
       if (!t || !t.closest || !t.matches || !t.matches(ASSIST_INPUT_SEL)) return false;
       return root.contains(t)
         || (t.closest && t.closest('#__assist_itempopup'))
-        || (t.closest && t.closest('#__assist_skillpopup'));
+        || (t.closest && t.closest('#__assist_skillpopup'))
+        || (t.closest && t.closest('#__assist_market_panel'));
     }
     function ourActiveInput() {
       const ae = document.activeElement;
@@ -10277,6 +10766,7 @@
         }
         if (pill.hasAttribute('data-monitor')) { openMonitor(); }
         if (pill.hasAttribute('data-inventory')) { openInventoryModal(); }
+        if (pill.hasAttribute('data-market')) { openMarketPanel(); }
         if (pill.hasAttribute('data-changelog')) { openChangelogModal(); }
         if (pill.hasAttribute('data-logview')) { openLogViewModal(); }
         return;
