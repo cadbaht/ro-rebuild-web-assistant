@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.15
+// @version      4.189.16
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.15';
+  const VERSION = '4.189.16';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.16', d: '2026-09-25', items: [
+      '💰🏦 Fix Manual Sell/Storage Walk — กดขาย/ฝากเดี๋ยวนี้แล้วเดินต่อจนถึง NPC/Kafra ได้เสถียรขึ้น',
+      '   · จุด X/Y เปลี่ยนเป็น navigation anchor: ถ้าเห็น NPC ในระยะใกล้จะเข้าหา NPC ต่อทันที ไม่บังคับแตะจุด anchor ให้เป๊ะก่อน',
+      '   · เพิ่ม Route Progress Watchdog — ถ้าส่งเดินแล้วตำแหน่งไม่ขยับ จะเปลี่ยนมุมด้วย long detour 12–15 ช่องอัตโนมัติ แก้ค้างหน้ากำแพง/สิ่งกีดขวาง',
+      '   · Sell และ Kafra ใช้ routine เดินชุดเดียวกัน พร้อม recovery เมื่อเส้นตรงถูกบล็อก',
+      '   · แยก GitHub URL สำหรับ Update ออกจาก Asset/DB resource เพื่อไม่ให้การเปลี่ยน repo อัปเดตกระทบ resource ภายในสคริปต์',
+    ]},
     { v: '4.189.15', d: '2026-09-25', items: [
       '🧹 ถอดระบบ Warp Dance ออกทั้งหมด — ลบ UI, config, runtime logic และ event handlers',
       '   · การตี/วาร์ปหามอน/วาร์ปไปหามอนที่ตี และระบบหนีอื่น ๆ ยังทำงานเหมือนเดิม',
@@ -1269,6 +1276,9 @@
     ]},
   ];
   const GITHUB_RAW = 'https://raw.githubusercontent.com/cadbaht/ro-rebuild-web-assistant/main/ro-rebuild-web-assist.user.js';
+  // ★ v4.189.16: แยก source อัปเดตออกจาก resource ภายในสคริปต์
+  // เปลี่ยน repo update ไม่ควรทำให้ DB/icon/GAT resource เปลี่ยนตามไปด้วย
+  const ASSET_RAW = 'https://raw.githubusercontent.com/superogira/ro-rebuild-web-assist/main/ro-rebuild-web-assist.user.js';
   // ★ Feedback — ส่งปัญหา/ข้อเสนอแนะถึงผู้พัฒนาผ่าน Telegram
   const FEEDBACK_BOT_TOKEN = '7932077955:AAEc2u3FaKLY-6iY6VjseK5_GPJXgYK3ORA';
   const FEEDBACK_CHAT_ID = '-5021728172';
@@ -1384,8 +1394,8 @@
   // ============================================================
   //  Item database (โหลดจาก GitHub raw + cache localStorage)
   // ============================================================
-  const DB_BASE = GITHUB_RAW.replace('/ro-rebuild-web-assist.user.js', '/db/Item/');
-  const ITEMS_ICON_URL = GITHUB_RAW.replace('/ro-rebuild-web-assist.user.js', '/items/small/');
+  const DB_BASE = ASSET_RAW.replace('/ro-rebuild-web-assist.user.js', '/db/Item/');
+  const ITEMS_ICON_URL = ASSET_RAW.replace('/ro-rebuild-web-assist.user.js', '/items/small/');
   const ITEMDB_CACHE_KEY = 'roAssistItemDB_v6';   // v6 = +slotCount/attack/def/wLevel/reqLevel/equipGroup/jobs   // v5 = +cardPrefix/Postfix   // ★ v2 = จาก db/Item ของ RagnarokRebuildTcp
   // ★★ itemDB v2 — 6 CSV ของ RagnarokRebuildTcp (2584 รายการ แทน items.csv เดิม 1016)
   //   cats: usable / equip (มี slot จาก Position) / etc (Ammo+Cards+Regular)
@@ -5065,6 +5075,69 @@
   let sellWakeMove = newRoutineWakeState();
   let storageWakeMove = newRoutineWakeState();
 
+  // ★ v4.189.16: route watchdog สำหรับขาเดิน Sell/Kafra
+  // ปัญหาจริง: หลัง Long Wake สำเร็จ ถ้า step ถัดไปชนกำแพง sendMove() ยังคืน true แต่ตัวไม่ขยับ
+  // เดิมจึงยิงพิกัดเดิมซ้ำไปเรื่อย ๆ. ตอนนี้ตรวจ progress แล้วอ้อมด้วย long detour อัตโนมัติ.
+  function newRoutineRouteState() {
+    return { lastX:null, lastY:null, lastProgressAt:0, lastSendAt:0, stuckCount:0, detourIdx:0 };
+  }
+  function resetRoutineRouteState(r) {
+    if (!r) return;
+    r.lastX = null; r.lastY = null; r.lastProgressAt = 0; r.lastSendAt = 0; r.stuckCount = 0; r.detourIdx = 0;
+  }
+  let sellRouteState = newRoutineRouteState();
+  let storageRouteState = newRoutineRouteState();
+
+  function routineWalkStable(tx, ty, tag, route, now) {
+    if (player.x == null || player.y == null) return { arrived:false, sent:false, mode:'no-pos', dist:Infinity };
+    tx = Math.round(Number(tx)); ty = Math.round(Number(ty));
+    const dist = Math.hypot(tx - player.x, ty - player.y);
+    // จุดตั้งเป็น navigation anchor ไม่ต้องเหยียบเป๊ะ — ภายใน ~5 ช่องถือว่าเข้าพื้นที่ NPC แล้ว
+    if (dist <= 5) return { arrived:true, sent:false, mode:'arrived', dist };
+
+    if (route.lastX == null || route.lastY == null) {
+      route.lastX = player.x; route.lastY = player.y; route.lastProgressAt = now; route.lastSendAt = 0;
+    } else {
+      const moved = Math.hypot(player.x - route.lastX, player.y - route.lastY);
+      if (moved >= 0.65) {
+        route.lastX = player.x; route.lastY = player.y; route.lastProgressAt = now; route.stuckCount = 0; route.detourIdx = 0;
+      }
+    }
+
+    // ถ้า 1.4s แล้วยังไม่ขยับหลังส่งเดิน → อย่ายิงเส้นเดิมซ้ำ ให้ long-detour 12–15 ช่อง
+    if (now - route.lastProgressAt >= 1400 && now - route.lastSendAt >= 650) {
+      const base = Math.atan2(ty - player.y, tx - player.x);
+      const offs = [Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2, 3*Math.PI/4, -3*Math.PI/4, Math.PI, 0];
+      const ds = [13, 15, 12, 14];
+      const d = ds[route.stuckCount % ds.length];
+      let chosen = null;
+      for (let k = 0; k < offs.length; k++) {
+        const off = offs[(route.detourIdx + k) % offs.length];
+        const a = base + off;
+        const cx = Math.round(player.x + Math.cos(a) * d);
+        const cy = Math.round(player.y + Math.sin(a) * d);
+        let ok = true;
+        try {
+          if (currentMap && gatCache.has(currentMap)) ok = !!gatWalkable(cx, cy) && !!gatLineWalkable(player.x, player.y, cx, cy);
+        } catch (_) {}
+        if (ok) { chosen = {x:cx, y:cy}; route.detourIdx = (route.detourIdx + k + 1) % offs.length; break; }
+      }
+      if (!chosen) {
+        const a = base + offs[route.detourIdx++ % offs.length];
+        chosen = {x:Math.round(player.x + Math.cos(a) * d), y:Math.round(player.y + Math.sin(a) * d)};
+      }
+      route.stuckCount++; route.lastSendAt = now;
+      const sent = sendMove(chosen.x, chosen.y);
+      if (sent) log((tag || '🚶 Routine') + ' ทางเดิมไม่ขยับ → อ้อม #' + route.stuckCount + ' @(' + chosen.x + ',' + chosen.y + ')');
+      return { arrived:false, sent, mode:'DETOUR', dist };
+    }
+
+    if (now - route.lastSendAt < 450) return { arrived:false, sent:false, mode:'throttle', dist };
+    const r = routineWalkTowardPoint(tx, ty, tag);
+    if (r.sent) route.lastSendAt = now;
+    return r;
+  }
+
   // ============================================================
   //  AUTO-SELL — state machine
   //  IDLE → UNSTUCK_TO_NPC → WAKE_MOVE → WALK_TO_POINT → MOVE_TO_NPC → TALK → SELECT → SELL → WARP_BACK
@@ -5090,7 +5163,7 @@
     if (!currentMap || player.x == null || player.y == null) { log('⚠️ เริ่มขายไม่ได้ — ยังไม่รู้แมพ/พิกัดตัวละคร'); return false; }
     sellReturnTo = returnTo || { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
     sellWarpRetries = 0; pendingSellEquip = []; sellEquipRoundSent = false; sellEqRetryMode = false;
-    sellNpcId = null; sellNpcRetryAt = 0; sellMoveLastAt = 0; resetRoutineWakeState(sellWakeMove);
+    sellNpcId = null; sellNpcRetryAt = 0; sellMoveLastAt = 0; resetRoutineWakeState(sellWakeMove); resetRoutineRouteState(sellRouteState);
     if (!sendDirectUnstuckPacket()) { sellReturnTo = null; log('⚠️ เริ่มขายไม่ได้ — ส่ง Direct Unstuck 0x73 ไม่สำเร็จ'); return false; }
     invalidatePositionAfterRoutineUnstuck();
     sellTravelStartedAt = nowMs();
@@ -5157,28 +5230,30 @@
       if (currentMap !== CFG.sellNpcMap) { abortSell('หลุดจากแมพ NPC ระหว่าง Wake Move (' + currentMap + ' ≠ ' + CFG.sellNpcMap + ')'); return; }
       if (routineWakeMove(sellWakeMove, CFG.sellNpcX, CFG.sellNpcY, '💰 Sell', now)) {
         setSellState('WALK_TO_POINT');
-        sellMoveLastAt = 0;
-        routineWalkTowardPoint(CFG.sellNpcX, CFG.sellNpcY, '💰 Sell');
+        sellMoveLastAt = 0; resetRoutineRouteState(sellRouteState);
+        routineWalkStable(CFG.sellNpcX, CFG.sellNpcY, '💰 Sell', sellRouteState, now);
       }
       return;
     }
     if (sellState === 'WALK_TO_POINT') {
       if (currentMap !== CFG.sellNpcMap) { abortSell('หลุดจากแมพ NPC ระหว่างเดิน (' + currentMap + ' ≠ ' + CFG.sellNpcMap + ')'); return; }
-      const dPoint = Math.hypot(CFG.sellNpcX - player.x, CFG.sellNpcY - player.y);
-      if (dPoint <= 4) {
-        const npc = findSellNpc();
-        if (npc) { sellNpcId = npc.id; setSellState('MOVE_TO_NPC'); log('💰 ถึงจุดขายแล้ว → พบ', npc.name, '@(', npc.x, npc.y + ')'); }
-        else {
-          if (!sellNpcRetryAt) sellNpcRetryAt = now;
-          if (now - sellNpcRetryAt > 12000) { abortSell('ถึงจุดที่กำหนดแล้วแต่ไม่พบ NPC ' + CFG.sellNpcName); sellNpcRetryAt = 0; }
-        }
+      // ถ้า NPC โหลดเข้าระยะแล้ว ไม่ต้องฝืนเดินแตะ anchor ให้เป๊ะ — เปลี่ยนไปหา NPC ทันที
+      const seenNpc = findSellNpc();
+      if (seenNpc && seenNpc.x != null && Math.hypot(seenNpc.x - player.x, seenNpc.y - player.y) <= 18) {
+        sellNpcId = seenNpc.id; resetRoutineRouteState(sellRouteState); setSellState('MOVE_TO_NPC');
+        log('💰 เห็น NPC แล้ว → เข้าหา', seenNpc.name, '@(', seenNpc.x, seenNpc.y + ')');
+        routineWalkStable(seenNpc.x, seenNpc.y, '💰 Sell NPC', sellRouteState, now);
         return;
       }
-      sellNpcRetryAt = 0;
-      if (now - sellMoveLastAt > 700) {
-        sellMoveLastAt = now;
-        routineWalkTowardPoint(CFG.sellNpcX, CFG.sellNpcY, '💰 Sell');
-      }
+      const r = routineWalkStable(CFG.sellNpcX, CFG.sellNpcY, '💰 Sell', sellRouteState, now);
+      if (r.arrived) {
+        const npc = findSellNpc();
+        if (npc) { sellNpcId = npc.id; resetRoutineRouteState(sellRouteState); setSellState('MOVE_TO_NPC'); log('💰 ถึงพื้นที่จุดขายแล้ว → พบ', npc.name, '@(', npc.x, npc.y + ')'); }
+        else {
+          if (!sellNpcRetryAt) sellNpcRetryAt = now;
+          if (now - sellNpcRetryAt > 12000) { abortSell('ถึงพื้นที่จุดที่กำหนดแล้วแต่ไม่พบ NPC ' + CFG.sellNpcName); sellNpcRetryAt = 0; }
+        }
+      } else sellNpcRetryAt = 0;
       return;
     }
     if (sellState === 'MOVE_TO_NPC') {
@@ -5196,12 +5271,11 @@
       }
       if (player.x != null) {
         const d = Math.hypot(npc.x - player.x, npc.y - player.y);
-        if (d <= 3) {
+        if (d <= 4) {
           // ใกล้แล้ว → คุย NPC
-          if (now - sellStateAt > 1500) { sendNpcTalk(sellNpcId); setSellState('TALK'); log('💰 คุย NPC', npc.name); }
+          if (now - sellStateAt > 900) { sendNpcTalk(sellNpcId); setSellState('TALK'); log('💰 คุย NPC', npc.name); }
         } else {
-          // เดินไปหา (throttle 1s — ★ เดิมเก็บบน sellState._lastMove = no-op บน string)
-          if (now - sellMoveLastAt > 1000) { sellMoveLastAt = now; sendMove(npc.x, npc.y); }
+          routineWalkStable(npc.x, npc.y, '💰 Sell NPC', sellRouteState, now);
         }
       }
       return;
@@ -5263,7 +5337,7 @@
     const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
     if (!currentMap || player.x == null || player.y == null) { log('⚠️ เริ่มฝากไม่ได้ — ยังไม่รู้แมพ/พิกัดตัวละคร'); return false; }
     storageReturnTo = returnTo || { map: currentMap, x: Math.round(player.x), y: Math.round(player.y) };
-    storageWarpRetries = 0; storageNpcId = null; kafraNpcRetryAt = 0; storageLastMoveAt = 0; resetRoutineWakeState(storageWakeMove);
+    storageWarpRetries = 0; storageNpcId = null; kafraNpcRetryAt = 0; storageLastMoveAt = 0; resetRoutineWakeState(storageWakeMove); resetRoutineRouteState(storageRouteState);
     if (!sendDirectUnstuckPacket()) { storageReturnTo = null; log('⚠️ เริ่มฝากไม่ได้ — ส่ง Direct Unstuck 0x73 ไม่สำเร็จ'); return false; }
     invalidatePositionAfterRoutineUnstuck();
     storageTravelStartedAt = nowMs();
@@ -5344,8 +5418,8 @@
       const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
       if (routineWakeMove(storageWakeMove, kx, ky, '🏦 Kafra', now)) {
         setStorageState('WALK_TO_KAFRA_POINT');
-        storageLastMoveAt = 0;
-        routineWalkTowardPoint(kx, ky, '🏦 Kafra');
+        storageLastMoveAt = 0; resetRoutineRouteState(storageRouteState);
+        routineWalkStable(kx, ky, '🏦 Kafra', storageRouteState, now);
       }
       return;
     }
@@ -5353,21 +5427,23 @@
       if (currentMap !== CFG.kafraMap) { abortStorage('หลุดจากแมพ Kafra ระหว่างเดิน (' + currentMap + ' ≠ ' + CFG.kafraMap + ')'); return; }
       const kx = (CFG.kafraMapX && CFG.kafraMapX > 0) ? CFG.kafraMapX : CFG.sellNpcX;
       const ky = (CFG.kafraMapY && CFG.kafraMapY > 0) ? CFG.kafraMapY : CFG.sellNpcY;
-      const dPoint = Math.hypot(kx - player.x, ky - player.y);
-      if (dPoint <= 4) {
-        const npc = findKafraNpc();
-        if (npc) { storageNpcId = npc.id; setStorageState('MOVE_TO_KAFRA'); log('🏦 ถึงจุด Kafra แล้ว → พบ', npc.name, '@(', npc.x, npc.y + ')'); }
-        else {
-          if (!kafraNpcRetryAt) kafraNpcRetryAt = now;
-          if (now - kafraNpcRetryAt > 12000) { abortStorage('ถึงจุดที่กำหนดแล้วแต่ไม่พบ Kafra ' + CFG.kafraName); kafraNpcRetryAt = 0; }
-        }
+      // ถ้า Kafra ถูกโหลดแล้วในระยะใกล้ ให้เข้าหา Kafra เลย ไม่ต้องแตะ anchor ก่อน
+      const seenKafra = findKafraNpc();
+      if (seenKafra && seenKafra.x != null && Math.hypot(seenKafra.x - player.x, seenKafra.y - player.y) <= 18) {
+        storageNpcId = seenKafra.id; resetRoutineRouteState(storageRouteState); setStorageState('MOVE_TO_KAFRA');
+        log('🏦 เห็น Kafra แล้ว → เข้าหา', seenKafra.name, '@(', seenKafra.x, seenKafra.y + ')');
+        routineWalkStable(seenKafra.x, seenKafra.y, '🏦 Kafra NPC', storageRouteState, now);
         return;
       }
-      kafraNpcRetryAt = 0;
-      if (now - storageLastMoveAt > 700) {
-        storageLastMoveAt = now;
-        routineWalkTowardPoint(kx, ky, '🏦 Kafra');
-      }
+      const r = routineWalkStable(kx, ky, '🏦 Kafra', storageRouteState, now);
+      if (r.arrived) {
+        const npc = findKafraNpc();
+        if (npc) { storageNpcId = npc.id; resetRoutineRouteState(storageRouteState); setStorageState('MOVE_TO_KAFRA'); log('🏦 ถึงพื้นที่จุด Kafra แล้ว → พบ', npc.name, '@(', npc.x, npc.y + ')'); }
+        else {
+          if (!kafraNpcRetryAt) kafraNpcRetryAt = now;
+          if (now - kafraNpcRetryAt > 12000) { abortStorage('ถึงพื้นที่จุดที่กำหนดแล้วแต่ไม่พบ Kafra ' + CFG.kafraName); kafraNpcRetryAt = 0; }
+        }
+      } else kafraNpcRetryAt = 0;
       return;
     }
     if (storageState === 'MOVE_TO_KAFRA') {
@@ -5385,10 +5461,10 @@
       }
       if (player.x != null) {
         const d = Math.hypot(npc.x - player.x, npc.y - player.y);
-        if (d <= 3) {
-          if (now - storageStateAt > 1500) { sendNpcTalk(storageNpcId); setStorageState('TALK_KAFRA'); log('🏦 คุย Kafra', npc.name); }
+        if (d <= 4) {
+          if (now - storageStateAt > 900) { sendNpcTalk(storageNpcId); setStorageState('TALK_KAFRA'); log('🏦 คุย Kafra', npc.name); }
         } else {
-          if (now - storageLastMoveAt > 1000) { storageLastMoveAt = now; sendMove(npc.x, npc.y); }
+          routineWalkStable(npc.x, npc.y, '🏦 Kafra NPC', storageRouteState, now);
         }
       }
       return;
@@ -7306,7 +7382,7 @@
     try {
       const raw = localStorage.getItem(GAT_KEY_PREFIX + mapName);
       if (raw) { gatRegister(mapName, JSON.parse(raw)); return; }
-      const res = await fetch(GITHUB_RAW.replace('ro-rebuild-web-assist.user.js', 'maps-gat/' + mapName + '.json'));
+      const res = await fetch(ASSET_RAW.replace('ro-rebuild-web-assist.user.js', 'maps-gat/' + mapName + '.json'));
       if (!res.ok) return;
       const d = await res.json();
       gatRegister(mapName, d);
