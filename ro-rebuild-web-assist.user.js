@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.71
+// @version      4.189.72
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.71';
+  const VERSION = '4.189.72';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.72', d: '2026-09-27', items: [
+      '🎯 Direct Vendor Only — prt_fild08 ใช้เฉพาะ Vendor Marker ที่ยืนยันแล้ว ไม่ย้อนกลับไปใช้ legacy signature candidate เมื่อช่วงนั้นไม่มีร้านใหม่',
+      '   · ตัด false candidate ที่เคยทำให้ timeout ระหว่าง Event-driven Sweep; ร้านปกติ/ผู้เล่นที่ไม่มี Vendor Marker จะไม่ถูกส่ง 0x6b ทดลอง',
+      '🛠️ แก้ Event Sweep stuck timer — เวลาที่หยุดเปิดร้านระหว่างเดินจะไม่ถูกนับเป็นเวลาเดินติด',
+      '   · หลังจบ scan batch จะ reset progress timer แล้วค่อยเดินต่อไปยัง anchor เดิม จึงไม่เกิด walkFail เพราะสแกนร้านนาน',
+      '📊 คง 12 anchors / Event-driven / Vendor Actor @7 / single-pass timeout เดิม เพื่อให้เทียบผลกับ v4.189.71 ได้ตรง ๆ',
+    ]},
     { v: '4.189.71', d: '2026-09-27', items: [
       '🚀 Event-driven Market Sweep — ลดจุดนำทางจาก 24 เหลือ 12 anchors แต่จับ Vendor Flag ตลอดเวลาระหว่างเดิน',
       '   · ถ้ามี Vendor Actor ID ใหม่ระหว่างเดิน จะหยุดการเดินชั่วคราว เปิด/อ่านร้านทันที แล้วเดินต่อไปยัง anchor เดิม',
@@ -3074,7 +3081,7 @@
   let marketSweepMode = ''; // 'new' | 'stale' | 'all'
   const MARKET_SWEEP_MAX_WAYPOINTS = 260;
   const MARKET_SWEEP_RECENT_MS = 10000;
-  // ★ v4.189.71 — Event-driven Sweep: ใช้ anchor เป็นเพียงจุดนำทาง; Vendor Flag ถูกจับ/สแกนระหว่างเดิน
+  // ★ v4.189.72 — Event-driven Sweep + Direct Vendor Only บน prt_fild08
   const MARKET_TURBO_ANCHOR_COUNT = 12;
   const MARKET_TURBO_MOVE_POLL_MS = 160;
   const MARKET_TURBO_ARRIVE_RADIUS = 6;
@@ -3287,7 +3294,7 @@
       'map='+(start.map||end.map||'?')+' start=@'+(start.x??'?')+','+(start.y??'?')+' end=@'+(end.x??'?')+','+(end.y??'?'),
       'index_start='+(start.shops??'?')+'shops/'+(start.listings??'?')+'items index_end='+end.shops+'shops/'+end.listings+'items',
       'shop_signature='+sig,
-      'vendor_direct=marker[00 08 00 00 00 03 00 01 00] actor@7 + responseHint@end candidates='+marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS).length,
+      'vendor_direct=marker[00 08 00 00 00 03 00 01 00] actor@7 + responseHint@end directOnly='+(marketDirectVendorOnlyForMap()?'yes':'no')+' candidates='+marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS).length,
       'probe_latency='+(marketDiagProbeStats ? ('ok='+marketDiagProbeStats.ok+' timeout='+marketDiagProbeStats.timeout+' avg_ms='+(marketDiagProbeStats.ok?(marketDiagProbeStats.sumMs/marketDiagProbeStats.ok).toFixed(1):'0')+' max_ms='+marketDiagProbeStats.maxMs+' buckets<=100/'+marketDiagProbeStats.le100+' <=200/'+marketDiagProbeStats.le200+' <=250/'+marketDiagProbeStats.le250+' <=400/'+marketDiagProbeStats.le400+' <=650/'+marketDiagProbeStats.le650+' >650/'+marketDiagProbeStats.gt650) : 'none'),
       'sweep='+(marketSweepActive?'active':'inactive')+' mode='+(marketSweepMode||'-')+' waypoint='+(marketSweepWaypointIdx+1)+'/'+marketSweepWaypoints.length,
       '',
@@ -3417,6 +3424,12 @@
     marketKnownOpenIds.add(actorId);
     return actorId;
   }
+  // ★ v4.189.72 — Ray market map ยืนยัน Vendor Marker แล้ว: ห้าม fallback ไป legacy signature
+  // เมื่อไม่มี direct vendor ในช่วงนั้น ให้ถือว่าไม่มีร้านใหม่จริง แทนการเดา player/entity ID
+  function marketDirectVendorOnlyForMap(mapName=currentMap) {
+    return marketNormalizeRouteMapName(mapName) === 'prt_fild08';
+  }
+
   function marketDiscoverVendorOpenIds(limit=5000, maxAgeMs=MARKET_PROBE_TTL_MS) {
     limit=Math.max(1,Number(limit)||5000); maxAgeMs=Math.max(0,Number(maxAgeMs)||MARKET_PROBE_TTL_MS);
     const out=[],seen=new Set(),now=Date.now();
@@ -3531,7 +3544,7 @@
   function marketDiscoverIdsBySignature(sig, limit=300) {
     // v4.189.70: direct Vendor Flag (Actor ID) มาก่อน — signature แบบเดิมเป็น fallback สำหรับ packet/server รูปแบบเก่า
     const direct=marketDiscoverVendorOpenIds(limit, MARKET_PROBE_TTL_MS);
-    if(direct.length) return direct;
+    if(direct.length || marketDirectVendorOnlyForMap()) return direct;
     if(!sig) return [];
     const out=[], seen=new Set(); const now=Date.now();
     for (const rec of marketProbePackets) {
@@ -3892,7 +3905,7 @@
     maxAgeMs = Math.max(500, Number(maxAgeMs) || MARKET_SWEEP_RECENT_MS);
     limit = Math.max(1, Number(limit) || 300);
     const direct=marketDiscoverRecentVendorOpenIds(maxAgeMs,limit);
-    if(direct.length) return direct;
+    if(direct.length || marketDirectVendorOnlyForMap()) return direct;
     if (!sig) return [];
     const out=[], seen=new Set(); const now=Date.now();
     for (let i=marketProbePackets.length-1; i>=0; i--) {
@@ -3947,6 +3960,8 @@
         checked+=sr.checked; found+=sr.found; skippedKnown+=sr.skippedKnown; skippedFresh+=sr.skippedFresh; skippedStale+=sr.skippedStale;
         marketDiagEvent('move_scan',{i:idx+1,candidates:liveIds.length,checked:sr.checked,found:sr.found,scanMs:spent});
         if(marketSweepCancel || !marketSweepActive || marketShopIndex.size>=maxShops) break;
+        // ★ v4.189.72 — เวลาที่หยุดเปิดร้านไม่ใช่การเดินติด: reset progress clock หลัง scan
+        lastProgress=Date.now(); lx=player.x; ly=player.y;
         // หลัง scan ให้ loop รอบถัดไปสั่งเดินกลับไป anchor เดิม
         continue;
       }
@@ -3957,7 +3972,7 @@
         return {ok:true,dist,walkMs,scanMs,scanBatches,checked,found,skippedKnown,skippedFresh,skippedStale};
       }
       if(lx!=null&&ly!=null&&Math.hypot(player.x-lx,player.y-ly)>=1){ lastProgress=Date.now(); lx=player.x;ly=player.y; }
-      if(Date.now()-started>18000+scanMs || Date.now()-lastProgress>6500+Math.min(scanMs,4000)){
+      if(Date.now()-started>18000+scanMs || Date.now()-lastProgress>6500){
         const elapsed=Date.now()-started, walkMs=Math.max(0,elapsed-scanMs);
         marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'stuck',moveMs:elapsed,walkMs,scanMs,scanBatches,dist:dist.toFixed(1)});
         return {ok:false,reason:'stuck',walkMs,scanMs,scanBatches,checked,found,skippedKnown,skippedFresh,skippedStale};
@@ -4095,7 +4110,7 @@
 
   function marketDiscoverIdsSince(sig, sinceMs, limit=5000) {
     const direct=marketDiscoverVendorIdsSince(sinceMs,limit);
-    if(direct.length) return direct;
+    if(direct.length || marketDirectVendorOnlyForMap()) return direct;
     if (!sig) return [];
     const out=[], seen=new Set();
     const since=Math.max(0,Number(sinceMs)||0);
