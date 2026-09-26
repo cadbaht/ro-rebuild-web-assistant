@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.62
+// @version      4.189.63
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.62';
+  const VERSION = '4.189.63';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.63', d: '2026-09-26', items: [
+      '🎨 Market Button State Fix — ปุ่มงานตลาดคืนสีเดิมทันทีเมื่อกด Stop',
+      '   · ระหว่างงาน ปุ่มของงานที่กำลังรันเปลี่ยนเป็นสถานะ ⏹ หยุด ด้วยสี Active ชัดเจน',
+      '   · เมื่อกด Stop จะคืน background / text / border เป็นสีเริ่มต้นของปุ่มนั้นทันที แล้วแสดง กำลังหยุด… จน loop จบ',
+      '   · ปิดปุ่มชั่วคราวระหว่างกำลังหยุดเพื่อกันกดซ้ำ; เมื่อหยุดเสร็จข้อความกลับเป็นชื่อปุ่มเดิมอัตโนมัติ',
+      '   · ครอบคลุม ⚡ กวาดตลาด / ♻️ อัปเดตราคา >10นาที / 🔄 รีเฟรชทั้งหมด',
+    ]},
     { v: '4.189.62', d: '2026-09-26', items: [
       '🧭 Market 3-Button Workflow — งานตลาดหลักเหลือ 3 ปุ่มบน Preset ตลาดล่างพรอน 43 จุด',
       '   · ⚡ กวาดตลาด = เดิน Preset 43 จุดและเก็บเฉพาะร้านใหม่ที่ยังไม่มีในฐานข้อมูล',
@@ -3717,7 +3724,13 @@
 
   async function marketSweepMap(maxShops, policy='new') {
     if(marketShopTravelActive){ marketScanStatus='กำลังเดินไปเปิดร้านอยู่'; renderMarketIndexUI(); return false; }
-    if(marketSweepActive){ marketSweepCancel=true; marketScanStatus='กำลังหยุดงานตลาด…'; renderMarketIndexUI(); return false; }
+    if(marketSweepActive){
+      marketSweepCancel=true;
+      marketScanStatus='กำลังหยุดงานตลาด…';
+      renderMarketIndexUI();
+      updateMarketUI(); // ★ v4.189.63 คืนสีปุ่มเดิมทันทีหลังผู้ใช้กด Stop
+      return false;
+    }
     if(marketScanActive){ marketScanStatus='กำลังสแกนร้านอยู่ — หยุดสแกนก่อนเริ่มกวาด'; renderMarketIndexUI(); return false; }
     if(!activeWS||activeWS.readyState!==1){ log('⚠️ Market: WebSocket เกมยังไม่พร้อม'); return false; }
     if(!currentMap||player.x==null||player.y==null){ log('⚠️ Market: ยังไม่รู้แมป/พิกัดตัวละคร'); return false; }
@@ -3852,12 +3865,26 @@
       : ('Preset: ใช้ได้เฉพาะ prt_fild08 · ฐานเดิม '+marketShopIndex.size+' ร้านยังเก็บไว้');
 
     const busyOther = marketScanActive || marketShopTravelActive;
+    // ★ v4.189.63 — เก็บ theme เริ่มต้นไว้ชัดเจน เพื่อให้ Stop แล้วคืนสีเดิม 100%
+    const workThemes = {
+      new:   { bg:'#124a3a', fg:'#80cbc4', border:'#287a66' },
+      stale: { bg:'#3b2f14', fg:'#ffd54f', border:'#7d6424' },
+      all:   { bg:'#263a58', fg:'#90caf9', border:'#41688f' },
+    };
+    const activeTheme = { bg:'#5a2026', fg:'#ffcdd2', border:'#b94a54' };
     const setupBtn=(btn,mode,label)=>{
       if(!btn) return;
       const ownActive=marketSweepActive && marketSweepMode===mode;
-      btn.textContent = ownActive ? '⏹ หยุด' : label;
-      btn.disabled = !preset || busyOther || (marketSweepActive && !ownActive);
-      btn.style.opacity = btn.disabled ? '.45' : '1';
+      const stopping=ownActive && marketSweepCancel;
+      const theme = (ownActive && !stopping) ? activeTheme : workThemes[mode];
+      btn.textContent = ownActive ? (stopping ? 'กำลังหยุด…' : '⏹ หยุด') : label;
+      btn.disabled = !preset || busyOther || (marketSweepActive && !ownActive) || stopping;
+      btn.style.background = theme.bg;
+      btn.style.color = theme.fg;
+      btn.style.borderColor = theme.border;
+      // ตอน stopping ให้คงสีเดิมเต็ม ๆ แม้ disabled เพื่อไม่ให้ดูเหมือนยัง Active
+      btn.style.opacity = stopping ? '1' : (btn.disabled ? '.45' : '1');
+      btn.style.cursor = stopping ? 'wait' : (btn.disabled ? 'not-allowed' : 'pointer');
     };
     setupBtn(newBtn,'new','⚡ กวาดตลาด');
     setupBtn(staleBtn,'stale','♻️ อัปเดตราคา >10นาที');
