@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.49
+// @version      4.189.50
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.49';
+  const VERSION = '4.189.50';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.50', d: '2026-09-26', items: [
+      '♾️ Market All Shops Default — เพิ่มตัวเลือก “ทั้งหมด” และตั้งเป็นค่าเริ่มต้นของจำนวนร้านสูงสุด',
+      '   · สแกนรอบตัว / กวาดตามจุดที่บันทึก / กวาดตลาดล่างพรอน จะตรวจ Shop ID ที่ค้นพบทั้งหมดโดยไม่หยุดที่ 200/500 ร้าน',
+      '   · ยังคงมีตัวเลือก 50 / 100 / 200 / 500 ร้านสำหรับกรณีต้องการจำกัดจำนวนเอง',
+      '   · เอาเพดาน 500 ร้านของ Market Index ออก เพื่อไม่ทิ้งร้านเก่าเมื่อพบร้านมากกว่า 500 ร้านในแมพเดียว',
+      '   · คำสั่ง ASSIST.marketScan()/marketSweep()/marketSweepPronLower() ที่ไม่ใส่จำนวน จะใช้ “ทั้งหมด” เป็นค่าเริ่มต้น',
+    ]},
     { v: '4.189.49', d: '2026-09-26', items: [
       '↔️ Market Left-edge Resize — เพิ่มขอบลากด้านซ้ายสำหรับขยาย/ย่อความกว้างของหน้าต่าง Market',
       '   · ลากขอบซ้ายไปทางซ้าย = ขยาย Market; ลากไปทางขวา = ย่อ Market',
@@ -2857,7 +2864,7 @@
   }
   // ★★ v4.189.29 — Market Index / parser จาก packet จริง
   const MARKET_INDEX_KEY = 'ro_assist_market_index_v1';
-  const MARKET_INDEX_MAX_SHOPS = 500;
+  const MARKET_INDEX_MAX_SHOPS = 0; // 0 = unlimited (v4.189.50)
   let marketShopIndex = new Map();      // key -> {map,vendorEntityId,responseShopId,shopName,sellerName,x,y,t,items}
   let marketLastOpenRequest = null;     // {entityId,t,source}
   let marketScanActive = false;
@@ -3094,7 +3101,7 @@
   function marketLoadIndex() {
     try {
       const arr = JSON.parse(localStorage.getItem(MARKET_INDEX_KEY) || '[]');
-      if (Array.isArray(arr)) for (const sh of arr.slice(-MARKET_INDEX_MAX_SHOPS)) {
+      if (Array.isArray(arr)) for (const sh of (MARKET_INDEX_MAX_SHOPS > 0 ? arr.slice(-MARKET_INDEX_MAX_SHOPS) : arr)) {
         if (!sh || !Array.isArray(sh.items)) continue;
         const key = sh.key || ((sh.map||'?') + ':' + (sh.vendorEntityId || ('r'+sh.responseShopId)));
         marketShopIndex.set(key, {...sh, key});
@@ -3103,7 +3110,8 @@
   }
   function marketSaveIndex() {
     try {
-      const arr = [...marketShopIndex.values()].sort((a,b)=>(a.t||0)-(b.t||0)).slice(-MARKET_INDEX_MAX_SHOPS);
+      let arr = [...marketShopIndex.values()].sort((a,b)=>(a.t||0)-(b.t||0));
+      if (MARKET_INDEX_MAX_SHOPS > 0) arr = arr.slice(-MARKET_INDEX_MAX_SHOPS);
       localStorage.setItem(MARKET_INDEX_KEY, JSON.stringify(arr));
     } catch (_) {}
   }
@@ -3182,7 +3190,7 @@
       };
       marketShopIndex.set(key, shop);
       if (vendorEntityId) marketKnownOpenIds.add(vendorEntityId >>> 0);
-      while (marketShopIndex.size > MARKET_INDEX_MAX_SHOPS) {
+      while (MARKET_INDEX_MAX_SHOPS > 0 && marketShopIndex.size > MARKET_INDEX_MAX_SHOPS) {
         const oldest=[...marketShopIndex.values()].sort((a,b)=>(a.t||0)-(b.t||0))[0];
         if (!oldest) break; marketShopIndex.delete(oldest.key);
       }
@@ -3476,9 +3484,23 @@
     return {ok:false,reason:'cancel'};
   }
 
+  function marketNormalizeShopLimit(value) {
+    if (value === Infinity) return Infinity;
+    const raw = String(value == null ? 'all' : value).trim().toLowerCase();
+    if (!raw || raw === 'all' || raw === 'ทั้งหมด' || raw === '0' || raw === 'infinity' || raw === '∞') return Infinity;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : Infinity;
+  }
+  function marketShopLimitLabel(value) {
+    const n = marketNormalizeShopLimit(value);
+    return Number.isFinite(n) ? (n.toLocaleString() + ' ร้าน') : 'ทั้งหมด';
+  }
+
   async function marketSweepScanRecent(maxShops) {
     if(!marketShopIdSignature) return {checked:0,found:0};
-    const ids=marketDiscoverRecentIdsBySignature(marketShopIdSignature,MARKET_SWEEP_RECENT_MS,400);
+    maxShops = marketNormalizeShopLimit(maxShops);
+    const recentLimit = Number.isFinite(maxShops) ? Math.max(400, maxShops) : Math.max(400, marketProbePackets.length);
+    const ids=marketDiscoverRecentIdsBySignature(marketShopIdSignature,MARKET_SWEEP_RECENT_MS,recentLimit);
     let checked=0,found=0;
     for(const id0 of ids){
       if(marketSweepCancel || !marketSweepActive) break;
@@ -3505,7 +3527,7 @@
       marketScanStatus='ยังไม่รู้ Shop-ID signature — เปิดร้านด้วยมือ 1 ร้านก่อนเริ่มกวาด'; renderMarketIndexUI();
       log('🧭 Market Sweep: ต้อง Calibration Shop ID ก่อน — เปิดร้านด้วยมือ 1 ร้าน'); return false;
     }
-    maxShops=Math.max(1,Math.min(500,Number(maxShops)||200));
+    maxShops=marketNormalizeShopLimit(maxShops);
     const startMap=currentMap;
     const preset = mode==='pron-lower' ? marketPresetForMap(startMap) : null;
     const routeLabel = preset ? preset.name : 'จุดที่บันทึก';
@@ -3517,7 +3539,7 @@
     try{
       marketScanStatus='กำลังเตรียมจุดกวาดตลาด…'; renderMarketIndexUI();
       marketSweepWaypoints=marketBuildRouteWaypoints(sourcePoints,300);
-      log('🗺️ Market Sweep เริ่ม — '+startMap+' · '+routeLabel+' '+marketSweepWaypoints.length+' จุด · limit '+maxShops+' ร้าน');
+      log('🗺️ Market Sweep เริ่ม — '+startMap+' · '+routeLabel+' '+marketSweepWaypoints.length+' จุด · limit '+marketShopLimitLabel(maxShops));
       let skipped=0,totalChecked=0;
       for(let i=0;i<marketSweepWaypoints.length;i++){
         marketSweepWaypointIdx=i;
@@ -3534,7 +3556,7 @@
         marketScanStatus='🗺️ จุด '+(i+1)+'/'+marketSweepWaypoints.length+' · ตรวจ '+totalChecked+' candidate · เจอ '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ'; renderMarketIndexUI();
         await marketSleep(180);
       }
-      const done=marketSweepCancel?'หยุดโดยผู้ใช้':(currentMap!==startMap?'หยุดเพราะเปลี่ยนแมป':(marketShopIndex.size>=maxShops?'ครบ limit '+maxShops+' ร้าน':'ครบเส้นทาง'));
+      const done=marketSweepCancel?'หยุดโดยผู้ใช้':(currentMap!==startMap?'หยุดเพราะเปลี่ยนแมป':(Number.isFinite(maxShops)&&marketShopIndex.size>=maxShops?'ครบ limit '+maxShops+' ร้าน':'ครบเส้นทาง'));
       marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ข้าม '+skipped+' จุด';
       log('✅ Market Sweep จบ — '+done+' · เจอ '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · candidate '+totalChecked+' · ข้าม '+skipped+' จุด');
       return true;
@@ -3549,10 +3571,11 @@
     if(marketSweepActive){ marketScanStatus='กำลังกวาดตลาดอยู่ — หยุดกวาดก่อนสแกนรอบตัว'; renderMarketIndexUI(); return false; }
     if(marketScanActive){ marketScanCancel=true; marketScanStatus='กำลังหยุด…'; renderMarketIndexUI(); return false; }
     if(!activeWS || activeWS.readyState!==1){ log('⚠️ Market Scan: WebSocket เกมยังไม่พร้อม'); return false; }
-    maxShops=Math.max(1,Math.min(500,Number(maxShops)||100));
+    maxShops=marketNormalizeShopLimit(maxShops);
 
     // ★ v4.189.30: 0x6b ต้องใช้ Shop Open ID ไม่ใช่ player entity ID
-    const discovered = marketShopIdSignature ? marketDiscoverIdsBySignature(marketShopIdSignature, 300) : [];
+    const discoveryLimit = Number.isFinite(maxShops) ? Math.max(300, maxShops) : Math.max(300, marketProbePackets.length);
+    const discovered = marketShopIdSignature ? marketDiscoverIdsBySignature(marketShopIdSignature, discoveryLimit) : [];
     const ids=[]; const seen=new Set();
     for(const id of [...discovered, ...marketKnownOpenIds]){ const n=Number(id)>>>0; if(n && !seen.has(n)){seen.add(n);ids.push(n);} }
 
@@ -3565,9 +3588,9 @@
     }
 
     marketScanActive=true; marketScanCancel=false; marketScanPauseAutomation();
-    let found=0,checked=0; const max=Math.min(maxShops,ids.length);
-    marketScanStatus='เริ่มสแกนสูงสุด '+max+' ร้าน'; renderMarketIndexUI();
-    log('🔎 Market Scan เริ่ม — limit '+max+' ร้าน'+(marketShopIdSignature?' · learned signature':' · known IDs'));
+    let found=0,checked=0; const max=Number.isFinite(maxShops)?Math.min(maxShops,ids.length):ids.length;
+    marketScanStatus='เริ่มสแกน '+(Number.isFinite(maxShops)?('สูงสุด '+max+' ร้าน'):('ทั้งหมด '+max+' candidate')); renderMarketIndexUI();
+    log('🔎 Market Scan เริ่ม — limit '+(Number.isFinite(maxShops)?(max+' ร้าน'):'ทั้งหมด')+(marketShopIdSignature?' · learned signature':' · known IDs'));
     try{
       for(let i=0;i<max;i++){
         if(marketScanCancel) break;
@@ -3648,9 +3671,10 @@
         <input data-market-search placeholder="ค้นชื่อ / Item ID / ร้าน" style="width:100%;box-sizing:border-box;background:#0d0d15;color:#eee;border:1px solid #3a3f4b;border-radius:6px;padding:6px 7px;font-size:10px;margin-bottom:5px;flex:0 0 auto">
         <div style="display:flex;gap:5px;align-items:center;margin-bottom:4px;flex:0 0 auto">
           <select data-market-limit title="จำนวนร้านสูงสุดที่จะเก็บ" style="width:88px;background:#0d0d15;color:#eee;border:1px solid #3a3f4b;border-radius:6px;padding:5px;font-size:9px">
+            <option value="all" selected>ทั้งหมด</option>
             <option value="50">50 ร้าน</option>
             <option value="100">100 ร้าน</option>
-            <option value="200" selected>200 ร้าน</option>
+            <option value="200">200 ร้าน</option>
             <option value="500">500 ร้าน</option>
           </select>
           <button data-market-scan style="flex:1;background:#124a3a;color:#80cbc4;border:1px solid #287a66;border-radius:6px;padding:5px 7px;cursor:pointer;font-size:9px">🔄 สแกนรอบตัว</button>
@@ -9941,9 +9965,9 @@
     marketOpenShop(shopId) { return marketOpenSelectedShop(shopId, ''); },
     marketSearch(q) { return marketFilteredRows(q || '').map(r=>({itemId:r.item.itemId,name:nameOf(r.item.itemId),price:r.item.price,qty:r.item.qty,shop:r.shop.shopName,seller:r.shop.sellerName,map:r.shop.map,x:r.shop.x,y:r.shop.y,accessX:r.shop.accessX,accessY:r.shop.accessY,ageMs:Date.now()-r.shop.t})); },
     marketOpen() { openMarketPanel(); },
-    marketScan(maxShops) { openMarketPanel(); return marketScanVisible(maxShops || 100); },
-    marketSweep(maxShops) { openMarketPanel(); return marketSweepMap(maxShops || 200, 'saved'); },
-    marketSweepPronLower(maxShops) { openMarketPanel(); return marketSweepMap(maxShops || 200, 'pron-lower'); },
+    marketScan(maxShops) { openMarketPanel(); return marketScanVisible(maxShops == null ? 'all' : maxShops); },
+    marketSweep(maxShops) { openMarketPanel(); return marketSweepMap(maxShops == null ? 'all' : maxShops, 'saved'); },
+    marketSweepPronLower(maxShops) { openMarketPanel(); return marketSweepMap(maxShops == null ? 'all' : maxShops, 'pron-lower'); },
     marketSweepStop() { if(marketSweepActive){ marketSweepCancel=true; return true; } return false; },
     marketPointAdd() { openMarketPanel(); return marketAddSavedPoint(); },
     marketPointUndo() { return marketRemoveLastSavedPoint(); },
