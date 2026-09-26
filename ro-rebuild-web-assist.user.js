@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.73
+// @version      4.189.74
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,19 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.73';
+  const VERSION = '4.189.74';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.74', d: '2026-09-27', items: [
+      '🧩 Stable Shop Identity — ใช้ responseHint/responseShopId เป็นตัวตนร้านถาวร แทนการพึ่ง Actor ID อย่างเดียว',
+      '   · Actor ID ของ Vendor สามารถเปลี่ยนระหว่างการโหลด/รอบสแกน ทำให้ v4.189.73 มองร้านเดิมเป็นร้านใหม่และ Proximity Gate แทบไม่ทำงาน',
+      '   · ถ้า Actor ID ไม่ตรงฐานเดิม จะใช้ responseHint 4 ไบต์ท้าย Vendor Marker หา responseShopId เดิมอัตโนมัติ',
+      '📍 Proximity Refresh v2 — ร้านที่ match ด้วย responseHint จะใช้ accessX/accessY เดิมได้ทันที จึง defer ร้านที่ยังอยู่ไกลจริง',
+      '🧹 Canonical Index — key ของร้านเปลี่ยนเป็น map:r<responseShopId> และรวมรายการซ้ำที่ responseShopId เดียวกันตอนโหลดฐาน',
+      '   · จำนวนร้านในฐานอาจลดลงหลังอัปเดตครั้งแรก เพราะเป็นการรวม duplicate Actor IDs ของร้านเดียวกัน ไม่ใช่การลบร้านจริง',
+      '📊 Diagnostic เพิ่ม hintMatched เพื่อวัดจำนวน Actor ID ปัจจุบันที่จับคู่กลับร้านเดิมด้วย responseHint',
+      '   · โหมด ⚡ ร้านใหม่ยังคง Event-driven Direct Vendor Only; stale/all ใช้ identity ใหม่เพื่อกรองก่อนยิง 0x6b',
+    ]},
     { v: '4.189.73', d: '2026-09-27', items: [
       '📍 Proximity-gated Refresh — โหมด ♻️ อัปเดต >10 นาที และ 🔄 รีเฟรชทั้งหมด จะเปิดร้านเดิมเมื่อเดินเข้าใกล้จุด access ที่เคยเปิดสำเร็จแล้วเท่านั้น',
       '   · ใช้รัศมีประมาณ 16 ช่องรอบ access point เพื่อลดการยิง 0x6b ใส่ Vendor ที่ Client มองเห็นแล้วแต่ยังอยู่ไกลเกินระยะเปิดร้าน',
@@ -3087,6 +3097,8 @@
   let marketSweepWaypointIdx = 0;
   let marketSweepCheckedIds = new Set();
   let marketSweepDeferredFarIds = new Set(); // ★ v4.189.73 — Vendor ที่เห็นแล้วแต่ยังไกล access point
+  let marketSweepHintMatchedIds = new Set(); // ★ v4.189.74 — Actor ID ปัจจุบันที่ match ร้านเดิมผ่าน responseHint
+  let marketIndexDedupedOnLoad = 0;
   let marketSweepMode = ''; // 'new' | 'stale' | 'all'
   const MARKET_SWEEP_MAX_WAYPOINTS = 260;
   const MARKET_SWEEP_RECENT_MS = 10000;
@@ -3306,6 +3318,7 @@
       'shop_signature='+sig,
       'vendor_direct=marker[00 08 00 00 00 03 00 01 00] actor@7 + responseHint@end directOnly='+(marketDirectVendorOnlyForMap()?'yes':'no')+' candidates='+marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS).length,
       'refresh_gate=access<='+MARKET_REFRESH_ACCESS_RADIUS+' deferred_now='+marketSweepDeferredFarIds.size,
+      'shop_identity=responseShopId canonical hintMatched='+marketSweepHintMatchedIds.size+' dedupOnLoad='+marketIndexDedupedOnLoad,
       'probe_latency='+(marketDiagProbeStats ? ('ok='+marketDiagProbeStats.ok+' timeout='+marketDiagProbeStats.timeout+' avg_ms='+(marketDiagProbeStats.ok?(marketDiagProbeStats.sumMs/marketDiagProbeStats.ok).toFixed(1):'0')+' max_ms='+marketDiagProbeStats.maxMs+' buckets<=100/'+marketDiagProbeStats.le100+' <=200/'+marketDiagProbeStats.le200+' <=250/'+marketDiagProbeStats.le250+' <=400/'+marketDiagProbeStats.le400+' <=650/'+marketDiagProbeStats.le650+' >650/'+marketDiagProbeStats.gt650) : 'none'),
       'sweep='+(marketSweepActive?'active':'inactive')+' mode='+(marketSweepMode||'-')+' waypoint='+(marketSweepWaypointIdx+1)+'/'+marketSweepWaypoints.length,
       '',
@@ -3575,10 +3588,30 @@
   function marketLoadIndex() {
     try {
       const arr = JSON.parse(localStorage.getItem(MARKET_INDEX_KEY) || '[]');
-      if (Array.isArray(arr)) for (const sh of (MARKET_INDEX_MAX_SHOPS > 0 ? arr.slice(-MARKET_INDEX_MAX_SHOPS) : arr)) {
-        if (!sh || !Array.isArray(sh.items)) continue;
-        const key = sh.key || ((sh.map||'?') + ':' + (sh.vendorEntityId || ('r'+sh.responseShopId)));
-        marketShopIndex.set(key, {...sh, key});
+      marketIndexDedupedOnLoad = 0;
+      if (Array.isArray(arr)) for (const sh0 of (MARKET_INDEX_MAX_SHOPS > 0 ? arr.slice(-MARKET_INDEX_MAX_SHOPS) : arr)) {
+        if (!sh0 || !Array.isArray(sh0.items)) continue;
+        const sh={...sh0};
+        const mapName=sh.map||'?';
+        const responseId=Number(sh.responseShopId||0)>>>0;
+        // ★ v4.189.74 — responseShopId คือ identity ที่ผูกกับ shop response โดยตรง
+        // Actor ID อาจเปลี่ยนเมื่อ client โหลด actor ใหม่ จึงไม่ควรใช้เป็น persistent key หลัก
+        const key=responseId ? (mapName+':r'+responseId) : (sh.key || (mapName+':'+(sh.vendorEntityId||'unknown')));
+        sh.key=key;
+        const prev=marketShopIndex.get(key);
+        if(!prev){ marketShopIndex.set(key,sh); continue; }
+        marketIndexDedupedOnLoad++;
+        const newer=Number(sh.t||0)>=Number(prev.t||0) ? sh : prev;
+        const older=newer===sh ? prev : sh;
+        // preserve access point / seller / position จาก record เก่าถ้า record ใหม่ไม่มี
+        if(newer.accessX==null && older.accessX!=null) newer.accessX=older.accessX;
+        if(newer.accessY==null && older.accessY!=null) newer.accessY=older.accessY;
+        if(!newer.accessT && older.accessT) newer.accessT=older.accessT;
+        if(!newer.sellerName && older.sellerName) newer.sellerName=older.sellerName;
+        if(newer.x==null && older.x!=null) newer.x=older.x;
+        if(newer.y==null && older.y!=null) newer.y=older.y;
+        newer.key=key;
+        marketShopIndex.set(key,newer);
       }
     } catch (_) {}
   }
@@ -3649,8 +3682,12 @@
       // OUT 0x6b ใช้ actor/entity id ของพ่อค้า (ยืนยันจาก Diagnostic v4.189.68/69)
       const vendorEntityId = req ? req.entityId : 0;
       const ent = vendorEntityId ? entities.get(vendorEntityId) : null;
-      const key = (currentMap || '?') + ':' + (vendorEntityId || ('r' + responseShopId));
-      const prevShop = marketShopIndex.get(key);
+      // ★ v4.189.74 — canonical identity = responseShopId; actor id เป็น current transport/open id เท่านั้น
+      const responseKey = responseShopId ? ((currentMap || '?') + ':r' + responseShopId) : '';
+      const prevShop = responseShopId ? marketFindIndexedResponseShopId(responseShopId,currentMap)
+        : (vendorEntityId ? marketFindIndexedVendorId(vendorEntityId,currentMap) : null);
+      const oldKey = prevShop && prevShop.key ? prevShop.key : '';
+      const key = responseKey || ((currentMap || '?') + ':' + (vendorEntityId || 'unknown'));
       // ★ v4.189.44: requestX/Y คือจุดที่ส่ง 0x6b แล้ว server ตอบกลับสำเร็จ
       // จึงเป็น “จุดเปิดร้านได้จริง” ที่เชื่อถือได้กว่าการเดาพิกัด vendor
       const reqX = req && Number.isFinite(Number(req.requestX)) ? Math.round(Number(req.requestX)) : null;
@@ -3665,6 +3702,15 @@
         accessX, accessY, accessT: (reqX != null && reqY != null) ? Date.now() : (prevShop && prevShop.accessT ? prevShop.accessT : 0),
         t: Date.now(), items
       };
+      // migration: ลบ actor-key/duplicate เก่าของ responseShopId เดียวกัน แล้วเก็บ canonical key เดียว
+      if(oldKey && oldKey!==key) marketShopIndex.delete(oldKey);
+      if(responseShopId){
+        for(const [k,old] of [...marketShopIndex.entries()]){
+          if(k===key || !old) continue;
+          if(marketNormalizeRouteMapName(old.map)!==marketNormalizeRouteMapName(currentMap)) continue;
+          if((Number(old.responseShopId||0)>>>0)===(Number(responseShopId)>>>0)) marketShopIndex.delete(k);
+        }
+      }
       marketShopIndex.set(key, shop);
       if (vendorEntityId) marketKnownOpenIds.add(vendorEntityId >>> 0);
       while (MARKET_INDEX_MAX_SHOPS > 0 && marketShopIndex.size > MARKET_INDEX_MAX_SHOPS) {
@@ -4011,6 +4057,19 @@
   }
 
   // ★ v4.189.61 — helpers สำหรับ Fast Scan
+  function marketFindIndexedResponseShopId(responseShopId, mapName=currentMap) {
+    responseShopId=Number(responseShopId)>>>0;
+    if(!responseShopId) return null;
+    const wantMap=marketNormalizeRouteMapName(mapName);
+    let best=null;
+    for(const sh of marketShopIndex.values()){
+      if(!sh) continue;
+      if(wantMap && sh.map && marketNormalizeRouteMapName(sh.map)!==wantMap) continue;
+      if((Number(sh.responseShopId||0)>>>0)!==responseShopId) continue;
+      if(!best || Number(sh.t||0)>Number(best.t||0)) best=sh;
+    }
+    return best;
+  }
   function marketFindIndexedVendorId(id, mapName=currentMap) {
     id = Number(id) >>> 0;
     if (!id) return null;
@@ -4022,7 +4081,19 @@
       if ((Number(sh.vendorEntityId) >>> 0) !== id) continue;
       if (!best || Number(sh.t || 0) > Number(best.t || 0)) best = sh;
     }
-    return best;
+    if(best) return best;
+
+    // ★ v4.189.74 — Actor ID เปลี่ยนได้ แต่ responseHint=end ของ Vendor Marker
+    // ตรงกับ responseShopId ที่ IN 0x6b ส่งกลับ จึงใช้จับคู่ร้านเดิมข้าม Actor ID ได้
+    const hint=Number(marketVendorResponseHintByActorId.get(id)||0)>>>0;
+    if(hint){
+      const byHint=marketFindIndexedResponseShopId(hint,mapName);
+      if(byHint){
+        if(marketSweepActive) marketSweepHintMatchedIds.add(id);
+        return byHint;
+      }
+    }
+    return null;
   }
   function marketHasIndexedVendorId(id) { return !!marketFindIndexedVendorId(id, currentMap); }
   function marketShopNeedsPriceUpdate(id, ageMs=MARKET_PRICE_STALE_MS) {
@@ -4293,7 +4364,7 @@
     }
     if(policy==='all') marketStaleOpenIds.clear();
     const policyLabel = policy==='new' ? '⚡ กวาดตลาด (ร้านใหม่)' : (policy==='stale' ? '♻️ อัปเดตราคา >10นาที' : '🔄 รีเฟรชทั้งหมด');
-    marketSweepActive=true; marketSweepCancel=false; marketSweepMode=policy; marketSweepCheckedIds=new Set(); marketSweepDeferredFarIds=new Set(); marketSweepWaypointIdx=0;
+    marketSweepActive=true; marketSweepCancel=false; marketSweepMode=policy; marketSweepCheckedIds=new Set(); marketSweepDeferredFarIds=new Set(); marketSweepHintMatchedIds=new Set(); marketSweepWaypointIdx=0;
     marketScanPauseAutomation();
     try{
       marketSweepWaypoints=marketBuildTurboAnchors(preset.points,MARKET_TURBO_ANCHOR_COUNT);
@@ -4338,14 +4409,14 @@
       const done=marketSweepCancel?'หยุดโดยผู้ใช้':(currentMap!==startMap?'หยุดเพราะเปลี่ยนแมป':(Number.isFinite(maxShops)&&marketShopIndex.size>=maxShops?'ครบ limit '+maxShops+' ร้าน':'ครบเส้นทาง'));
       const extra = policy==='new' ? (' · ข้ามร้านเดิม '+totalSkipKnown) : (policy==='stale' ? (' · ข้ามข้อมูลสด '+totalSkipFresh) : '');
       const walkSec=(totalWalkMs/1000).toFixed(1), scanSec=(totalScanMs/1000).toFixed(1);
-      const deferredFar=marketSweepDeferredFarIds.size;
-      marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ'+(policy==='new'?'':(' · รอเข้าใกล้ '+deferredFar));
-      marketDiagEvent('sweep_end',{done,checked:totalChecked,found:totalFound,retry:totalRetry,fastSkip:smartSkipped,walkFail:skipped,moveScanBatches:totalMoveScanBatches,walkMs:Math.round(totalWalkMs),scanMs:Math.round(totalScanMs),deferredFar,shops:marketShopIndex.size,listings:marketAllRows().length});
-      log('✅ '+policyLabel+' จบ — '+done+' · ฐาน '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+extra+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ · move-scan '+totalMoveScanBatches+' ครั้ง · deferredFar '+deferredFar+' · เดินไม่ถึง '+skipped+' จุด');
+      const deferredFar=marketSweepDeferredFarIds.size, hintMatched=marketSweepHintMatchedIds.size;
+      marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ'+(policy==='new'?'':(' · hint '+hintMatched+' · รอเข้าใกล้ '+deferredFar));
+      marketDiagEvent('sweep_end',{done,checked:totalChecked,found:totalFound,retry:totalRetry,fastSkip:smartSkipped,walkFail:skipped,moveScanBatches:totalMoveScanBatches,walkMs:Math.round(totalWalkMs),scanMs:Math.round(totalScanMs),hintMatched,deferredFar,shops:marketShopIndex.size,listings:marketAllRows().length});
+      log('✅ '+policyLabel+' จบ — '+done+' · ฐาน '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+extra+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ · move-scan '+totalMoveScanBatches+' ครั้ง · hintMatched '+hintMatched+' · deferredFar '+deferredFar+' · เดินไม่ถึง '+skipped+' จุด');
       return true;
     } finally {
       if(marketDiagActive) marketDiagStopCapture(marketSweepCancel?'sweep-stopped':'sweep-finished');
-      marketSweepActive=false; marketSweepCancel=false; marketSweepMode=''; marketScanWaiter=null; marketSweepWaypoints=[]; marketSweepWaypointIdx=0; marketSweepDeferredFarIds=new Set();
+      marketSweepActive=false; marketSweepCancel=false; marketSweepMode=''; marketScanWaiter=null; marketSweepWaypoints=[]; marketSweepWaypointIdx=0; marketSweepDeferredFarIds=new Set(); marketSweepHintMatchedIds=new Set();
       marketScanRestoreAutomation(); renderMarketIndexUI(); updateMarketUI();
     }
   }
