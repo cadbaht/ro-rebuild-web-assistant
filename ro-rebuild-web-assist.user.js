@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.70
+// @version      4.189.71
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,18 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.70';
+  const VERSION = '4.189.71';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.71', d: '2026-09-27', items: [
+      '🚀 Event-driven Market Sweep — ลดจุดนำทางจาก 24 เหลือ 12 anchors แต่จับ Vendor Flag ตลอดเวลาระหว่างเดิน',
+      '   · ถ้ามี Vendor Actor ID ใหม่ระหว่างเดิน จะหยุดการเดินชั่วคราว เปิด/อ่านร้านทันที แล้วเดินต่อไปยัง anchor เดิม',
+      '   · ถ้าไม่มีร้านใหม่ จะเดินต่อเนื่อง ไม่ต้องรอครบ cycle ที่ทุก waypoint เหมือนรุ่นก่อน',
+      '⚡ ใช้ Vendor Actor Direct จาก v4.189.70 ต่อเนื่อง — เปิดเฉพาะ actor ที่มี Vendor Marker และยังใช้ single-pass ไม่มี retry',
+      '   · ลด move polling เป็น ~160ms และ arrival radius เป็น 6 ช่อง เพื่อให้เส้นทางไหลลื่นขึ้น',
+      '📊 Diagnostic เพิ่ม walkMs / scanMs / moveScanBatches เพื่อวัดเวลาที่เสียกับการเดินเทียบกับการเปิดร้านจริง',
+      '   · ยังคง 3 ปุ่มตลาดเดิม: กวาดร้านใหม่ / อัปเดต >10 นาที / รีเฟรชทั้งหมด และเลือกเริ่มจากปลายเส้นทางที่ใกล้ตัวละครที่สุด',
+    ]},
     { v: '4.189.70', d: '2026-09-27', items: [
       '🛠️ แก้ Vendor Flag Direct ID — Diagnostic v4.189.69 ยืนยันว่า OUT 0x6b ต้องส่ง Actor/Entity ID @7 ไม่ใช่ Shop Response ID 4 ไบต์ท้าย',
       '   · ใช้ marker 00 08 00 00 00 03 00 01 00 เป็นตัวกรองว่า entity นี้เปิดร้าน แล้วอ่าน Actor ID จาก offset 7 เพื่อเปิดร้าน',
@@ -3065,10 +3074,10 @@
   let marketSweepMode = ''; // 'new' | 'stale' | 'all'
   const MARKET_SWEEP_MAX_WAYPOINTS = 260;
   const MARKET_SWEEP_RECENT_MS = 10000;
-  // ★ v4.189.67 — Turbo Sweep: ใช้ anchor กระจายตลอดเส้นทางแทนการหยุดครบทุกจุด
-  const MARKET_TURBO_ANCHOR_COUNT = 24;
-  const MARKET_TURBO_MOVE_POLL_MS = 220;
-  const MARKET_TURBO_ARRIVE_RADIUS = 5;
+  // ★ v4.189.71 — Event-driven Sweep: ใช้ anchor เป็นเพียงจุดนำทาง; Vendor Flag ถูกจับ/สแกนระหว่างเดิน
+  const MARKET_TURBO_ANCHOR_COUNT = 12;
+  const MARKET_TURBO_MOVE_POLL_MS = 160;
+  const MARKET_TURBO_ARRIVE_RADIUS = 6;
 
   // ★ v4.189.67 — Market Packet Diagnostic (เก็บ summary + sample ไม่เก็บ raw ทั้งหมด)
   let marketDiagActive = false;
@@ -3911,23 +3920,56 @@
     return null;
   }
 
-  async function marketSweepMoveTo(wp, startMap, idx, total) {
+  async function marketSweepMoveTo(wp, startMap, idx, total, maxShops, policy='new') {
     const started=Date.now(); let lastProgress=Date.now(); let lx=player.x, ly=player.y;
+    let scanMs=0, scanBatches=0, checked=0, found=0, skippedKnown=0, skippedFresh=0, skippedStale=0;
     marketDiagEvent('move_start',{i:idx+1,total,tx:wp.x,ty:wp.y,sx:player.x==null?'?':Math.round(player.x),sy:player.y==null?'?':Math.round(player.y)});
     while(!marketSweepCancel && marketSweepActive){
-      if(currentMap!==startMap){ marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'map-change',moveMs:Date.now()-started}); return {ok:false,reason:'map-change'}; }
+      if(currentMap!==startMap){
+        const elapsed=Date.now()-started, walkMs=Math.max(0,elapsed-scanMs);
+        marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'map-change',moveMs:elapsed,walkMs,scanMs,scanBatches});
+        return {ok:false,reason:'map-change',walkMs,scanMs,scanBatches,checked,found,skippedKnown,skippedFresh,skippedStale};
+      }
       if(player.x==null||player.y==null){ await marketSleep(MARKET_TURBO_MOVE_POLL_MS); continue; }
       const dist=Math.hypot(wp.x-player.x,wp.y-player.y);
-      if(dist<=MARKET_TURBO_ARRIVE_RADIUS){ marketDiagEvent('move_end',{i:idx+1,ok:1,moveMs:Date.now()-started,dist:dist.toFixed(1),x:Math.round(player.x),y:Math.round(player.y)}); return {ok:true,dist}; }
+
+      // ★ v4.189.71 — Event-driven: Vendor ใหม่เข้ามาระหว่างเดิน → หยุดตรงจุดปัจจุบัน, scan, แล้วเดินต่อ
+      const liveIds=marketSweepEligibleCandidateIds(policy);
+      if(liveIds.length && marketShopIndex.size<maxShops){
+        const batchStarted=Date.now();
+        try { sendMove(Math.round(player.x),Math.round(player.y)); } catch(_) {}
+        marketScanStatus='⚡ เจอ Vendor ใหม่ '+liveIds.length+' ระหว่างเดิน · หยุดสแกนที่ @('+Math.round(player.x)+','+Math.round(player.y)+')';
+        renderMarketIndexUI();
+        marketDiagEvent('move_vendor_seen',{i:idx+1,dist:dist.toFixed(1),candidates:liveIds.length,x:Math.round(player.x),y:Math.round(player.y)});
+        await marketSleep(25);
+        const sr=await marketSweepProbeIds(liveIds,maxShops,policy,'move');
+        const spent=Date.now()-batchStarted; scanMs+=spent; scanBatches++;
+        checked+=sr.checked; found+=sr.found; skippedKnown+=sr.skippedKnown; skippedFresh+=sr.skippedFresh; skippedStale+=sr.skippedStale;
+        marketDiagEvent('move_scan',{i:idx+1,candidates:liveIds.length,checked:sr.checked,found:sr.found,scanMs:spent});
+        if(marketSweepCancel || !marketSweepActive || marketShopIndex.size>=maxShops) break;
+        // หลัง scan ให้ loop รอบถัดไปสั่งเดินกลับไป anchor เดิม
+        continue;
+      }
+
+      if(dist<=MARKET_TURBO_ARRIVE_RADIUS){
+        const elapsed=Date.now()-started, walkMs=Math.max(0,elapsed-scanMs);
+        marketDiagEvent('move_end',{i:idx+1,ok:1,moveMs:elapsed,walkMs,scanMs,scanBatches,dist:dist.toFixed(1),x:Math.round(player.x),y:Math.round(player.y)});
+        return {ok:true,dist,walkMs,scanMs,scanBatches,checked,found,skippedKnown,skippedFresh,skippedStale};
+      }
       if(lx!=null&&ly!=null&&Math.hypot(player.x-lx,player.y-ly)>=1){ lastProgress=Date.now(); lx=player.x;ly=player.y; }
-      if(Date.now()-started>18000 || Date.now()-lastProgress>6500){ marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'stuck',moveMs:Date.now()-started,dist:dist.toFixed(1)}); return {ok:false,reason:'stuck'}; }
-      marketScanStatus='🚀 เดิน '+(idx+1)+'/'+total+' → ('+wp.x+','+wp.y+') · เหลือ '+dist.toFixed(0)+' ช่อง · เจอ '+marketShopIndex.size+' ร้าน';
+      if(Date.now()-started>18000+scanMs || Date.now()-lastProgress>6500+Math.min(scanMs,4000)){
+        const elapsed=Date.now()-started, walkMs=Math.max(0,elapsed-scanMs);
+        marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'stuck',moveMs:elapsed,walkMs,scanMs,scanBatches,dist:dist.toFixed(1)});
+        return {ok:false,reason:'stuck',walkMs,scanMs,scanBatches,checked,found,skippedKnown,skippedFresh,skippedStale};
+      }
+      marketScanStatus='🚀 เดินต่อเนื่อง '+(idx+1)+'/'+total+' → ('+wp.x+','+wp.y+') · เหลือ '+dist.toFixed(0)+' ช่อง · เจอ '+marketShopIndex.size+' ร้าน';
       renderMarketIndexUI();
-      routineWalkTowardPoint(wp.x,wp.y,'🚀 Market Turbo Sweep');
+      routineWalkTowardPoint(wp.x,wp.y,'🚀 Market Event Sweep');
       await marketSleep(MARKET_TURBO_MOVE_POLL_MS);
     }
-    marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'cancel',moveMs:Date.now()-started});
-    return {ok:false,reason:'cancel'};
+    const elapsed=Date.now()-started, walkMs=Math.max(0,elapsed-scanMs);
+    marketDiagEvent('move_end',{i:idx+1,ok:0,reason:'cancel',moveMs:elapsed,walkMs,scanMs,scanBatches});
+    return {ok:false,reason:'cancel',walkMs,scanMs,scanBatches,checked,found,skippedKnown,skippedFresh,skippedStale};
   }
 
   function marketNormalizeShopLimit(value) {
@@ -4029,9 +4071,9 @@
   }
   async function marketSmartWaypointLoadWait(policy='new') {
     const start=Date.now();
-    const quickNoNewMs=90;    // Turbo: ไม่มี candidate เลย → ไปต่อแทบจะทันที
-    const quietMs=80;         // Turbo: มี candidate → รอ packet เงียบสั้น ๆ
-    const maxWait=300;
+    const quickNoNewMs=55;    // Event-driven: ตอนถึง anchor รอเผื่อ packet ปลายทางเพียงสั้น ๆ
+    const quietMs=70;         // ถ้ามี Vendor ใหม่ รอ packet เงียบเล็กน้อยก่อนเปิดร้าน
+    const maxWait=220;
     let ids=marketSweepEligibleCandidateIds(policy);
     let lastCount=ids.length, lastChange=start;
     if(lastCount===0){
@@ -4142,33 +4184,37 @@
     }
   }
 
-  async function marketSweepScanRecent(maxShops, policy='new') {
+  async function marketSweepProbeIds(ids, maxShops, policy='new', source='sweep') {
     maxShops = marketNormalizeShopLimit(maxShops);
     policy = ['new','stale','all'].includes(policy) ? policy : 'new';
     marketPruneStaleIds();
-    const recentLimit = Number.isFinite(maxShops) ? Math.max(400, maxShops) : Math.max(400, marketProbePackets.length);
-    const ids=marketDiscoverRecentIdsBySignature(marketShopIdSignature,MARKET_SWEEP_RECENT_MS,recentLimit);
+    const started=Date.now();
     let checked=0,found=0,retried=0,skippedKnown=0,skippedFresh=0,skippedStale=0;
-
-    // ★ v4.189.68 — single-pass: Diagnostic รอบจริงยืนยันร้านตอบ <=205ms
-    for(const id0 of ids){
+    for(const id0 of (Array.isArray(ids)?ids:[])){
       if(marketSweepCancel || !marketSweepActive) break;
       if(marketShopIndex.size>=maxShops) break;
       const id=Number(id0)>>>0;
       if(!id||marketSweepCheckedIds.has(id)) continue;
-      marketSweepCheckedIds.add(id); // negative cache ตลอด sweep: timeout แล้วจะไม่ยิงซ้ำที่ waypoint ถัดไป
-      const indexed = marketFindIndexedVendorId(id, currentMap);
+      marketSweepCheckedIds.add(id);
+      const indexed=marketFindIndexedVendorId(id,currentMap);
       if(policy==='new' && indexed){ skippedKnown++; continue; }
-      if(policy==='stale' && (!indexed || !marketShopNeedsPriceUpdate(id, MARKET_PRICE_STALE_MS))){ skippedFresh++; continue; }
+      if(policy==='stale' && (!indexed || !marketShopNeedsPriceUpdate(id,MARKET_PRICE_STALE_MS))){ skippedFresh++; continue; }
       if(policy!=='all' && marketIsStaleId(id)){ skippedStale++; continue; }
       checked++;
-      const sh=await marketFastProbeShop(id,MARKET_FAST_FIRST_TIMEOUT_MS,'sweep-'+policy);
+      const sh=await marketFastProbeShop(id,MARKET_FAST_FIRST_TIMEOUT_MS,(source||'sweep')+'-'+policy);
       if(sh) found++; else marketMarkStaleId(id);
       await marketSleep(MARKET_FAST_BETWEEN_MS);
     }
+    return {checked,found,retried,skippedKnown,skippedFresh,skippedStale,scanMs:Date.now()-started};
+  }
 
-    const result={checked,found,retried,skippedKnown,skippedFresh,skippedStale};
-    marketDiagEvent('shop_scan',result);
+  async function marketSweepScanRecent(maxShops, policy='new') {
+    maxShops = marketNormalizeShopLimit(maxShops);
+    policy = ['new','stale','all'].includes(policy) ? policy : 'new';
+    marketPruneStaleIds();
+    const ids=marketSweepEligibleCandidateIds(policy);
+    const result=await marketSweepProbeIds(ids,maxShops,policy,'anchor');
+    marketDiagEvent('shop_scan',{source:'anchor',checked:result.checked,found:result.found,retried:result.retried,skippedKnown:result.skippedKnown,skippedFresh:result.skippedFresh,skippedStale:result.skippedStale,scanMs:result.scanMs});
     return result;
   }
 
@@ -4213,15 +4259,17 @@
           marketDiagEvent('route_reverse',{reason:'nearest-end',dFirst:dA.toFixed(1),dLast:dB.toFixed(1)});
         }
       }
-      marketScanStatus=policyLabel+' · Turbo '+marketSweepWaypoints.length+'/'+preset.points.length+' จุด…'; renderMarketIndexUI();
-      marketDiagEvent('sweep_start',{mode:policy,anchors:marketSweepWaypoints.length,sourcePoints:preset.points.length});
-      log('🚀 '+policyLabel+' เริ่ม — '+startMap+' · Turbo Anchors '+marketSweepWaypoints.length+'/'+preset.points.length+' จุด · limit '+marketShopLimitLabel(maxShops));
-      let skipped=0,smartSkipped=0,totalChecked=0,totalFound=0,totalRetry=0,totalSkipKnown=0,totalSkipFresh=0;
+      marketScanStatus=policyLabel+' · Event Sweep '+marketSweepWaypoints.length+'/'+preset.points.length+' จุดนำทาง…'; renderMarketIndexUI();
+      marketDiagEvent('sweep_start',{mode:policy,anchors:marketSweepWaypoints.length,sourcePoints:preset.points.length,eventDriven:1});
+      log('🚀 '+policyLabel+' เริ่ม — '+startMap+' · Event-driven Anchors '+marketSweepWaypoints.length+'/'+preset.points.length+' จุด · จับ Vendor ระหว่างเดิน · limit '+marketShopLimitLabel(maxShops));
+      let skipped=0,smartSkipped=0,totalChecked=0,totalFound=0,totalRetry=0,totalSkipKnown=0,totalSkipFresh=0,totalSkipStale=0,totalWalkMs=0,totalScanMs=0,totalMoveScanBatches=0;
       for(let i=0;i<marketSweepWaypoints.length;i++){
         marketSweepWaypointIdx=i;
         if(marketSweepCancel||currentMap!==startMap||marketShopIndex.size>=maxShops) break;
         const wp=marketSweepWaypoints[i];
-        const mv=await marketSweepMoveTo(wp,startMap,i,marketSweepWaypoints.length);
+        const mv=await marketSweepMoveTo(wp,startMap,i,marketSweepWaypoints.length,maxShops,policy);
+        totalWalkMs+=Number(mv.walkMs||0); totalScanMs+=Number(mv.scanMs||0); totalMoveScanBatches+=Number(mv.scanBatches||0);
+        totalChecked+=Number(mv.checked||0); totalFound+=Number(mv.found||0); totalSkipKnown+=Number(mv.skippedKnown||0); totalSkipFresh+=Number(mv.skippedFresh||0); totalSkipStale+=Number(mv.skippedStale||0);
         if(!mv.ok){
           if(mv.reason==='map-change'||mv.reason==='cancel') break;
           skipped++; log('⏭️ Market: ข้ามจุด '+(i+1)+'/'+marketSweepWaypoints.length+' @('+wp.x+','+wp.y+') — '+mv.reason); continue;
@@ -4235,15 +4283,16 @@
           continue;
         }
         const sr=await marketSweepScanRecent(maxShops,policy);
-        totalChecked+=sr.checked; totalFound+=sr.found; totalRetry+=sr.retried; totalSkipKnown+=sr.skippedKnown; totalSkipFresh+=sr.skippedFresh;
-        marketScanStatus=policyLabel+' · จุด '+(i+1)+'/'+marketSweepWaypoints.length+' · candidate '+smart.candidates+' · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · wait '+smart.waitMs+'ms'; renderMarketIndexUI();
+        totalChecked+=sr.checked; totalFound+=sr.found; totalRetry+=sr.retried; totalSkipKnown+=sr.skippedKnown; totalSkipFresh+=sr.skippedFresh; totalSkipStale+=sr.skippedStale; totalScanMs+=Number(sr.scanMs||0);
+        marketScanStatus=policyLabel+' · anchor '+(i+1)+'/'+marketSweepWaypoints.length+' · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · move-scan '+totalMoveScanBatches+' ครั้ง'; renderMarketIndexUI();
         await marketSleep(30);
       }
       const done=marketSweepCancel?'หยุดโดยผู้ใช้':(currentMap!==startMap?'หยุดเพราะเปลี่ยนแมป':(Number.isFinite(maxShops)&&marketShopIndex.size>=maxShops?'ครบ limit '+maxShops+' ร้าน':'ครบเส้นทาง'));
       const extra = policy==='new' ? (' · ข้ามร้านเดิม '+totalSkipKnown) : (policy==='stale' ? (' · ข้ามข้อมูลสด '+totalSkipFresh) : '');
-      marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · ข้ามเร็ว '+smartSkipped+' จุด'+extra;
-      marketDiagEvent('sweep_end',{done,checked:totalChecked,found:totalFound,retry:totalRetry,fastSkip:smartSkipped,walkFail:skipped,shops:marketShopIndex.size,listings:marketAllRows().length});
-      log('✅ '+policyLabel+' จบ — '+done+' · ฐาน '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+extra+' · ข้ามเร็ว '+smartSkipped+' จุด · เดินไม่ถึง '+skipped+' จุด');
+      const walkSec=(totalWalkMs/1000).toFixed(1), scanSec=(totalScanMs/1000).toFixed(1);
+      marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ';
+      marketDiagEvent('sweep_end',{done,checked:totalChecked,found:totalFound,retry:totalRetry,fastSkip:smartSkipped,walkFail:skipped,moveScanBatches:totalMoveScanBatches,walkMs:Math.round(totalWalkMs),scanMs:Math.round(totalScanMs),shops:marketShopIndex.size,listings:marketAllRows().length});
+      log('✅ '+policyLabel+' จบ — '+done+' · ฐาน '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+extra+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ · move-scan '+totalMoveScanBatches+' ครั้ง · เดินไม่ถึง '+skipped+' จุด');
       return true;
     } finally {
       if(marketDiagActive) marketDiagStopCapture(marketSweepCancel?'sweep-stopped':'sweep-finished');
@@ -4319,7 +4368,7 @@
     const preset=marketPresetForMap();
     const staleCount=marketCountPriceStale(currentMap, MARKET_PRICE_STALE_MS);
     if(routeTxt) routeTxt.textContent = preset
-      ? ('Preset: ✅ '+preset.name+' · Turbo '+Math.min(MARKET_TURBO_ANCHOR_COUNT,preset.points.length)+'/'+preset.points.length+' จุด · ฐาน '+marketShopIndex.size+' ร้าน · เก่า>10น '+staleCount+' ร้าน')
+      ? ('Preset: ✅ '+preset.name+' · Event '+Math.min(MARKET_TURBO_ANCHOR_COUNT,preset.points.length)+'/'+preset.points.length+' จุดนำทาง · ฐาน '+marketShopIndex.size+' ร้าน · เก่า>10น '+staleCount+' ร้าน')
       : ('Preset: ใช้ได้เฉพาะ prt_fild08 · ฐานเดิม '+marketShopIndex.size+' ร้านยังเก็บไว้');
 
     const busyOther = marketScanActive || marketShopTravelActive;
