@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.48
+// @version      4.189.49
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.48';
+  const VERSION = '4.189.49';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.49', d: '2026-09-26', items: [
+      '↔️ Market Left-edge Resize — เพิ่มขอบลากด้านซ้ายสำหรับขยาย/ย่อความกว้างของหน้าต่าง Market',
+      '   · ลากขอบซ้ายไปทางซ้าย = ขยาย Market; ลากไปทางขวา = ย่อ Market',
+      '   · ขอบขวายังคงยึด right:12px จึงไม่เลื่อนทับพื้นที่เกมด้านขวาเวลาปรับขนาด',
+      '   · Native resize:both มุมขวาล่างยังใช้งานได้เหมือนเดิม',
+      '   · จำกัดขนาดตาม min/max เดิมของ Market Compact สำหรับ Chrome Zoom 175%',
+    ]},
     { v: '4.189.48', d: '2026-09-26', items: [
       '📐 Market Compact for 175% Zoom — ปรับขนาดเริ่มต้นให้ใกล้เคียงภาพตัวอย่างเมื่อเล่น Chrome Zoom 175%',
       '   · ความกว้างใช้ 23vw (สูงสุด 420px) เพื่อให้หน้าต่างกินพื้นที่ประมาณ 1/4 ของจอแทนการล็อก 420px ตลอด',
@@ -3630,8 +3637,9 @@
     }
     panel = document.createElement('div');
     panel.id='__assist_market_panel';
-    panel.style.cssText='position:fixed;right:12px;bottom:12px;width:min(23vw,420px);height:min(80vh,640px);min-width:min(220px,92vw);min-height:min(360px,72vh);max-width:520px;max-height:88vh;z-index:999999;background:#12121e;color:#e8e8e8;border:1px solid #3a3f4b;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.65);display:flex;flex-direction:column;padding:9px;font-family:Segoe UI,system-ui,sans-serif;resize:both;overflow:hidden';
+    panel.style.cssText='position:fixed;right:12px;bottom:12px;width:min(23vw,420px);height:min(80vh,640px);min-width:min(220px,92vw);min-height:min(360px,72vh);max-width:520px;max-height:88vh;z-index:999999;background:#12121e;color:#e8e8e8;border:1px solid #3a3f4b;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.65);display:flex;flex-direction:column;padding:9px;font-family:Segoe UI,system-ui,sans-serif;box-sizing:border-box;resize:both;overflow:hidden';
     panel.innerHTML=`
+      <div data-market-resize-left title="ลากเพื่อปรับความกว้าง Market" style="position:absolute;left:0;top:10px;bottom:10px;width:8px;z-index:20;cursor:ew-resize;touch-action:none"></div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex:0 0 auto">
         <div><b style="color:#ffd54f;font-size:13px">🔎 Market</b> <span style="font-size:8px;color:#777">v${VERSION}</span></div>
         <button data-market-close style="background:none;border:none;color:#aaa;font-size:17px;cursor:pointer;padding:0 2px">✕</button>
@@ -3673,6 +3681,37 @@
     }, true);
     // bubble phase: ปล่อย target onclick ทำงานก่อน แล้วค่อยกัน event ไหลออกไปหา Unity/window
     panel.addEventListener('click', (e) => { e.stopPropagation(); }, false);
+
+    // ★ v4.189.49: custom resize จากขอบซ้าย (native CSS resize มี handle หลักที่มุมขวาล่าง)
+    const marketLeftResize = panel.querySelector('[data-market-resize-left]');
+    if (marketLeftResize) {
+      marketLeftResize.addEventListener('pointerdown', (e) => {
+        if (e.button != null && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startWidth = panel.getBoundingClientRect().width;
+        try { marketLeftResize.setPointerCapture(e.pointerId); } catch (_) {}
+        document.body.style.userSelect = 'none';
+        const onMove = (ev) => {
+          const viewportMax = Math.max(220, Math.min(520, window.innerWidth - 24));
+          const viewportMin = Math.min(220, Math.max(160, window.innerWidth - 24));
+          const nextWidth = Math.max(viewportMin, Math.min(viewportMax, startWidth + (startX - ev.clientX)));
+          panel.style.width = Math.round(nextWidth) + 'px';
+        };
+        const onUp = (ev) => {
+          document.removeEventListener('pointermove', onMove, true);
+          document.removeEventListener('pointerup', onUp, true);
+          document.removeEventListener('pointercancel', onUp, true);
+          document.body.style.userSelect = '';
+          try { marketLeftResize.releasePointerCapture(ev.pointerId); } catch (_) {}
+        };
+        document.addEventListener('pointermove', onMove, true);
+        document.addEventListener('pointerup', onUp, true);
+        document.addEventListener('pointercancel', onUp, true);
+      });
+    }
+
     panel.querySelector('[data-market-close]').onclick=()=>{ panel.style.display='none'; };
     panel.querySelector('[data-market-search]').addEventListener('input', () => { marketPage=1; renderMarketIndexUI(); });
     panel.querySelector('[data-market-results]').addEventListener('click', (e) => {
