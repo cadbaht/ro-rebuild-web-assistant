@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.44
+// @version      4.189.45
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.44';
+  const VERSION = '4.189.45';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.45', d: '2026-09-26', items: [
+      '🛡️ Market Saved Points Safety — เอาปุ่มลบจุดล่าสุดและล้างจุดทั้งหมดออกจากหน้าต่าง Market',
+      '   · เหลือเฉพาะปุ่ม 📍 บันทึกจุด เพื่อป้องกันการกดลบ Saved Points โดยไม่ตั้งใจ',
+      '   · จุดกวาดพื้นฐานเดิมและ Default 43 จุดของ prt_fild08 ไม่ถูกแตะต้อง',
+      '   · ปุ่ม 🧹 ด้านบนยังคงมีไว้ล้าง Market Index เท่านั้น และไม่ลบ Saved Points',
+    ]},
     { v: '4.189.44', d: '2026-09-26', items: [
       '📍 Market Shop Access Point — จำจุดที่เคยเปิดร้านสำเร็จของแต่ละร้านไว้ใน Market Index',
       '   · ตอน Scan/Sweep/เปิดร้านสำเร็จ จะบันทึกพิกัดที่ส่งคำสั่งเปิดร้านเป็น access point ของร้านนั้น',
@@ -3533,14 +3539,10 @@
     const sweepBtn = panel.querySelector('[data-market-sweep]');
     const clearBtn = panel.querySelector('[data-market-index-clear]');
     const pointAddBtn = panel.querySelector('[data-market-point-add]');
-    const pointUndoBtn = panel.querySelector('[data-market-point-undo]');
-    const routeClearBtn = panel.querySelector('[data-market-route-clear]');
     const routeTxt = panel.querySelector('[data-market-route-status]');
     const route=marketGetRecordedRoute();
     if(routeTxt) routeTxt.textContent = route.length ? ('จุดกวาดพื้นฐาน: ✅ '+route.length+' จุด · '+(currentMap||'?')) : 'จุดกวาดพื้นฐาน: ยังไม่มี — ไปยืนแล้วกด 📍 บันทึกจุด';
     if(pointAddBtn){ pointAddBtn.disabled = marketSweepActive || marketScanActive || marketShopTravelActive; pointAddBtn.style.opacity=pointAddBtn.disabled?'.45':'1'; }
-    if(pointUndoBtn){ pointUndoBtn.disabled = !route.length || marketSweepActive || marketScanActive || marketShopTravelActive; pointUndoBtn.style.opacity=pointUndoBtn.disabled?'.45':'1'; }
-    if(routeClearBtn){ routeClearBtn.disabled = !route.length || marketSweepActive || marketScanActive || marketShopTravelActive; routeClearBtn.style.opacity=routeClearBtn.disabled?'.45':'1'; }
     if (scanBtn) {
       scanBtn.textContent = marketScanActive ? '⏹ หยุดสแกน' : '🔄 สแกนรอบตัว';
       scanBtn.disabled = marketSweepActive || marketShopTravelActive;
@@ -3585,8 +3587,6 @@
         </div>
         <div style="display:flex;gap:4px;align-items:center;margin-bottom:3px;flex:0 0 auto">
           <button data-market-point-add title="บันทึกตำแหน่งตัวละครปัจจุบันเป็นจุดกวาดตลาด" style="flex:1;background:#20382f;color:#a5d6a7;border:1px solid #416b59;border-radius:6px;padding:5px 6px;cursor:pointer;font-size:8px">📍 บันทึกจุด</button>
-          <button data-market-point-undo title="ลบจุดล่าสุด" style="background:#283040;color:#b0bec5;border:1px solid #4b596b;border-radius:6px;padding:5px 6px;cursor:pointer;font-size:8px">↩</button>
-          <button data-market-route-clear title="ล้างจุดกวาดตลาดทั้งหมดของแมพนี้" style="background:#30242a;color:#ef9a9a;border:1px solid #65404b;border-radius:6px;padding:5px 6px;cursor:pointer;font-size:8px">🧹</button>
         </div>
         <div data-market-route-status style="font-size:8px;color:#a5d6a7;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto">จุดกวาดพื้นฐาน: ยังไม่มี</div>
         <button data-market-sweep style="width:100%;background:#263a58;color:#90caf9;border:1px solid #41688f;border-radius:6px;padding:6px 7px;cursor:pointer;font-size:9px;margin-bottom:5px;flex:0 0 auto">🗺️ กวาดตามจุดที่บันทึก</button>
@@ -3621,8 +3621,6 @@
     panel.querySelector('[data-market-page-next]').onclick=()=>{ marketPage++; renderMarketIndexUI(); };
     panel.querySelector('[data-market-scan]').onclick=()=> marketScanVisible(panel.querySelector('[data-market-limit]').value);
     panel.querySelector('[data-market-point-add]').onclick=()=> marketAddSavedPoint();
-    panel.querySelector('[data-market-point-undo]').onclick=()=> marketRemoveLastSavedPoint();
-    panel.querySelector('[data-market-route-clear]').onclick=()=> marketClearRecordedRoute();
     panel.querySelector('[data-market-sweep]').onclick=()=> marketSweepMap(panel.querySelector('[data-market-limit]').value);
     panel.querySelector('[data-market-index-clear]').onclick=()=> marketClearIndex();
     updateMarketUI();
