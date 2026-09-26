@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.55
+// @version      4.189.56
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.55';
+  const VERSION = '4.189.56';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.56', d: '2026-09-26', items: [
+      '⌨️ Fixed Teleport Macro — เปลี่ยน Hotkey Macro เป็นชุดคงที่ตาม Macro: กด Alt ค้าง → 1 → 2 → 3 → ปล่อย Alt',
+      '   · เว้น 25ms ระหว่างทุก key down/up: Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑',
+      '   · เอาปุ่มเลือก Alt+1 / Alt+2 / Alt+3 ออกจากหน้า ⚔️ Combat เหลือ Master ON/OFF + 🧪 ทดสอบ',
+      '   · Macro ทำงานเป็นชุดเดียวก่อน fallback Fly Wing ใน HP Emergency Flee และ Blacklist Flee',
+      '   · หลังยิง Macro จะยืนยันผลจากการเปลี่ยนแมพ/ตำแหน่งจริง; ถ้าไม่วาร์ปจึง fallback ต่อ',
+      '   · เอา config/API เลือก slot (teleportMacroSlots / setTeleportMacroSlots) ออก เพราะไม่ใช้แล้ว',
+    ]},
     { v: '4.189.55', d: '2026-09-26', items: [
       '⌨️ Teleport Hotkey Macro — เพิ่มทางหนีผ่าน Hotbar Alt+1 / Alt+2 / Alt+3',
       '   · เปิด/ปิด Macro และเลือกช่อง Alt+1, Alt+2, Alt+3 แยกกันใน Sub-tab ⚔️ Combat',
@@ -1568,7 +1576,7 @@
     'skillEnabled', 'skills', 'disabledSkillIds', 'buffOthersEnabled',
     'lootEnabled', 'lootDelayAfterDropMs', 'lootUseKillPos', 'pickRadiusKill', 'lootRespectOthers', 'filter', 'sendThrottleMs', 'maxAttempts',
     'warpLootEnabled',
-    'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'blacklistFleeEnabled', 'teleportMacroEnabled', 'teleportMacroSlots', 'normalAttackEnabled', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
+    'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'blacklistFleeEnabled', 'teleportMacroEnabled', 'normalAttackEnabled', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
     'maxAcquireDistance', 'searchRadii', 'maxChaseDistance', 'attackPendingMax', 'attackAbandonMs', 'antiKS', 'avoidOtherPlayers', 'targetLowestHpFirst',
     'mobFleeEnabled', 'dangerFleeEnabled', 'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'hpFleeEnabled', 'hpFleePercent', 'hpFleeMode', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
     'wanderEnabled', 'warpFindEnabled', 'warpFindUseFlyWing', 'warpFindUseTeleportSkill', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
@@ -2046,8 +2054,7 @@
     targetBlacklist: [],          // ไม่ตีมอนเหล่านี้ (ชื่อหรือ sprite id)
     fightBackBlacklisted: true,   // ★ โดนมอนใน blacklist ตี → ตีกลับไหม? (false = เคารพ blacklist เด็ดขาด แม้โดนตี)
     blacklistFleeEnabled: false,   // ★ โดนมอนใน targetBlacklist โจมตี → หนีในแมพด้วย Direct → Clip → Macro → Fly Wing
-    teleportMacroEnabled: false,   // ★ ใช้ Hotbar macro Alt+1/2/3 เป็น fallback ก่อน Fly Wing
-    teleportMacroSlots: [1,2,3],  // ★ ช่อง Hotbar ที่จะลองตามลำดับ (เปิด master ก่อน)
+    teleportMacroEnabled: false,   // ★ ใช้ Fixed Hotbar Macro: Alt ค้าง → 1 → 2 → 3 → ปล่อย Alt เป็น fallback ก่อน Fly Wing
     normalAttackEnabled: true,    // ★★ โหมดเวทย์: ปิด = ไม่ส่ง ATTACK เลย (ใช้แต่สกิล — นักเวทย์ร่ายไกล ไม่โดนลากเข้าปะทะ)
     // ★★ GUARD MODE — ยืนประจำตำแหน่ง ไม่หามอนเอง ตีกลับเฉพาะมอนที่มาตีเรา
     //   เตรียมไว้สำหรับบอทบัพ (คอยประจำจุดใช้สกิลให้คนอื่น)
@@ -4030,7 +4037,8 @@
     } catch (e) { dbg('⚠️ pressGameEscape:', e && e.message); return false; }
   }
 
-  // ★ v4.189.55 — ส่ง Hotbar shortcut Alt+1 / Alt+2 / Alt+3 เข้า Unity canvas
+  // ★ v4.189.56 — Fixed Teleport Macro ตามชุด Macro ภายนอก:
+  // Alt↓ → 25ms → 1↓ → 25ms → 1↑ → 25ms → 2↓ → 25ms → 2↑ → 25ms → 3↓ → 25ms → 3↑ → 25ms → Alt↑
   // KeyboardEvent แบบ synthetic อาจมี keyCode=0 ในบาง browser จึง override getter ให้ Unity/Emscripten อ่านได้ครบ
   function dispatchGameKeyboardEvent(target, type, key, code, keyCode, altKey) {
     try {
@@ -4041,50 +4049,57 @@
       return true;
     } catch (_) { return false; }
   }
-  function pressGameAltHotkey(slot) {
-    slot = Number(slot);
-    if (![1,2,3].includes(slot)) return false;
+
+  const TELEPORT_MACRO_STEP_MS = 25;
+  const TELEPORT_MACRO_CONFIRM_MS = 650;
+  let teleportMacroPending = null; // {owner,label,map,x,y,startedAt,sequenceDoneAt,onSuccess,onExhaust}
+
+  function teleportMacroClear() { teleportMacroPending = null; }
+
+  // ส่ง Macro คงที่ชุดเดียว โดย Alt ถูกกดค้างตลอดช่วง 1→2→3
+  function pressGameTeleportMacroSequence(onDone) {
     try {
       const cv = gameCanvas();
       if (!cv) return false;
       if (cv.focus) { try { cv.focus(); } catch (_) {} }
-      const digitKey = String(slot), digitCode = 'Digit' + slot, digitKC = 48 + slot;
-      dispatchGameKeyboardEvent(cv, 'keydown', 'Alt', 'AltLeft', 18, true);
-      dispatchGameKeyboardEvent(cv, 'keydown', digitKey, digitCode, digitKC, true);
-      dispatchGameKeyboardEvent(cv, 'keyup', digitKey, digitCode, digitKC, true);
-      dispatchGameKeyboardEvent(cv, 'keyup', 'Alt', 'AltLeft', 18, false);
+      const events = [
+        ['keydown', 'Alt', 'AltLeft', 18, true],
+        ['keydown', '1', 'Digit1', 49, true],
+        ['keyup',   '1', 'Digit1', 49, true],
+        ['keydown', '2', 'Digit2', 50, true],
+        ['keyup',   '2', 'Digit2', 50, true],
+        ['keydown', '3', 'Digit3', 51, true],
+        ['keyup',   '3', 'Digit3', 51, true],
+        ['keyup',   'Alt', 'AltLeft', 18, false],
+      ];
+      events.forEach((args, i) => {
+        setTimeout(() => {
+          dispatchGameKeyboardEvent(cv, ...args);
+          if (i === events.length - 1 && typeof onDone === 'function') {
+            try { onDone(); } catch (_) {}
+          }
+        }, i * TELEPORT_MACRO_STEP_MS);
+      });
       return true;
-    } catch (e) { dbg('⚠️ pressGameAltHotkey:', e && e.message); return false; }
+    } catch (e) { dbg('⚠️ pressGameTeleportMacroSequence:', e && e.message); return false; }
   }
 
-  // Macro runner กลาง: ลอง slot ที่เลือกทีละช่องและยืนยันจากตำแหน่งจริง
-  const TELEPORT_MACRO_CONFIRM_MS = 650;
-  let teleportMacroPending = null; // {owner,label,slots,idx,map,x,y,startedAt,onSuccess,onExhaust}
-  function teleportMacroSlotsEnabled() {
-    if (CFG.teleportMacroEnabled !== true) return [];
-    const arr = Array.isArray(CFG.teleportMacroSlots) ? CFG.teleportMacroSlots : [1,2,3];
-    return [...new Set(arr.map(Number).filter(n => [1,2,3].includes(n)))].sort((a,b)=>a-b);
-  }
-  function teleportMacroClear() { teleportMacroPending = null; }
-  function teleportMacroPressCurrent(p) {
-    const slot = p.slots[p.idx];
-    p.map = currentMap; p.x = player.x; p.y = player.y; p.startedAt = nowMs();
-    if (!pressGameAltHotkey(slot)) return false;
-    log('⌨️ ' + p.label + ' → Teleport Macro Alt+' + slot + ' · รอยืนยันการวาร์ป ~' + TELEPORT_MACRO_CONFIRM_MS + 'ms');
-    return true;
-  }
   function startTeleportHotkeyMacro(owner, label, onExhaust, onSuccess) {
-    const slots = teleportMacroSlotsEnabled();
-    if (!slots.length) return typeof onExhaust === 'function' ? !!onExhaust('Macro ปิด/ไม่มี slot') : false;
+    if (CFG.teleportMacroEnabled !== true) return typeof onExhaust === 'function' ? !!onExhaust('Macro ปิด') : false;
     if (teleportMacroPending) return true; // มีระบบหนีอื่นกำลังครอง macro อยู่ → อย่ายิงซ้อน
-    const p = { owner, label, slots, idx:0, map:currentMap, x:player.x, y:player.y, startedAt:nowMs(), onExhaust, onSuccess };
+    const p = { owner, label, map:currentMap, x:player.x, y:player.y, startedAt:nowMs(), sequenceDoneAt:0, onExhaust, onSuccess };
     teleportMacroPending = p;
-    if (!teleportMacroPressCurrent(p)) {
+    const ok = pressGameTeleportMacroSequence(() => {
+      if (teleportMacroPending === p) p.sequenceDoneAt = nowMs();
+    });
+    if (!ok) {
       teleportMacroPending = null;
-      return typeof onExhaust === 'function' ? !!onExhaust('ส่ง Hotkey ไม่สำเร็จ') : false;
+      return typeof onExhaust === 'function' ? !!onExhaust('ส่ง Hotkey Macro ไม่สำเร็จ') : false;
     }
+    log('⌨️ ' + label + ' → Teleport Macro: Alt↓ → 1 → 2 → 3 → Alt↑ · 25ms/step');
     return true;
   }
+
   const teleportMacroWatcher = setInterval(() => {
     const p = teleportMacroPending;
     if (!p) return;
@@ -4093,20 +4108,16 @@
     const movedPos = player.x != null && p.x != null && p.y != null && Math.hypot(player.x - p.x, player.y - p.y) >= 3;
     if (movedMap || movedPos) {
       teleportMacroPending = null;
-      log('✅ ' + p.label + ': Teleport Macro Alt+' + p.slots[p.idx] + ' สำเร็จ');
-      try { if (typeof p.onSuccess === 'function') p.onSuccess(p.slots[p.idx]); } catch (_) {}
+      log('✅ ' + p.label + ': Teleport Macro สำเร็จ');
+      try { if (typeof p.onSuccess === 'function') p.onSuccess(); } catch (_) {}
       return;
     }
-    if (now - p.startedAt < TELEPORT_MACRO_CONFIRM_MS) return;
-    p.idx++;
-    if (p.idx < p.slots.length) {
-      if (!teleportMacroPressCurrent(p)) p.startedAt = now - TELEPORT_MACRO_CONFIRM_MS;
-      return;
-    }
+    // รอให้ชุด key event ยิงครบก่อน แล้วค่อยเริ่มจับเวลา confirm เพื่อไม่ fallback เร็วเกินไป
+    if (!p.sequenceDoneAt || now - p.sequenceDoneAt < TELEPORT_MACRO_CONFIRM_MS) return;
     teleportMacroPending = null;
-    log('⚠️ ' + p.label + ': Hotkey Macro ครบทุกช่องแล้วแต่ไม่เห็นตำแหน่งเปลี่ยน → fallback ต่อ');
+    log('⚠️ ' + p.label + ': Teleport Macro ยิงครบแล้วแต่ไม่เห็นตำแหน่งเปลี่ยน → fallback ต่อ');
     try { if (typeof p.onExhaust === 'function') p.onExhaust('Hotkey Macro ไม่วาร์ป'); } catch (_) {}
-  }, 80);
+  }, 50);
   function dispatchSyntheticClick(el, x, y) {
     if (!el) return false;
     try {
@@ -7428,7 +7439,7 @@
   }
 
   // ★★ v4.188.8 — HP Emergency Flee
-  // sameMap priority: Direct/Database TP (0x40) → Teleport Clip (skill 53) → Hotkey Macro Alt+1/2/3 → Fly Wing (601)
+  // sameMap priority: Direct/Database TP (0x40) → Teleport Clip (skill 53) → Fixed Hotkey Macro (Alt↓ 1→2→3 Alt↑) → Fly Wing (601)
   // Direct TP intentionally respects TELEPORT_MIN_GAP_MS here; if still in gap, skip immediately to Clip.
   let hpFleeLatched = false;
   let hpFleePendingClip = null;   // {map,x,y,startedAt}
@@ -7863,7 +7874,7 @@
   }
   // ★ v4.189.54 — Blacklist Attack Flee
   // โดนมอนที่อยู่ใน targetBlacklist โจมตี → หนีในแมพตาม priority เดียวกับ HP Emergency Flee:
-  // Direct/Database TP (0x40) → Teleport Clip skillId 53 → Hotkey Macro Alt+1/2/3 → Fly Wing 601
+  // Direct/Database TP (0x40) → Teleport Clip skillId 53 → Fixed Hotkey Macro (Alt↓ 1→2→3 Alt↑) → Fly Wing 601
   let blacklistFleePendingClip = null;   // {map,x,y,startedAt,label}
   let blacklistFleeNextTryAt = 0;
   const BLACKLIST_FLEE_CLIP_FALLBACK_MS = 450;
@@ -10091,8 +10102,7 @@
     toggleDangerFlee(on) { CFG.dangerFleeEnabled = !!on; saveConfigDebounced(); log('🚨 หนีมอนอันตราย:', CFG.dangerFleeEnabled ? 'ON' : 'OFF'); },
     toggleBlacklistFlee(on) { CFG.blacklistFleeEnabled = !!on; blacklistFleePendingClip = null; blacklistFleeNextTryAt = 0; saveConfigDebounced(); log('🌀 หนี Blacklist เมื่อถูกโจมตี:', CFG.blacklistFleeEnabled ? 'ON' : 'OFF'); },
     toggleTeleportMacro(on) { CFG.teleportMacroEnabled = !!on; if (!CFG.teleportMacroEnabled) teleportMacroClear(); saveConfigDebounced(); log('⌨️ Teleport Hotkey Macro:', CFG.teleportMacroEnabled ? 'ON' : 'OFF'); },
-    setTeleportMacroSlots(...slots) { CFG.teleportMacroSlots = [...new Set(slots.flat().map(Number).filter(n => [1,2,3].includes(n)))].sort((a,b)=>a-b); saveConfigDebounced(); log('⌨️ Teleport Macro slots:', CFG.teleportMacroSlots.length ? CFG.teleportMacroSlots.map(n=>'Alt+'+n).join(', ') : '(ไม่มี)'); return CFG.teleportMacroSlots.slice(); },
-    testTeleportMacro() { return startTeleportHotkeyMacro('test', 'Teleport Macro Test', () => { log('❌ Teleport Macro Test: ครบทุกช่องแล้วไม่วาร์ป'); return false; }, (slot) => log('✅ Teleport Macro Test: Alt+' + slot + ' วาร์ปสำเร็จ')); },
+    testTeleportMacro() { return startTeleportHotkeyMacro('test', 'Teleport Macro Test', () => { log('❌ Teleport Macro Test: ยิง Alt→1→2→3 ครบแล้วไม่วาร์ป'); return false; }, () => log('✅ Teleport Macro Test: วาร์ปสำเร็จ')); },
     setFleeMob(n) { CFG.fleeOnMobCount = n; saveConfigDebounced(); log('🏃 flee รุม', n, 'ตัว' + (n ? '' : ' (off)')); },
     setFleeWarpCooldown(sec) { CFG.fleeWarpCooldownSec = Math.max(0, Math.min(30, sec)); saveConfigDebounced(); log('🏃 คูลดาวน์วาร์ปหนี:', CFG.fleeWarpCooldownSec + 's' + (CFG.fleeWarpCooldownSec === 0 ? ' (รัวสุด)' : '')); },
     setFleeAggro(n) { CFG.fleeOnAggroCount = n; saveConfigDebounced(); log('🏃 flee aggro', n, 'ตัว' + (n ? '' : ' (off)')); },
@@ -11237,12 +11247,9 @@
             <h4 style="margin:8px 0 4px">⌨️ Teleport Macro จาก Hotbar</h4>
             <div class="btns">
               <button id="__assist_t_tpmacro" class="off">⌨️ Teleport Macro: OFF</button>
-              <button id="__assist_t_tpmacro1" class="on">Alt+1</button>
-              <button id="__assist_t_tpmacro2" class="on">Alt+2</button>
-              <button id="__assist_t_tpmacro3" class="on">Alt+3</button>
               <button id="__assist_test_tpmacro">🧪 ทดสอบ</button>
             </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ เปิด Master แล้วเปิดเฉพาะ Alt+1/2/3 ที่ใส่ไอเท็ม/มาโคร Teleport ไว้ · ระบบลองตามลำดับ<br>★ ช่องว่างหรือกดแล้วไม่วาร์ปภายใน ~0.65s จะข้ามไปช่องถัดไป · ใช้เป็น fallback ของ HP Flee และ Blacklist Flee ก่อน Fly Wing</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Macro คงที่ตามชุดที่ตั้ง: Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ · เว้น 25ms ทุก event<br>★ ใช้เป็น fallback ของ HP Flee และ Blacklist Flee ก่อน Fly Wing · หลังยิงครบจะรอยืนยันว่าตำแหน่ง/แมพเปลี่ยนจริง</div>
             <div class="btns"><button id="__assist_applywhitelist">ตั้ง whitelist</button><button id="__assist_applyblacklist">ตั้ง blacklist</button></div>
             <div class="field"><label>ระยะโจมตี (ช่อง) — นักธนูตั้ง >2 เพื่อตีไกล</label><input type="number" id="__assist_attackrange" min="0" max="15"></div>
             <div class="field"><label>รัศมีค้นหามอน (ช่อง) — เลือกมอนในระยะนี้เท่านั้น (เล็ก=ไม่เดินไกล)</label><input type="number" id="__assist_maxacq" min="1" max="50" placeholder="30"></div>
@@ -11298,7 +11305,7 @@
             </div>
             <div class="field"><label>HP ต่ำกว่ากี่ % ให้หนีทันที</label><input type="number" id="__assist_hpfleepct" min="1" max="99" step="1" placeholder="30"></div>
             <div class="btns"><button id="__assist_applyhpflee">💾 ใช้ค่า HP Flee</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ หนีในแมพ: Direct/Database TP (0x40) ก่อน → ถ้ายังติด gap 3s ใช้ Teleport Clip → ถ้า Clip ไม่ตอบสนอง ~0.45s ลอง Hotkey Macro Alt+1/2/3 → แล้วค่อย Fly Wing 601<br>★ Unstuck: ส่ง 0x73 ทันที 1 ครั้ง · ทำงานแบบฉุกเฉินแม้ ⚔️ Combat OFF</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ หนีในแมพ: Direct/Database TP (0x40) ก่อน → ถ้ายังติด gap 3s ใช้ Teleport Clip → ถ้า Clip ไม่ตอบสนอง ~0.45s ลอง Fixed Hotkey Macro → แล้วค่อย Fly Wing 601<br>★ Unstuck: ส่ง 0x73 ทันที 1 ครั้ง · ทำงานแบบฉุกเฉินแม้ ⚔️ Combat OFF</div>
             <h4 style="margin-top:14px;">🛡️ Guard — ยืนประจำตำแหน่ง (ตีกลับเฉพาะมอนที่มาตี)</h4>
             <div class="btns"><button id="__assist_t_guard" class="off">🛡️ Guard: ?</button></div>
             <div class="field"><label>แผนที่ประจำตำแหน่ง (ว่าง = ยึดแมปที่เปิด guard)</label><input type="text" id="__assist_guardmap" placeholder="เช่น izlude"></div>
@@ -11893,21 +11900,13 @@
     };
     refreshBlacklistFleeBtn();
     _blFleeBtn?.addEventListener('click', () => { ASSIST.toggleBlacklistFlee(CFG.blacklistFleeEnabled !== true); refreshBlacklistFleeBtn(); });
-    // ---- Teleport Hotkey Macro ----
+    // ---- Fixed Teleport Hotkey Macro ----
     const _tpMacroBtn = root.querySelector('#__assist_t_tpmacro');
-    const _tpSlotBtns = [1,2,3].map(n => root.querySelector('#__assist_t_tpmacro' + n));
     const refreshTeleportMacroBtns = () => {
       if (_tpMacroBtn) { _tpMacroBtn.className = CFG.teleportMacroEnabled === true ? 'on' : 'off'; _tpMacroBtn.textContent = '⌨️ Teleport Macro: ' + (CFG.teleportMacroEnabled === true ? 'ON' : 'OFF'); }
-      const slots = Array.isArray(CFG.teleportMacroSlots) ? CFG.teleportMacroSlots.map(Number) : [1,2,3];
-      _tpSlotBtns.forEach((b,i) => { if (b) { const on = slots.includes(i+1); b.className = on ? 'on' : 'off'; b.textContent = 'Alt+' + (i+1) + (on ? ' ✓' : ''); } });
     };
     refreshTeleportMacroBtns();
     _tpMacroBtn?.addEventListener('click', () => { ASSIST.toggleTeleportMacro(CFG.teleportMacroEnabled !== true); refreshTeleportMacroBtns(); });
-    _tpSlotBtns.forEach((b,i) => b?.addEventListener('click', () => {
-      const n = i+1, slots = new Set(Array.isArray(CFG.teleportMacroSlots) ? CFG.teleportMacroSlots.map(Number) : [1,2,3]);
-      if (slots.has(n)) slots.delete(n); else slots.add(n);
-      ASSIST.setTeleportMacroSlots(...[...slots]); refreshTeleportMacroBtns();
-    }));
     root.querySelector('#__assist_test_tpmacro')?.addEventListener('click', () => ASSIST.testTeleportMacro());
     // ★ populate flee inputs ครั้งเดียวตอนเริ่ม (ไม่ sync ตลอด — กันเด้ง)
     const _fm = root.querySelector('#__assist_fleemaps');
@@ -13155,8 +13154,6 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     const _blfb = root.querySelector('#__assist_t_blacklistflee'); if (_blfb) _blfb.textContent = '🌀 หนี Blacklist: ' + (CFG.blacklistFleeEnabled === true ? 'ON' : 'OFF');
     syncToggle('#__assist_t_tpmacro', CFG.teleportMacroEnabled === true);
     const _tpm = root.querySelector('#__assist_t_tpmacro'); if (_tpm) _tpm.textContent = '⌨️ Teleport Macro: ' + (CFG.teleportMacroEnabled === true ? 'ON' : 'OFF');
-    const _tps = Array.isArray(CFG.teleportMacroSlots) ? CFG.teleportMacroSlots.map(Number) : [1,2,3];
-    [1,2,3].forEach(n => { const b=root.querySelector('#__assist_t_tpmacro'+n); if(b){ const on=_tps.includes(n); b.className=on?'on':'off'; b.textContent='Alt+'+n+(on?' ✓':''); } });
     // ★ ไม่ sync fleemaps/fleeradius — กันเขียนทับค่าที่กำลังแก้ (Unity แย่ง focus → isEditing คืน false)
     syncToggle('#__assist_t_dangerflee', CFG.dangerFleeEnabled !== false);
     const _dfb = root.querySelector('#__assist_t_dangerflee'); if (_dfb) _dfb.textContent = '🚨 หนีมอนอันตราย: ' + (CFG.dangerFleeEnabled !== false ? 'ON' : 'OFF');
