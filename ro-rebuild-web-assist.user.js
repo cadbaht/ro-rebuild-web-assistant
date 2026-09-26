@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.42
+// @version      4.189.43
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.42';
+  const VERSION = '4.189.43';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.43', d: '2026-09-26', items: [
+      '📍 Default Market Points — ฝังจุดกวาดมาตรฐาน 43 จุดสำหรับ prt_fild08 ไว้ในสคริปต์',
+      '   · เครื่อง/เบราว์เซอร์ที่ยังไม่มี Saved Points จะได้รับชุด 43 จุดนี้อัตโนมัติครั้งแรก',
+      '   · ถ้ามี Saved Points ของ prt_fild08 อยู่แล้ว จะไม่เขียนทับค่าที่ผู้ใช้บันทึกไว้',
+      '   · หลังผู้ใช้ล้างจุดเอง ระบบจะไม่สร้าง Default กลับมาเองในทุกครั้งที่รีโหลด',
+      '   · Market Sweep ยังคงเดินเฉพาะ Saved Points เท่านั้น ไม่มี GAT/NAV/กวาดทั้งแมพ fallback',
+    ]},
     { v: '4.189.42', d: '2026-09-26', items: [
       '📍 Market Saved Points Only — เอาโหมดกวาดทั้งแมพ/GAT/NAV fallback ออกจาก Market Sweep',
       '   · เปลี่ยนจากอัดเส้นทางตอนเดินเป็นบันทึกจุดเองทีละจุดจากตำแหน่งตัวละคร',
@@ -2832,11 +2839,32 @@
   // ★ v4.189.42 — Market Saved Points (manual waypoints, saved per map)
   // จุดที่บันทึกจะเป็นค่าพื้นฐานของแมพนั้นอัตโนมัติ
   const MARKET_ROUTE_KEY = 'ro_assist_market_saved_points_v1';
+  const MARKET_DEFAULT_POINTS_SEED_KEY = 'ro_assist_market_saved_points_defaults_seed_v1';
+  const MARKET_DEFAULT_SAVED_POINTS = {
+    prt_fild08: [{"x":122,"y":371},{"x":121,"y":365},{"x":122,"y":350},{"x":122,"y":342},{"x":122,"y":330},{"x":124,"y":318},{"x":134,"y":314},{"x":137,"y":324},{"x":136,"y":336},{"x":136,"y":348},{"x":137,"y":360},{"x":137,"y":372},{"x":147,"y":373},{"x":148,"y":365},{"x":148,"y":353},{"x":149,"y":341},{"x":149,"y":333},{"x":148,"y":325},{"x":153,"y":319},{"x":156,"y":333},{"x":155,"y":341},{"x":153,"y":353},{"x":155,"y":365},{"x":156,"y":373},{"x":165,"y":365},{"x":164,"y":357},{"x":166,"y":353},{"x":168,"y":345},{"x":167,"y":337},{"x":168,"y":329},{"x":177,"y":324},{"x":180,"y":334},{"x":180,"y":346},{"x":180,"y":358},{"x":179,"y":366},{"x":183,"y":374},{"x":186,"y":370},{"x":186,"y":363},{"x":186,"y":351},{"x":187,"y":343},{"x":191,"y":335},{"x":192,"y":323},{"x":200,"y":346}]
+  };
   let marketRoutes = {};
   function marketLoadRoutes() {
     try { const x=JSON.parse(localStorage.getItem(MARKET_ROUTE_KEY)||'{}'); if(x&&typeof x==='object') marketRoutes=x; } catch(_) { marketRoutes={}; }
   }
   function marketSaveRoutes() { try { localStorage.setItem(MARKET_ROUTE_KEY, JSON.stringify(marketRoutes)); } catch(_) {} }
+  function marketSeedDefaultSavedPoints() {
+    try {
+      if(localStorage.getItem(MARKET_DEFAULT_POINTS_SEED_KEY)==='1') return false;
+      let changed=false;
+      for(const [mapName, defaults] of Object.entries(MARKET_DEFAULT_SAVED_POINTS)){
+        const existing=marketRoutes[mapName];
+        if(!Array.isArray(existing) || !existing.length){
+          marketRoutes[mapName]=defaults.map(p=>({x:Math.round(Number(p.x)),y:Math.round(Number(p.y))}));
+          changed=true;
+        }
+      }
+      if(changed) marketSaveRoutes();
+      localStorage.setItem(MARKET_DEFAULT_POINTS_SEED_KEY,'1');
+      if(changed) log('📍 Market Points: ติดตั้ง Default Saved Points สำหรับ prt_fild08 จำนวน 43 จุด');
+      return changed;
+    } catch(_) { return false; }
+  }
   function marketGetRecordedRoute(mapName=currentMap) {
     const arr=mapName && marketRoutes[mapName];
     return Array.isArray(arr) ? arr.filter(p=>p&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).map(p=>({x:Math.round(Number(p.x)),y:Math.round(Number(p.y))})) : [];
@@ -2881,6 +2909,7 @@
     return out;
   }
   marketLoadRoutes();
+  marketSeedDefaultSavedPoints();
 
   // ★ v4.189.30 — Shop-ID discovery
   // Shop open id (OUT 0x6b + u32) ไม่ใช่ player entity id; ต้องเรียนรู้จาก packet ที่ประกาศร้านตอนเข้าแมป
