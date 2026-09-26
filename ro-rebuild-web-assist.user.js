@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.58
+// @version      4.189.60
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,13 +116,28 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.58';
+  const VERSION = '4.189.60';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.60', d: '2026-09-26', items: [
+      '⚔️ Combat Master Flee — Combat เป็นสวิตช์หลักของระบบหนีฝั่งมอนทั้งหมด',
+      '   · Combat OFF → ปิดการทำงานของ หนีมอนรุม / มอนอันตราย / Blacklist Flee / HP Emergency Flee ทันที',
+      '   · สวิตช์ย่อยและค่าตั้งของแต่ละระบบยังจำไว้เหมือนเดิม; เปิด Combat กลับมาแล้วทำงานตามค่าเดิม',
+      '   · Player Flee ยังคงแยกจาก Combat ตามเดิม',
+      '   · HP Flee จะไม่ยิง Direct / Macro / Clip / Fly Wing และไม่ใช้ Unstuck ขณะ Combat OFF',
+      '   · ปรับข้อความในหน้า Combat ให้ชัดว่าระบบหนีฝั่งมอนต้องมี Combat ON',
+    ]},
+    { v: '4.189.59', d: '2026-09-26', items: [
+      '⏱️ Direct Cooldown Fallback — หลังใช้ Direct จะพัก Direct 30 วินาที แล้วข้ามไป Macro → Teleport Clip → Fly Wing ทันที',
+      '   · ครบ 30 วินาทีแล้ว รอบวาร์ปถัดไปจะกลับมาเริ่มที่ Direct อัตโนมัติ',
+      '   · ใช้กับ Warp Find, หนีมอนรุม, มอนอันตราย, HP Emergency Flee, Blacklist Flee และหนีผู้เล่น',
+      '   · Direct ที่ถูกใช้จากระบบอื่นจะนับ cooldown เดียวกัน เพื่อไม่ลอง Direct ซ้ำในช่วงที่ server ยังไม่พร้อม',
+      '   · คง serializer 3 วินาทีสำหรับ Direct ข้ามแมพ/พิกัดของ routine อื่นแยกจาก cooldown 30 วินาทีนี้',
+    ]},
     { v: '4.189.58', d: '2026-09-26', items: [
       '🌀 Unified Teleport Priority — จัดลำดับการวาร์ปทุกระบบเป็น Direct → Macro → Teleport Clip → Fly Wing',
       '   · Warp Find, หนีมอนรุม, มอนอันตราย, HP Emergency Flee และ Blacklist Flee ใช้ priority เดียวกัน',
-      '   · หนีผู้เล่นแบบเปลี่ยนแมพ: Direct ไปแมพสำรองก่อน → Macro → Clip → Fly Wing ระหว่างรอ Direct พร้อม',
+      '   · หนีผู้เล่นแบบเปลี่ยนแมพ: Direct ไปแมพสำรองก่อน → ถ้า Direct ยัง cooldown 30s ใช้ Macro → Clip → Fly Wing ระหว่างรอ Direct พร้อม',
       '   · วิธีที่ปิด/ใช้ไม่ได้จะถูกข้าม แต่จะไม่สลับลำดับ priority',
       '   · Warp Find: Fly Wing และ Teleport Clip เปิดพร้อมกันได้แล้ว เพื่อใช้เป็น fallback ตามลำดับ',
       '   · ปรับข้อความ UI / Log / ปุ่มทดสอบให้แสดงลำดับใหม่ตรงกันทั้งหมด',
@@ -4120,6 +4135,12 @@
   const teleportMacroWatcher = setInterval(() => {
     const p = teleportMacroPending;
     if (!p) return;
+    // ★ v4.189.60 — ถ้า Combat ถูกปิดกลางคัน ให้ยกเลิก Macro ของระบบ Combat/Flee (Player Flee/Test ยังเป็นอิสระ)
+    if (!CFG.combatEnabled && ['warpfind','hp','blacklist','monster-flee'].includes(p.owner)) {
+      teleportMacroPending = null;
+      dbg('🛑 ยกเลิก Teleport Macro ของ ' + p.owner + ' เพราะ Combat OFF');
+      return;
+    }
     const now = nowMs();
     const movedMap = !!currentMap && !!p.map && currentMap !== p.map;
     const movedPos = player.x != null && p.x != null && p.y != null && Math.hypot(player.x - p.x, player.y - p.y) >= 3;
@@ -4581,6 +4602,15 @@
   let lastTeleportSentAt = 0;
   let pendingTeleport = null;        // {mapName, x, y} — intent ล่าสุดที่รอส่ง
   const TELEPORT_MIN_GAP_MS = 3000;
+  // ★ v4.189.59 — Direct/Database TP มี reuse cooldown 30s สำหรับลำดับวาร์ปอัตโนมัติ
+  // ระหว่าง cooldown ให้ข้าม Direct แล้วไป Macro → Clip → Fly Wing ทันที
+  // หมายเหตุ: serializer 3s ด้านบนยังคงใช้กับ routine teleport ข้ามแมพ/พิกัดทั่วไป
+  const DIRECT_PRIORITY_COOLDOWN_MS = 30000;
+  function directPriorityCooldownLeft(now) {
+    const t = now == null ? nowMs() : now;
+    return Math.max(0, DIRECT_PRIORITY_COOLDOWN_MS - (t - lastTeleportSentAt));
+  }
+  function directPriorityReady(now) { return directPriorityCooldownLeft(now) <= 0; }
   function actuallySendTeleport(mapName, x, y) {
     if (!activeWS || activeWS.readyState !== 1) return false;
     const mapBytes = new TextEncoder().encode(mapName);
@@ -7468,7 +7498,7 @@
 
     const now = nowMs();
     // Priority 1 — Direct/Database TP. ใช้ gate เดียวกับระบบหนีเพื่อไม่ยิง Direct ซ้อนกับ cross-map teleport ที่เพิ่งส่ง
-    const directReady = now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS;
+    const directReady = directPriorityReady(now);
     if (directReady) {
       log('🌀 WarpFind → Direct/Database TP ก่อน');
       if (sendRandomWarp()) {
@@ -7477,13 +7507,13 @@
       }
       log('⚠️ WarpFind: Direct ส่งไม่สำเร็จ → Macro');
     } else {
-      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
-      dbg('🌀 WarpFind: Direct ยังติด gap ' + left + 'ms → Macro');
+      const left = directPriorityCooldownLeft(now);
+      dbg('🌀 WarpFind: Direct ยัง cooldown ' + Math.ceil(left / 1000) + 's → Macro');
     }
 
     // Priority 2 → 4: Macro → Clip → Wing
     lastWarpFindAt = now;
-    return warpFindTryMacroThenClipWing(manualTest, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยังติด gap');
+    return warpFindTryMacroThenClipWing(manualTest, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
   }
 
   // ★ v4.189.26 — Manual Warp Find diagnostic
@@ -7492,8 +7522,9 @@
     const mode = warpFindPriorityLabel();
     const wingStock = inventory.has(601) ? (inventory.get(601) || 0) : 0;
     const autoCooldownLeft = Math.max(0, 3000 - (now - lastWarpFindAt));
+    const directCdLeft = directPriorityCooldownLeft(now);
     const before = { map: currentMap, x: player.x, y: player.y };
-    log('🧪 WarpFind Test — priority=' + mode + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF') + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF') + ' | noMonster=' + CFG.noMonsterWarpSec + 's | autoCD=' + autoCooldownLeft + 'ms | SP=' + (sp.cur == null ? '?' : sp.cur) + ' | Wing=' + wingStock);
+    log('🧪 WarpFind Test — priority=' + mode + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF') + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF') + ' | noMonster=' + CFG.noMonsterWarpSec + 's | autoCD=' + autoCooldownLeft + 'ms | DirectCD=' + Math.ceil(directCdLeft / 1000) + 's | SP=' + (sp.cur == null ? '?' : sp.cur) + ' | Wing=' + wingStock);
     if (!CFG.warpFindEnabled) log('ℹ️ WarpFind Test: ปุ่ม Auto วาร์ปหามอนยัง OFF — Test จะลองวาร์ปให้ แต่ Auto จะไม่ทำงานจนกว่าจะเปิด');
     if (!CFG.combatEnabled) log('ℹ️ WarpFind Test: Combat ยัง OFF — Test bypass ชั่วคราว แต่ Auto WarpFind จะถูกบล็อก');
     if (!currentMap) { log('❌ WarpFind Test: ยังไม่รู้ชื่อแมป'); return false; }
@@ -7573,7 +7604,7 @@
   function hpFleeSameMap() {
     const now = nowMs();
     // Priority 1: Direct/Database teleport packet 0x40
-    const dbReady = !!currentMap && (now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS);
+    const dbReady = !!currentMap && directPriorityReady(now);
     if (dbReady) {
       log('❤️ HP Flee → Direct/Database TP ก่อน (0x40 same-map random)');
       if (sendRandomWarp()) {
@@ -7585,13 +7616,14 @@
       }
       log('⚠️ HP Flee: Direct TP ส่งไม่สำเร็จ → Macro');
     } else {
-      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
-      dbg('❤️ HP Flee: Direct TP ยังติด gap ' + left + 'ms → Macro');
+      const left = directPriorityCooldownLeft(now);
+      dbg('❤️ HP Flee: Direct TP ยัง cooldown ' + Math.ceil(left / 1000) + 's → Macro');
     }
     // Priority 2 → 4: Macro → Clip → Wing
-    return hpFleeTryMacroThenClipWing(dbReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยังติด gap');
+    return hpFleeTryMacroThenClipWing(dbReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
   }
   function triggerHpEmergencyFlee(pct) {
+    if (!CFG.combatEnabled) return false; // ★ v4.189.60 Combat master
     if (!CFG.hpFleeEnabled || isDead || pct == null || pct <= 0) return false;
     if (!activeWS || activeWS.readyState !== 1) return false;
     if (CFG.hpFleeMode === 'unstuck') {
@@ -7610,6 +7642,13 @@
   }
   const hpEmergencyFleeLoop = setInterval(() => {
     if (chatPauseActive) return;
+    // ★ v4.189.60 — Combat เป็น Master Switch ของ HP Emergency Flee
+    if (!CFG.combatEnabled) {
+      hpFleeLatched = false;
+      hpFleePendingClip = null;
+      hpFleeNextTryAt = 0;
+      return;
+    }
     if (!CFG.hpFleeEnabled) { hpFleeLatched = false; hpFleePendingClip = null; return; }
     // ★ ถ้ากำลังหนีผู้เล่น/Hotkey Macro อยู่ ให้ชุดนั้นเป็นเจ้าของการวาร์ปก่อน กัน packet ชนกัน
     if (playerFleePending) return;
@@ -7649,9 +7688,9 @@
     if (pct < threshold) triggerHpEmergencyFlee(pct);
   }, 100);
 
-  // ★★ v4.189.58 — Player Flee fallback เมื่อ Direct ข้ามแมพติด teleport gap
+  // ★★ v4.189.59 — Player Flee fallback เมื่อ Direct ยังอยู่ใน cooldown 30s
   // ลำดับ: Direct target-map พร้อม → ไปทันที
-  //        Direct ยังติด gap → Macro → Teleport Clip → Fly Wing → รอ gap → target-map
+  //        Direct ยัง cooldown 30s → Macro → Teleport Clip → Fly Wing → รอ Direct พร้อม → target-map
   function playerFleeClearCombat() {
     target = null;
     monsterAggro.clear();
@@ -7771,7 +7810,7 @@
   }
   function playerFleeStartSameMap(nearby) {
     const now = nowMs();
-    const directReady = !!currentMap && (now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS);
+    const directReady = !!currentMap && directPriorityReady(now);
     if (directReady) {
       log('🏃 หนีผู้เล่นแมพเดิม → Direct ก่อน');
       if (sendRandomWarp()) {
@@ -7780,15 +7819,15 @@
       }
       log('⚠️ หนีผู้เล่นแมพเดิม: Direct ส่งไม่สำเร็จ → Macro');
     } else {
-      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
-      dbg('🏃 หนีผู้เล่นแมพเดิม: Direct ยังติด gap ' + left + 'ms → Macro');
+      const left = directPriorityCooldownLeft(now);
+      dbg('🏃 หนีผู้เล่นแมพเดิม: Direct ยัง cooldown ' + Math.ceil(left / 1000) + 's → Macro');
     }
-    return playerFleeSameMapTryMacro(nearby, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยังติด gap');
+    return playerFleeSameMapTryMacro(nearby, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
   }
   function playerFleeStartChangeMap(nextMap, nearby) {
     if (!nextMap || !activeWS || activeWS.readyState !== 1) return false;
     const now = nowMs();
-    const directReady = now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS;
+    const directReady = directPriorityReady(now);
     if (directReady) {
       log('🏃 หนีผู้เล่น ' + nearby + ' คน → Direct เปลี่ยนแมพไป ' + nextMap);
       logImportant('flee', '🏃 หนีผู้เล่น ' + nearby + ' คน → ' + nextMap);
@@ -7805,13 +7844,13 @@
       // Direct ส่งไม่ได้จริง (เช่น socket race) → fallback ทันที
       log('⚠️ หนีผู้เล่น: Direct เปลี่ยนแมพส่งไม่สำเร็จ → fallback Macro → Clip → Wing');
     } else {
-      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
-      log('⚡ หนีผู้เล่น: Direct เปลี่ยนแมพยังติด gap ~' + left + 'ms → Macro → Clip → Wing แล้วค่อยเปลี่ยนแมพ');
+      const left = directPriorityCooldownLeft(now);
+      log('⚡ หนีผู้เล่น: Direct เปลี่ยนแมพยัง cooldown ~' + Math.ceil(left / 1000) + 's → Macro → Clip → Wing แล้วค่อยเปลี่ยนแมพ');
     }
-    // อย่าเรียก sendTeleport(nextMap) ตอนยังติด gap เพราะ serializer จะคิวแบบเงียบ;
-    // เราต้องหนีทันทีตามลำดับ Macro → Clip → Wing ก่อน แล้วค่อยยิง Direct เองเมื่อ gap พร้อม
+    // อย่าเรียก sendTeleport(nextMap) ระหว่าง Direct cooldown 30s; ให้ fallback หนีก่อน
+    // เราต้องหนีทันทีตามลำดับ Macro → Clip → Wing ก่อน แล้วค่อยยิง Direct เองเมื่อ cooldown ครบ
     pendingTeleport = null;
-    return playerFleeTryMacro(nextMap, nearby, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยังติด gap');
+    return playerFleeTryMacro(nextMap, nearby, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
   }
   const playerFleeFallbackLoop = setInterval(() => {
     if (chatPauseActive) return;
@@ -7855,7 +7894,7 @@
         fleeCooldownUntil = now + CFG.fleeWarpCooldownSec * 1000;
         return;
       }
-      if (now - lastTeleportSentAt < TELEPORT_MIN_GAP_MS) return;
+      if (!directPriorityReady(now)) return;
       pendingTeleport = null;
       CFG.farmMap = p.map;
       saveConfigDebounced();
@@ -8099,7 +8138,7 @@
   }
   function blacklistFleeSameMap(label) {
     const now = nowMs();
-    const dbReady = !!currentMap && (now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS);
+    const dbReady = !!currentMap && directPriorityReady(now);
     if (dbReady) {
       log('🌀 Blacklist Flee → Direct/Database TP ก่อน · ' + label);
       if (sendRandomWarp()) {
@@ -8111,12 +8150,13 @@
       }
       log('⚠️ Blacklist Flee: Direct TP ส่งไม่สำเร็จ → Macro');
     } else {
-      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
-      dbg('🌀 Blacklist Flee: Direct TP ยังติด gap ' + left + 'ms → Macro');
+      const left = directPriorityCooldownLeft(now);
+      dbg('🌀 Blacklist Flee: Direct TP ยัง cooldown ' + Math.ceil(left / 1000) + 's → Macro');
     }
-    return blacklistFleeTryMacroThenClipWing(label, dbReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยังติด gap');
+    return blacklistFleeTryMacroThenClipWing(label, dbReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
   }
   function checkBlacklistAttackFlee() {
+    if (!CFG.combatEnabled) { blacklistFleePendingClip = null; return false; } // ★ Combat master
     if (CFG.blacklistFleeEnabled !== true) { blacklistFleePendingClip = null; return false; }
     if (!CFG.targetBlacklist || CFG.targetBlacklist.length === 0) { blacklistFleePendingClip = null; return false; }
     // HP ต่ำถือเป็น emergency สูงกว่า — ถ้ากำลังรอผล Clip/Macro อยู่ อย่าแทรก packet
@@ -8205,12 +8245,13 @@
     );
   }
   function doFlee(reason) {
+    if (!CFG.combatEnabled) return false; // ★ v4.189.60 Combat master
     const now = nowMs();
     if (now - lastFleeAt < CFG.fleeCooldownMs) return false;
     if (teleportMacroPending || monsterFleePendingClip) return true;
     log('🏃 วาร์ปหนี:', reason, '· priority Direct → Macro → Clip → Fly Wing');
 
-    const directReady = !!currentMap && (now - lastTeleportSentAt >= TELEPORT_MIN_GAP_MS);
+    const directReady = !!currentMap && directPriorityReady(now);
     if (directReady) {
       if (sendRandomWarp()) {
         monsterFleeFinish('Direct', reason);
@@ -8218,13 +8259,14 @@
       }
       log('⚠️ หนีมอน: Direct ส่งไม่สำเร็จ → Macro');
     } else {
-      const left = Math.max(0, TELEPORT_MIN_GAP_MS - (now - lastTeleportSentAt));
-      dbg('🏃 หนีมอน: Direct ยังติด gap ' + left + 'ms → Macro');
+      const left = directPriorityCooldownLeft(now);
+      dbg('🏃 หนีมอน: Direct ยัง cooldown ' + Math.ceil(left / 1000) + 's → Macro');
     }
-    return monsterFleeTryMacroThenClipWing(reason, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยังติด gap');
+    return monsterFleeTryMacroThenClipWing(reason, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
   }
 
   const monsterFleeFallbackLoop = setInterval(() => {
+    if (!CFG.combatEnabled) { monsterFleePendingClip = null; return; }
     const p = monsterFleePendingClip;
     if (!p) return;
     const now = nowMs();
@@ -8239,9 +8281,10 @@
       monsterFleeUseWing(p.reason, 'Clip ไม่ตอบสนอง/ไม่มี Clip');
     }
   }, 100);
-  // ★ v4.189.52 — Mob Flee แยกจาก Combat: เรียกได้ก่อน combatEnabled guard
+  // ★ v4.189.60 — Mob Flee ถูกควบคุมด้วย Combat master guard ก่อนเรียกฟังก์ชันนี้
   // คืน true เมื่อเข้าเงื่อนไขหนี (แม้ยังติด cooldown) เพื่อหยุด logic อื่นใน tick นั้นเหมือนพฤติกรรมเดิม
   function checkMobFleeTriggers() {
+    if (!CFG.combatEnabled) return false; // ★ Combat master
     if (CFG.mobFleeEnabled === false) return false;
     const radius = CFG.fleeOnProximityRadius;
     const atkN = getMobAttackerCount(radius);
@@ -8253,8 +8296,9 @@
     if (CFG.fleeOnProximityCount > 0 && nearN >= CFG.fleeOnProximityCount) { doFlee('มอนรอบ ' + nearN + ' ตัว' + ctx); return true; }
     return false;
   }
-  // ★ v4.189.53 — Dangerous Monster Flee แยกจาก Combat เช่นเดียวกับ Mob Flee
+  // ★ v4.189.60 — Dangerous Monster Flee อยู่ใต้ Combat master เช่นเดียวกับ Mob Flee
   function checkDangerMonsterFlee() {
+    if (!CFG.combatEnabled) return false; // ★ Combat master
     if (CFG.dangerFleeEnabled === false) return false;
     if (!CFG.fleeMonsters || CFG.fleeMonsters.length === 0 || player.x == null) return false;
     const fleeR = CFG.fleeMonsterRadius || 20;
@@ -8414,7 +8458,7 @@
   let fleeCooldownUntil = 0;
   let fleeBurstTimes = [];               // ★ timestamps การหนีล่าสุด — กันหนีถี่ผิดปกติ (dot ผี/วาร์ปล้ม)
   // ★ v4.189.58 Player Flee change-map fallback
-  // Direct map warp ติด 3s gap → Macro → Clip → Wing เพื่อหนีทันที → พอ gap พร้อมค่อยเปลี่ยนแมพสำรอง
+  // Direct map warp ยัง cooldown 30s → Macro → Clip → Wing เพื่อหนีทันที → ครบ cooldown ค่อยเปลี่ยนแมพสำรอง
   let playerFleePending = null;          // {phase:'samemacro'|'sameclip'|'macro'|'clip'|'mapwait', map, srcMap, x, y, startedAt, nearby}
   const PLAYER_FLEE_CLIP_FALLBACK_MS = 450;
   let lastFleeDebugAt = 0;
@@ -8548,7 +8592,7 @@
               playerFleeStartSameMap(nearby);
               return;
             }
-            // ★★ changeMap mode — Direct → Macro → Clip → Wing fallback เมื่อ cross-map ยังติด gap
+            // ★★ changeMap mode — Direct → Macro → Clip → Wing fallback เมื่อ Direct ยัง cooldown 30s
             const next = pickNextFleeMap();
             if (next) {
               log('🏃 หนีผู้เล่น!', nearby, 'คน' + posInfo + botPos + ' → เป้าหมายแมพสำรอง', next);
@@ -8561,8 +8605,11 @@
       // ★ กำลัง cooldown → รอ (กันวาร์ปซ้ำ + กัน combat ทำงานตอนยังไม่รู้ว่ามีผู้เล่นไหม)
       if (now < fleeCooldownUntil) return;
     }
-    // ★ v4.189.52 — sync ตำแหน่งก่อน Mob Flee แม้ Combat OFF
-    //   เพื่อให้ trigger ที่ใช้รัศมี (รุม/aggro/มอนรอบ) ยังทำงานได้เมื่อปิดการโจมตี
+    // ★ v4.189.60 — Combat เป็น Master Switch ของระบบหนีฝั่งมอนทั้งหมด
+    // Player Flee ด้านบนยังแยกจาก Combat ตามเดิม แต่ HP/Mob/Danger/Blacklist Flee จะไม่ทำงานเมื่อ Combat OFF
+    if (!CFG.combatEnabled) return;
+
+    // sync ตำแหน่งสำหรับ trigger ที่ใช้รัศมี เมื่อ Combat ON เท่านั้น
     if (player.x == null && playerId != null) {
       const me = entities.get(playerId);
       if (me && me.x != null) { player.x = me.x; player.y = me.y; }
@@ -8571,16 +8618,14 @@
       if (now - (lastWhereReqAt || 0) > 5000) {
         if (sendWhere()) {
           lastWhereReqAt = now;
-          dbg('📍 ตำแหน่งยังไม่รู้ → ถาม /where (Mob Flee ใช้ได้แม้ Combat OFF)');
+          dbg('📍 ตำแหน่งยังไม่รู้ → ถาม /where สำหรับ Combat Flee');
         }
       }
     }
-    // ★★ Combat Flee เป็นอิสระจากการโจมตี — ปิด Combat ก็ยังหนีได้ถ้าสวิตช์ของระบบนั้นเปิด
     // Blacklist Attack Flee มาก่อน danger/proximity เพราะมีหลักฐานว่ามอนกำลังโจมตีเราแล้ว
     if (activeWS && activeWS.readyState === 1 && checkBlacklistAttackFlee()) return;
     if (activeWS && activeWS.readyState === 1 && checkDangerMonsterFlee()) return;
     if (activeWS && activeWS.readyState === 1 && checkMobFleeTriggers()) return;
-    if (!CFG.combatEnabled) return;
     // ★★ ถ้ากำลังเดินตามคำสั่ง remote → หยุดตีตอนเดิน
     // ★★★ AUTO-RESPAWN — priority สูงสุด: ถ้าตาย → respawn กลับจุด save (mirror bot.js:1404-1406)
     //   ★★ MAX 5 ครั้ง — กัน death loop (ส่ง respawn รัวๆ แต่ไม่ฟื้น)
@@ -8762,7 +8807,7 @@
     // === 0. post-combat cooldown — รอหลังสู้เสร็จ/เก็บของเสร็จ ก่อนทำอย่างอื่น ===
     //   ยกเว้น flee (ต้องทำทันทีเสมอเพื่อความปลอดภัย)
     const inCooldown = now < combatCooldownUntil;
-    // ★ Combat Flee (มอนอันตราย + มอนรุม) ถูกตรวจไปแล้วก่อน combatEnabled guard (v4.189.53)
+    // ★ Combat Flee (มอนอันตราย + มอนรุม) ถูกตรวจหลัง Combat master guard (v4.189.60)
     if (inCooldown && mobCount === 0) return;   // อยู่ใน cooldown + ไม่โดนรุม → รอ
 
     // === 1b. ★ ถ้ามีของรอเก็บ → หยุด combat ชั่วคราว ให้ loot ทำงานก่อน ===
@@ -10304,11 +10349,16 @@
     },
     combatOff() {
       CFG.combatEnabled = false; target = null;
+      // ★ v4.189.60 — Combat เป็น Master Switch ของ Combat Flee: ยกเลิก fallback/pending ที่ยังค้างอยู่ทันที
+      hpFleeLatched = false; hpFleePendingClip = null; hpFleeNextTryAt = 0;
+      blacklistFleePendingClip = null; blacklistFleeNextTryAt = 0;
+      monsterFleePendingClip = null;
+      if (teleportMacroPending && ['warpfind','hp','blacklist','monster-flee'].includes(teleportMacroPending.owner)) teleportMacroClear();
       clearUnstuckBuffAutoFinishPending();
       // ★ v4.187.6: ไม่ยกเลิก Direct Unstuck/AB ที่เริ่มแล้ว — ป้องกันค้างอยู่จุดเกิด
       // reset เฉพาะ timer auto ตอน IDLE; manual/capture/direct packet ยังใช้ได้
       if (typeof unstuckBuffLastAt !== 'undefined' && typeof unstuckBuffState !== 'undefined' && unstuckBuffState === 'IDLE' && !unstuckBuffManualRun) unstuckBuffLastAt = 0;
-      log('⚔️ Auto-Combat: OFF · บล็อก Warp Find/Teleport หามอน + พัก timer AB auto (Direct Unstuck/รับบัพตอนนี้ยังใช้ได้)');
+      log('⚔️ Auto-Combat: OFF · ปิด Combat Flee ทั้งหมด (HP/Blacklist/Danger/Mob) + บล็อก Warp Find; Player Flee ยังแยกตามเดิม');
     },
     setTargetWhitelist(...namesOrIds) {
       CFG.targetWhitelist = namesOrIds;
@@ -10330,7 +10380,7 @@
     setFleeProximity(n, radius) { CFG.fleeOnProximityCount = n; if (radius != null) CFG.fleeOnProximityRadius = radius; saveConfigDebounced(); log('🏃 flee มอนรอบ', n, 'ตัวในระยะ', CFG.fleeOnProximityRadius); },
     toggleHpFlee(on) { CFG.hpFleeEnabled = !!on; hpFleeLatched = false; hpFleePendingClip = null; hpFleeNextTryAt = 0; saveConfigDebounced(); log('❤️ HP Emergency Flee:', CFG.hpFleeEnabled ? 'ON < ' + CFG.hpFleePercent + '%' : 'OFF'); },
     setHpFleePercent(pct) { CFG.hpFleePercent = Math.max(1, Math.min(99, Number(pct) || 30)); hpFleeLatched = false; saveConfigDebounced(); log('❤️ HP Flee threshold =', CFG.hpFleePercent + '%'); },
-    setHpFleeMode(mode) { CFG.hpFleeMode = mode === 'unstuck' ? 'unstuck' : 'sameMap'; hpFleeLatched = false; hpFleePendingClip = null; saveConfigDebounced(); log('❤️ HP Flee mode =', CFG.hpFleeMode === 'unstuck' ? 'Unstuck 0x73' : 'หนีในแมพ (DB → Clip → Wing)'); },
+    setHpFleeMode(mode) { CFG.hpFleeMode = mode === 'unstuck' ? 'unstuck' : 'sameMap'; hpFleeLatched = false; hpFleePendingClip = null; saveConfigDebounced(); log('❤️ HP Flee mode =', CFG.hpFleeMode === 'unstuck' ? 'Unstuck 0x73' : 'หนีในแมพ (Direct → Macro → Clip → Wing)'); },
     setRanged(range) { CFG.rangedAttackRange = range; log('🏹 ranged range =', range, range ? '' : '(ใช้ attackRange)'); },
     setAttackRange(r) { CFG.attackRange = r; log('⚔️ attackRange =', r); },
     // ★ ปรับ re-issue/abandon timing (pending spam)
@@ -11462,7 +11512,8 @@
             <div class="field"><label>มอนที่จะไม่ตี — blacklist</label><input type="text" id="__assist_blacklist" placeholder="เช่น MVP,Boss"></div>
             <div class="btns"><button id="__assist_t_fightbackbl" class="on">🛡️ ตีกลับมอน blacklist ที่ตีเรา</button></div>
             <div class="btns"><button id="__assist_t_blacklistflee" class="off" title="ON = เมื่อมอนใน Target Blacklist โจมตีเรา จะหนีตามลำดับ Direct → Macro → Teleport Clip → Fly Wing">🌀 หนี Blacklist: OFF</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Trigger เฉพาะตอนมอนใน Target Blacklist โจมตีเรา · ไม่หนีเพียงเพราะเห็นมอนอยู่ใกล้<br>★ ลำดับหนี: Direct/Database TP → Macro (ถ้าเปิด) → Teleport Clip → Fly Wing 601 · ทำงานแม้ ⚔️ Combat OFF</div>
+            <div style="font-size:10px;color:#ffd166;margin:4px 0 6px;line-height:1.5">⚔️ Combat เป็นสวิตช์หลัก: Combat OFF = ปิด HP Flee / หนี Blacklist / หนีมอนอันตราย / หนีมอนรุมทั้งหมด</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Trigger เฉพาะตอนมอนใน Target Blacklist โจมตีเรา · ไม่หนีเพียงเพราะเห็นมอนอยู่ใกล้<br>★ ลำดับหนี: Direct/Database TP → Macro (ถ้าเปิด) → Teleport Clip → Fly Wing 601 · ต้องเปิด ⚔️ Combat</div>
             <div class="btns"><button id="__assist_applywhitelist">ตั้ง whitelist</button><button id="__assist_applyblacklist">ตั้ง blacklist</button></div>
             <div class="field"><label>ระยะโจมตี (ช่อง) — นักธนูตั้ง >2 เพื่อตีไกล</label><input type="number" id="__assist_attackrange" min="0" max="15"></div>
             <div class="field"><label>รัศมีค้นหามอน (ช่อง) — เลือกมอนในระยะนี้เท่านั้น (เล็ก=ไม่เดินไกล)</label><input type="number" id="__assist_maxacq" min="1" max="50" placeholder="30"></div>
@@ -11485,7 +11536,7 @@
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
               <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ตามลำดับ Direct → Macro → Clip → Fly Wing">🧪 ทดสอบวาร์ปหามอน</button>
             </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับมาตรฐานทุกระบบวาร์ป: <b>Direct → Macro → Teleport Clip → Fly Wing</b> · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับมาตรฐานทุกระบบวาร์ป: <b>Direct → Macro → Teleport Clip → Fly Wing</b> · หลังใช้ Direct จะ cooldown 30 วิ ระหว่างนั้นข้ามไป Macro ทันที · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม</div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
             <div class="field"><label>เลิกตีมอนถ้าสู้นานเกิน (วินาที) — หันไปตีตัวอื่น</label><input type="number" id="__assist_engagesec" min="5" max="600" placeholder="40"></div>
@@ -11503,14 +11554,14 @@
             <div class="field"><label>มอนรอบ N ตัว (รวม passive · 0=ไม่ใช้ trigger นี้)</label><input type="number" id="__assist_fleeprox" min="0" max="20"></div>
             <div class="field"><label>รัศมีนับมอนทั้ง 3 แบบ (ช่อง)</label><input type="number" id="__assist_fleerprox" min="1" max="50" step="1" placeholder="8"></div>
             <div class="btns"><button id="__assist_applymobflee">💾 ใช้ค่าหนีมอนรุม</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ปุ่ม OFF = ปิด trigger รุม/aggro/มอนรอบทั้งหมดชั่วคราว แต่ไม่ลบค่าที่ตั้งไว้<br>★ ปุ่ม ON = กลับมาใช้ threshold เดิมทันที · ทำงานแม้ ⚔️ Combat OFF<br>★ ลำดับหนี: Direct → Macro → Teleport Clip → Fly Wing · วิธีที่ใช้ไม่ได้จะถูกข้าม</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ปุ่ม OFF = ปิด trigger รุม/aggro/มอนรอบทั้งหมดชั่วคราว แต่ไม่ลบค่าที่ตั้งไว้<br>★ ปุ่ม ON = กลับมาใช้ threshold เดิมทันที · ทำงานเมื่อ ⚔️ Combat ON<br>★ ลำดับหนี: Direct → Macro → Teleport Clip → Fly Wing · วิธีที่ใช้ไม่ได้จะถูกข้าม</div>
             <hr style="border:none;border-top:1px solid #3a3f4b;margin:10px 0">
             <h4 style="margin:6px 0">🚨 มอนอันตรายที่ต้องหนี</h4>
             <div class="btns"><button id="__assist_t_dangerflee" class="on">🚨 หนีมอนอันตราย: ON</button></div>
             <div class="field"><label>มอนที่ต้องหนี (ชื่อหรือ sub-ID คั่นจุลภาค) — เจอในระยะ → วาร์ปหนี</label><input type="text" id="__assist_fleemonsters" placeholder="เช่น MVP,Boss,1234"></div>
             <div class="field"><label>ระยะหนีมอนอันตราย (ช่อง)</label><input type="number" id="__assist_fleemonsterradius" min="1" max="50" placeholder="20"></div>
             <div class="btns"><button id="__assist_applyflee">💾 ใช้ค่ามอนอันตราย</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ OFF = หยุดตรวจรายชื่อมอนอันตรายชั่วคราว แต่ยังจำรายชื่อและระยะไว้<br>★ ทำงานแม้ ⚔️ Combat OFF เช่นเดียวกับหนีมอนรุม<br>★ ลำดับหนี: Direct → Macro → Teleport Clip → Fly Wing · วิธีที่ใช้ไม่ได้จะถูกข้าม</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ OFF = หยุดตรวจรายชื่อมอนอันตรายชั่วคราว แต่ยังจำรายชื่อและระยะไว้<br>★ ทำงานเมื่อ ⚔️ Combat ON เช่นเดียวกับหนีมอนรุม<br>★ ลำดับหนี: Direct → Macro → Teleport Clip → Fly Wing · วิธีที่ใช้ไม่ได้จะถูกข้าม</div>
             <hr style="border:none;border-top:1px solid #3a3f4b;margin:10px 0">
             <h4 style="margin:6px 0">❤️ HP Emergency Flee</h4>
             <div class="btns">
@@ -11520,7 +11571,7 @@
             </div>
             <div class="field"><label>HP ต่ำกว่ากี่ % ให้หนีทันที</label><input type="number" id="__assist_hpfleepct" min="1" max="99" step="1" placeholder="30"></div>
             <div class="btns"><button id="__assist_applyhpflee">💾 ใช้ค่า HP Flee</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ หนีในแมพ: Direct/Database TP (0x40) → Fixed Hotkey Macro → Teleport Clip → Fly Wing 601 · วิธีที่ใช้ไม่ได้จะถูกข้าม<br>★ Unstuck: ส่ง 0x73 ทันที 1 ครั้ง · ทำงานแบบฉุกเฉินแม้ ⚔️ Combat OFF</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ หนีในแมพ: Direct/Database TP (0x40) → Fixed Hotkey Macro → Teleport Clip → Fly Wing 601 · วิธีที่ใช้ไม่ได้จะถูกข้าม<br>★ Unstuck: ส่ง 0x73 ทันที 1 ครั้ง · ทำงานเมื่อ ⚔️ Combat ON</div>
             <h4 style="margin-top:14px;">🛡️ Guard — ยืนประจำตำแหน่ง (ตีกลับเฉพาะมอนที่มาตี)</h4>
             <div class="btns"><button id="__assist_t_guard" class="off">🛡️ Guard: ?</button></div>
             <div class="field"><label>แผนที่ประจำตำแหน่ง (ว่าง = ยึดแมปที่เปิด guard)</label><input type="text" id="__assist_guardmap" placeholder="เช่น izlude"></div>
@@ -11605,7 +11656,7 @@
             <div class="field"><label>รัศมีตรวจจับผู้เล่น (ช่อง) — 0 = หนีทันทีที่มีผู้เล่นในแผนที่</label><input type="number" id="__assist_fleeradius" min="0" max="200" placeholder="30"></div>
             <div class="field"><label>คูลดาวน์วาร์ปหนี (วินาที) — 0 = หนีรัวสุด ไม่ต้องรอ</label><input type="number" id="__assist_fleecd" min="0" max="30" step="1" placeholder="5"></div>
             <div class="btns"><button id="__assist_applyfleemap">ใช้ค่าหนีผู้เล่น</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ทุกโหมดหนีผู้เล่นใช้ลำดับ Direct → Macro → Teleport Clip → Fly Wing · โหมดเปลี่ยนแมพจะยิง Direct ไปแมพสำรองก่อน แล้วใช้ fallback ระหว่างรอ gap</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ทุกโหมดหนีผู้เล่นใช้ลำดับ Direct → Macro → Teleport Clip → Fly Wing · โหมดเปลี่ยนแมพจะยิง Direct ไปแมพสำรองก่อน; ถ้า Direct ยัง cooldown 30s จะใช้ fallback ระหว่างรอ</div>
           </div>
           <!-- 🪑 Rest -->
           <div class="__assist_subpage" data-sub="rest">
@@ -12139,7 +12190,7 @@
       saveConfigDebounced();
       log('🏃 หนีผู้เล่น: แผนที่สำรอง', maps.length, 'แผนที่, รัศมี', CFG.fleePlayerRadius, 'ช่อง' + (radius === 0 ? ' (หนีทันที)' : '') + ', คูลดาวน์', CFG.fleeWarpCooldownSec + 's' + (CFG.fleeWarpCooldownSec === 0 ? ' (รัวสุด)' : ''));
     });
-    // ---- Combat Flee wires (UI อยู่ใน Combat; logic หนียังทำงานได้แม้ Combat OFF) ----
+    // ---- Combat Flee wires (v4.189.60: Combat เป็น Master Switch; สวิตช์ย่อยยังจำค่าเดิม) ----
     const _hpFleePct = root.querySelector('#__assist_hpfleepct');
     if (_hpFleePct) _hpFleePct.value = CFG.hpFleePercent;
     const _hpFleeBtn = root.querySelector('#__assist_t_hpflee');
