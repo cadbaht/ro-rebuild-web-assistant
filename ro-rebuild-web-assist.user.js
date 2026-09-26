@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.68
+// @version      4.189.69
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,19 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.68';
+  const VERSION = '4.189.69';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.69', d: '2026-09-27', items: [
+      '🚀 Vendor Flag Direct Discovery — จาก Diagnostic พบ marker ร้านตรงท้าย IN 0x06: 00 08 00 00 00 03 00 01 00 + Shop Open ID',
+      '   · อ่าน Shop Open ID จาก 4 ไบต์ท้าย packet ร้านโดยตรง ไม่เอา player entity ID หลายร้อยตัวไปลอง 0x6b อีก',
+      '   · ใช้ Direct Vendor ID ทั้ง กวาดตลาด / อัปเดตราคา / รีเฟรชทั้งหมด; signature แบบเดิมคงไว้เป็น fallback เท่านั้น',
+      '   · ไม่ต้อง Calibration ด้วยการเปิดร้านมือก่อน ถ้า Client ได้รับ vendor announcement ของแมพแล้ว',
+      '⚡ ลด candidate ขยะอย่างมาก — รอบ Diagnostic ก่อนหน้า 456 probes มีร้านจริง 4; รุ่นนี้ probe เฉพาะ ID ที่ packet ระบุว่าเป็นร้าน',
+      '   · จำ mapping Shop Open ID → Actor ID เพื่อดึงชื่อ/ตำแหน่ง seller จาก entity tracker ได้แม่นขึ้น',
+      '📡 Diagnostic แสดง direct vendor count และจับ source packet จาก Vendor Flag ก่อน fallback signature',
+      '   · Turbo 24 Anchors / single-pass 240ms / Market 3-button workflow ยังคงเดิม',
+    ]},
     { v: '4.189.68', d: '2026-09-27', items: [
       '⚡ Ultra Fast Market Scan — จากผล Diagnostic จริง ร้านตอบเฉลี่ย ~95ms และช้าที่สุด ~205ms จึงตัด Retry 650ms ออกจากงานตลาดปกติ',
       '   · Probe ร้านครั้งเดียว ~240ms; timeout แล้วข้ามทันที ไม่ยิง 0x6b ซ้ำตัวเดิมในรอบเดียว',
@@ -3197,7 +3207,7 @@
     let rec=marketDiagPacketStats.get(key);
     if(!rec){
       if(marketDiagPacketStats.size>=MARKET_DIAG_MAX_SIGNATURES) return;
-      const keepSample=(u[0]===0x6b||u[0]===0x6a||u[0]===0x4d||(marketShopIdSignature&&u[0]===marketShopIdSignature.op));
+      const keepSample=(u[0]===0x6b||u[0]===0x6a||u[0]===0x4d||u[0]===0x06||(marketShopIdSignature&&u[0]===marketShopIdSignature.op));
       rec={dir,op:u[0],len:u.length,count:0,sample:keepSample?marketDiagHex(u):''}; marketDiagPacketStats.set(key,rec);
     }
     rec.count++;
@@ -3208,8 +3218,15 @@
     marketDiagEvents.push(rec); if(marketDiagEvents.length>MARKET_DIAG_MAX_EVENTS) marketDiagEvents.shift();
   }
   function marketDiagFindCandidateSource(id) {
-    id=Number(id)>>>0;
-    if(!id||!marketShopIdSignature) return null;
+    id=Number(id)>>>0; if(!id) return null;
+    // v4.189.69 direct Vendor Flag ก่อน
+    for(let i=marketProbePackets.length-1;i>=0;i--){
+      const rec=marketProbePackets[i];
+      if(!rec||!rec.data) continue;
+      if(currentMap&&rec.map&&rec.map!==currentMap) continue;
+      if(marketReadVendorOpenIdFromPacket(rec.data)===id) return rec;
+    }
+    if(!marketShopIdSignature) return null;
     for(let i=marketProbePackets.length-1;i>=0;i--){
       const rec=marketProbePackets[i];
       if(!rec||!rec.data) continue;
@@ -3252,6 +3269,7 @@
       'map='+(start.map||end.map||'?')+' start=@'+(start.x??'?')+','+(start.y??'?')+' end=@'+(end.x??'?')+','+(end.y??'?'),
       'index_start='+(start.shops??'?')+'shops/'+(start.listings??'?')+'items index_end='+end.shops+'shops/'+end.listings+'items',
       'shop_signature='+sig,
+      'vendor_direct=marker[00 08 00 00 00 03 00 01 00]+u32LE candidates='+marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS).length,
       'probe_latency='+(marketDiagProbeStats ? ('ok='+marketDiagProbeStats.ok+' timeout='+marketDiagProbeStats.timeout+' avg_ms='+(marketDiagProbeStats.ok?(marketDiagProbeStats.sumMs/marketDiagProbeStats.ok).toFixed(1):'0')+' max_ms='+marketDiagProbeStats.maxMs+' buckets<=100/'+marketDiagProbeStats.le100+' <=200/'+marketDiagProbeStats.le200+' <=250/'+marketDiagProbeStats.le250+' <=400/'+marketDiagProbeStats.le400+' <=650/'+marketDiagProbeStats.le650+' >650/'+marketDiagProbeStats.gt650) : 'none'),
       'sweep='+(marketSweepActive?'active':'inactive')+' mode='+(marketSweepMode||'-')+' waypoint='+(marketSweepWaypointIdx+1)+'/'+marketSweepWaypoints.length,
       '',
@@ -3350,14 +3368,80 @@
   function marketSaveDiscovery() {
     try { if (marketShopIdSignature) localStorage.setItem(MARKET_DISCOVERY_KEY, JSON.stringify(marketShopIdSignature)); } catch (_) {}
   }
+  // ★ v4.189.69 — Vendor Flag Direct Discovery
+  // Diagnostic จริงพบว่า IN 0x06 ของร้านมี trailer คงที่ท้าย packet:
+  //   00 08 00 00 00 03 00 01 00 <shopOpenId:u32LE>
+  // และ <shopOpenId> ตรงกับ 4 ไบต์แรกหลัง opcode ของ IN 0x6b shop response โดยตรง
+  const MARKET_VENDOR_TRAILER = [0x00,0x08,0x00,0x00,0x00,0x03,0x00,0x01,0x00];
+  let marketVendorActorByOpenId = new Map(); // shopOpenId -> actor entity id
+
+  function marketReadVendorOpenIdFromPacket(u) {
+    if (!u || u.length < 13 || u[0] !== 0x06) return 0;
+    const m = u.length - 13;
+    for (let i=0;i<MARKET_VENDOR_TRAILER.length;i++) if (u[m+i] !== MARKET_VENDOR_TRAILER[i]) return 0;
+    const id = u32(u, u.length - 4) >>> 0;
+    return id || 0;
+  }
+  function marketRememberVendorAnnouncement(u) {
+    const shopId = marketReadVendorOpenIdFromPacket(u);
+    if (!shopId) return 0;
+    // IN 0x06 actor/entity id ของ packet ชุดนี้อยู่ @7 ตาม parser/discovery ที่ยืนยันจาก capture เดิม
+    const actorId = u.length >= 11 ? (u32(u,7)>>>0) : 0;
+    if (actorId) marketVendorActorByOpenId.set(shopId, actorId);
+    marketKnownOpenIds.add(shopId);
+    return shopId;
+  }
+  function marketDiscoverVendorOpenIds(limit=5000, maxAgeMs=MARKET_PROBE_TTL_MS) {
+    limit=Math.max(1,Number(limit)||5000); maxAgeMs=Math.max(0,Number(maxAgeMs)||MARKET_PROBE_TTL_MS);
+    const out=[],seen=new Set(),now=Date.now();
+    for (const rec of marketProbePackets) {
+      if (!rec || !rec.data || rec.op!==0x06) continue;
+      if (maxAgeMs && now-Number(rec.t||0)>maxAgeMs) continue;
+      if (currentMap && rec.map && rec.map!==currentMap) continue;
+      const id=marketReadVendorOpenIdFromPacket(rec.data);
+      if(!id||seen.has(id)) continue;
+      seen.add(id); out.push(id);
+      if(out.length>=limit) break;
+    }
+    return out;
+  }
+  function marketDiscoverRecentVendorOpenIds(maxAgeMs, limit=5000) {
+    maxAgeMs=Math.max(100,Number(maxAgeMs)||MARKET_SWEEP_RECENT_MS); limit=Math.max(1,Number(limit)||5000);
+    const out=[],seen=new Set(),now=Date.now();
+    for(let i=marketProbePackets.length-1;i>=0;i--){
+      const rec=marketProbePackets[i];
+      if(now-Number(rec.t||0)>maxAgeMs) break;
+      if(!rec||!rec.data||rec.op!==0x06) continue;
+      if(currentMap&&rec.map&&rec.map!==currentMap) continue;
+      const id=marketReadVendorOpenIdFromPacket(rec.data);
+      if(!id||seen.has(id)) continue;
+      seen.add(id); out.push(id);
+      if(out.length>=limit) break;
+    }
+    out.reverse(); return out;
+  }
+  function marketDiscoverVendorIdsSince(sinceMs, limit=5000) {
+    const out=[],seen=new Set(),since=Math.max(0,Number(sinceMs)||0); limit=Math.max(1,Number(limit)||5000);
+    for(const rec of marketProbePackets){
+      if(Number(rec.t||0)<since) continue;
+      if(!rec||!rec.data||rec.op!==0x06) continue;
+      if(currentMap&&rec.map&&rec.map!==currentMap) continue;
+      const id=marketReadVendorOpenIdFromPacket(rec.data);
+      if(!id||seen.has(id)) continue;
+      seen.add(id); out.push(id); if(out.length>=limit) break;
+    }
+    return out;
+  }
+
   function marketProbeRemember(u) {
     if (!u || !u.length) return;
-    // เก็บ packet ขาเข้าแบบ ring-buffer ตั้งแต่ document-start เพื่อใช้หาแหล่ง shopOpenId หลังผู้ใช้เปิดร้าน 1 ครั้ง
+    // เก็บ packet ขาเข้าแบบ ring-buffer ตั้งแต่ document-start เพื่อใช้หา Shop Open ID
     try {
       const now = Date.now();
       marketProbePackets.push({ t: now, map: currentMap || '', op: u[0], len: u.length, data: new Uint8Array(u) });
       if (marketProbePackets.length > MARKET_PROBE_MAX) marketProbePackets.splice(0, marketProbePackets.length - MARKET_PROBE_MAX);
       while (marketProbePackets.length && now - marketProbePackets[0].t > MARKET_PROBE_TTL_MS) marketProbePackets.shift();
+      marketRememberVendorAnnouncement(u);
     } catch (_) {}
   }
   function marketU32LEBytes(id) { id >>>= 0; return [id&255,(id>>>8)&255,(id>>>16)&255,(id>>>24)&255]; }
@@ -3419,6 +3503,10 @@
     return u32(u, off) >>> 0;
   }
   function marketDiscoverIdsBySignature(sig, limit=300) {
+    // v4.189.69: direct Vendor Flag มาก่อน — signature แบบเดิมเป็น fallback สำหรับ packet/server รูปแบบเก่า
+    const direct=marketDiscoverVendorOpenIds(limit, MARKET_PROBE_TTL_MS);
+    if(direct.length) return direct;
+    if(!sig) return [];
     const out=[], seen=new Set(); const now=Date.now();
     for (const rec of marketProbePackets) {
       if (now-rec.t > MARKET_PROBE_TTL_MS) continue;
@@ -3508,8 +3596,9 @@
         }
       }
       const req = (marketLastOpenRequest && Date.now() - marketLastOpenRequest.t < 2500) ? marketLastOpenRequest : null;
-      const vendorEntityId = req ? req.entityId : 0;
-      const ent = vendorEntityId ? entities.get(vendorEntityId) : null;
+      const vendorEntityId = req ? req.entityId : 0; // จริง ๆ คือ Shop Open ID ที่ส่งใน OUT 0x6b
+      const vendorActorId = vendorEntityId ? (marketVendorActorByOpenId.get(vendorEntityId) || 0) : 0;
+      const ent = vendorActorId ? entities.get(vendorActorId) : null;
       const key = (currentMap || '?') + ':' + (vendorEntityId || ('r' + responseShopId));
       const prevShop = marketShopIndex.get(key);
       // ★ v4.189.44: requestX/Y คือจุดที่ส่ง 0x6b แล้ว server ตอบกลับสำเร็จ
@@ -3605,10 +3694,11 @@
     if(summary) summary.textContent='ดัชนี: '+shops+' ร้าน · '+listings+' รายการ · พบ '+rows.length+' รายการ'+(marketScanStatus ? ' · '+marketScanStatus : '');
     const disc=panel.querySelector('[data-market-discovery]');
     if(disc){
-      const n = marketShopIdSignature ? marketDiscoverIdsBySignature(marketShopIdSignature,300).length : 0;
-      disc.textContent = marketShopIdSignature
-        ? ('Shop-ID: ✅ learned · candidates '+n)
-        : ('Shop-ID: ⚠️ ยังไม่ learned · เปิดร้านด้วยมือ 1 ร้านเพื่อ Calibration');
+      const directN=marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS).length;
+      const fallbackN=directN?0:marketDiscoverIdsBySignature(marketShopIdSignature,300).length;
+      disc.textContent = directN
+        ? ('Shop-ID: ✅ Vendor Flag · '+directN+' ร้าน')
+        : (marketShopIdSignature ? ('Shop-ID: ↩ fallback signature · '+fallbackN+' candidate') : 'Shop-ID: ⏳ รอ Client โหลดร้าน');
     }
     const pageInfo=panel.querySelector('[data-market-page-info]');
     if(pageInfo) pageInfo.textContent='หน้า '+marketPage+' / '+totalPages+' · '+rows.length+' รายการ';
@@ -3773,9 +3863,11 @@
 
   // Shop IDs ที่เพิ่งโผล่ใน packet ช่วงล่าสุด — ใช้ตอนเดินถึง sweep waypoint เพื่อลดการยิง candidate เก่าซ้ำ
   function marketDiscoverRecentIdsBySignature(sig, maxAgeMs, limit) {
-    if (!sig) return [];
     maxAgeMs = Math.max(500, Number(maxAgeMs) || MARKET_SWEEP_RECENT_MS);
     limit = Math.max(1, Number(limit) || 300);
+    const direct=marketDiscoverRecentVendorOpenIds(maxAgeMs,limit);
+    if(direct.length) return direct;
+    if (!sig) return [];
     const out=[], seen=new Set(); const now=Date.now();
     for (let i=marketProbePackets.length-1; i>=0; i--) {
       const rec=marketProbePackets[i];
@@ -3903,7 +3995,6 @@
   }
   // ★ v4.189.65 — Smart waypoint wait: จุดที่ไม่มี candidate ใหม่ไม่ต้องรอ 500ms
   function marketSweepEligibleCandidateIds(policy='new') {
-    if(!marketShopIdSignature) return [];
     policy = ['new','stale','all'].includes(policy) ? policy : 'new';
     marketPruneStaleIds();
     const ids=marketDiscoverRecentIdsBySignature(marketShopIdSignature, MARKET_SWEEP_RECENT_MS, 5000);
@@ -3944,6 +4035,8 @@
   }
 
   function marketDiscoverIdsSince(sig, sinceMs, limit=5000) {
+    const direct=marketDiscoverVendorIdsSince(sinceMs,limit);
+    if(direct.length) return direct;
     if (!sig) return [];
     const out=[], seen=new Set();
     const since=Math.max(0,Number(sinceMs)||0);
@@ -4033,7 +4126,6 @@
   }
 
   async function marketSweepScanRecent(maxShops, policy='new') {
-    if(!marketShopIdSignature) return {checked:0,found:0,retried:0,skippedKnown:0,skippedFresh:0,skippedStale:0};
     maxShops = marketNormalizeShopLimit(maxShops);
     policy = ['new','stale','all'].includes(policy) ? policy : 'new';
     marketPruneStaleIds();
@@ -4075,10 +4167,7 @@
     if(marketScanActive){ marketScanStatus='กำลังสแกนร้านอยู่ — หยุดสแกนก่อนเริ่มกวาด'; renderMarketIndexUI(); return false; }
     if(!activeWS||activeWS.readyState!==1){ log('⚠️ Market: WebSocket เกมยังไม่พร้อม'); return false; }
     if(!currentMap||player.x==null||player.y==null){ log('⚠️ Market: ยังไม่รู้แมป/พิกัดตัวละคร'); return false; }
-    if(!marketShopIdSignature){
-      marketScanStatus='ยังไม่รู้ Shop-ID signature — เปิดร้านด้วยมือ 1 ร้านก่อนเริ่มกวาด'; renderMarketIndexUI();
-      log('🧭 Market: ต้อง Calibration Shop ID ก่อน — เปิดร้านด้วยมือ 1 ร้าน'); return false;
-    }
+    // v4.189.69: ไม่บังคับ Calibration แล้ว — ระหว่างเดินจะเก็บ Vendor Flag จาก IN 0x06 โดยตรง
     policy = ['new','stale','all'].includes(policy) ? policy : 'new';
     maxShops=marketNormalizeShopLimit(maxShops);
     const startMap=currentMap;
@@ -4146,15 +4235,15 @@
 
     // 0x6b ต้องใช้ Shop Open ID ไม่ใช่ player entity ID
     const discoveryLimit = Number.isFinite(maxShops) ? Math.max(300, maxShops) : Math.max(300, marketProbePackets.length);
-    const discovered = marketShopIdSignature ? marketDiscoverIdsBySignature(marketShopIdSignature, discoveryLimit) : [];
+    const discovered = marketDiscoverIdsBySignature(marketShopIdSignature, discoveryLimit);
     const ids=[]; const seen=new Set();
     for(const id of [...discovered, ...marketKnownOpenIds]){ const n=Number(id)>>>0; if(n && !seen.has(n)){seen.add(n);ids.push(n);} }
 
     if(!ids.length){
-      marketScanStatus='ยังไม่รู้ Shop ID — Reload/เข้าแมปใหม่ แล้วเปิดร้านด้วยมือ 1 ร้านเพื่อ Calibration';
+      marketScanStatus='ยังไม่พบ Vendor Flag — เดินเข้าใกล้โซนร้านหรือรอให้ Client โหลดร้านก่อน';
       renderMarketIndexUI();
-      log('🧭 Market Scan: Shop Open ID ไม่ใช่ player entity ID จึงสแกนผู้เล่นตรงๆ ไม่ได้');
-      log('   → Reload/เข้าแมปตลาดใหม่ด้วย v'+VERSION+' แล้วเปิดร้านด้วยมือ 1 ร้าน; Assist จะเรียนรู้แหล่ง Shop ID จาก packet ตอนเข้าแมป');
+      log('🧭 Market Scan: ยังไม่มี IN 0x06 ที่มี Vendor Flag ใน buffer');
+      log('   → เดินเข้าใกล้ตลาดหรือกด ⚡ กวาดตลาด เพื่อให้ Client โหลด vendor announcement');
       return false;
     }
 
@@ -11023,7 +11112,7 @@
     marketRouteClear() { return marketClearRecordedRoute(); },
     marketRoute() { return marketGetRecordedRoute(); },
     marketPreset() { const p=marketPresetForMap(); return p ? {id:p.id,name:p.name,map:p.map,points:p.points.slice()} : null; },
-    marketDiscoveryStatus() { marketPruneStaleIds(); return {signature:marketShopIdSignature,probePackets:marketProbePackets.length,knownShopIds:[...marketKnownOpenIds],staleShopIds:[...marketStaleOpenIds.keys()],discovered:marketShopIdSignature?marketDiscoverIdsBySignature(marketShopIdSignature,300):[],route:{points:marketGetRecordedRoute().length,preset:(marketPresetForMap()?marketPresetForMap().name:null),presetPoints:marketPresetRoute().length},sweep:{active:marketSweepActive,mode:marketSweepMode,waypoint:marketSweepWaypointIdx,total:marketSweepWaypoints.length,checkedIds:marketSweepCheckedIds.size}}; },
+    marketDiscoveryStatus() { marketPruneStaleIds(); return {vendorFlag:true,directVendorIds:marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS),signature:marketShopIdSignature,probePackets:marketProbePackets.length,knownShopIds:[...marketKnownOpenIds],staleShopIds:[...marketStaleOpenIds.keys()],discovered:marketDiscoverIdsBySignature(marketShopIdSignature,300),route:{points:marketGetRecordedRoute().length,preset:(marketPresetForMap()?marketPresetForMap().name:null),presetPoints:marketPresetRoute().length},sweep:{active:marketSweepActive,mode:marketSweepMode,waypoint:marketSweepWaypointIdx,total:marketSweepWaypoints.length,checkedIds:marketSweepCheckedIds.size}}; },
     marketClearIndex() { marketClearIndex(); },
     marketDiagStart() { openMarketPanel(); return marketDiagStartCapture(); },
     marketDiagStop() { return marketDiagStopCapture('api'); },
