@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.56
+// @version      4.189.57
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,18 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.56';
+  const VERSION = '4.189.57';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.57', d: '2026-09-26', items: [
+      '⌨️ Shared Teleport Macro — ย้ายปุ่ม Macro ลงไปรวมกับชุดวาร์ปในหน้า ⚔️ Combat',
+      '   · เอากล่อง TELEPORT MACRO จาก HOTBAR และปุ่มทดสอบ Macro แยกด้านบนออก',
+      '   · ปุ่ม ⌨️ Macro ใช้ร่วมกันทั้ง Warp Find และระบบหนีมอน',
+      '   · Warp Find: Macro ON → ลอง Alt↓→1→2→3→Alt↑ ก่อน; ถ้าไม่วาร์ปจึง fallback ไป Fly Wing / Teleport Clip / Direct ตามโหมดเดิม',
+      '   · หนีมอนรุมและมอนอันตราย: Macro ON → ลอง Macro ก่อน; ถ้าไม่สำเร็จ fallback วาร์ปสุ่มเดิม',
+      '   · HP Emergency Flee และ Blacklist Flee ยังคงใช้ Macro ในลำดับ Direct → Clip → Macro → Fly Wing เหมือนเดิม',
+      '   · ปุ่ม 🧪 ทดสอบวาร์ปหามอน ใช้ทดสอบ Macro ได้เมื่อเปิด Macro',
+    ]},
     { v: '4.189.56', d: '2026-09-26', items: [
       '⌨️ Fixed Teleport Macro — เปลี่ยน Hotkey Macro เป็นชุดคงที่ตาม Macro: กด Alt ค้าง → 1 → 2 → 3 → ปล่อย Alt',
       '   · เว้น 25ms ระหว่างทุก key down/up: Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑',
@@ -2054,7 +2063,7 @@
     targetBlacklist: [],          // ไม่ตีมอนเหล่านี้ (ชื่อหรือ sprite id)
     fightBackBlacklisted: true,   // ★ โดนมอนใน blacklist ตี → ตีกลับไหม? (false = เคารพ blacklist เด็ดขาด แม้โดนตี)
     blacklistFleeEnabled: false,   // ★ โดนมอนใน targetBlacklist โจมตี → หนีในแมพด้วย Direct → Clip → Macro → Fly Wing
-    teleportMacroEnabled: false,   // ★ ใช้ Fixed Hotbar Macro: Alt ค้าง → 1 → 2 → 3 → ปล่อย Alt เป็น fallback ก่อน Fly Wing
+    teleportMacroEnabled: false,   // ★ Shared Fixed Macro: ใช้ทั้ง Warp Find + หนีมอน; HP/Blacklist ใช้เป็น fallback ก่อน Fly Wing
     normalAttackEnabled: true,    // ★★ โหมดเวทย์: ปิด = ไม่ส่ง ATTACK เลย (ใช้แต่สกิล — นักเวทย์ร่ายไกล ไม่โดนลากเข้าปะทะ)
     // ★★ GUARD MODE — ยืนประจำตำแหน่ง ไม่หามอนเอง ตีกลับเฉพาะมอนที่มาตีเรา
     //   เตรียมไว้สำหรับบอทบัพ (คอยประจำจุดใช้สกิลให้คนอื่น)
@@ -7371,18 +7380,10 @@
     if (!currentMap) { log('⚠️ วาร์ปหนี: ยังไม่รู้ชื่อแมป'); return false; }
     return sendTeleport(currentMap, -999, -999);
   }
-  // ★ Warp Find: Fly Wing (itemId 601 Rayrag) / Teleport Clip / direct random warp
-  //   ใช้เฉพาะตอนหาเป้าไม่เจอ — ไม่ผูกกับ Auto-Skill timer
-  function sendWarpFind(opts) {
-    const manualTest = !!(opts && opts.manualTest);
-    // ★ Auto WarpFind ต้อง Combat ON; ปุ่มทดสอบ manual bypass gate นี้เพื่อแยกปัญหา transport ออกจาก auto-condition
-    if (!manualTest && !CFG.combatEnabled) { dbg('🛑 WarpFind ถูกบล็อก: Combat OFF'); return false; }
-    if (!activeWS || activeWS.readyState !== 1) {
-      if (manualTest) log('❌ WarpFind Test: WebSocket เกมยังไม่พร้อม');
-      return false;
-    }
-
-    // ★ v4.188.5: Fly Wing mode — Rayrag DB ในเกมใช้ Item ID 601
+  // ★ v4.189.57 — Warp Find ใช้ Shared Teleport Macro ได้ด้วย
+  //   Macro ON = ลอง Macro ก่อน; ถ้าไม่วาร์ป fallback ไปวิธีเดิม (Fly Wing / Teleport Clip / Direct)
+  function sendWarpFindBaseMethod(manualTest) {
+    // Fly Wing mode — Rayrag DB ในเกมใช้ Item ID 601
     if (CFG.warpFindUseFlyWing) {
       const FLY_WING_ID = 601;
       const stock = inventory.has(FLY_WING_ID) ? (inventory.get(FLY_WING_ID) || 0) : 0;
@@ -7407,10 +7408,33 @@
     return false;
   }
 
+  function sendWarpFind(opts) {
+    const manualTest = !!(opts && opts.manualTest);
+    // Auto WarpFind ต้อง Combat ON; ปุ่มทดสอบ manual bypass gate นี้
+    if (!manualTest && !CFG.combatEnabled) { dbg('🛑 WarpFind ถูกบล็อก: Combat OFF'); return false; }
+    if (!activeWS || activeWS.readyState !== 1) {
+      if (manualTest) log('❌ WarpFind Test: WebSocket เกมยังไม่พร้อม');
+      return false;
+    }
+
+    if (CFG.teleportMacroEnabled === true) {
+      const started = startTeleportHotkeyMacro('warpfind', 'Warp Find',
+        (reason) => {
+          log('↪️ WarpFind Macro ไม่สำเร็จ' + (reason ? ' · ' + reason : '') + ' → fallback วิธีวาร์ปเดิม');
+          return sendWarpFindBaseMethod(manualTest);
+        },
+        () => { lastWarpFindAt = nowMs(); }
+      );
+      if (started) return true;
+    }
+    return sendWarpFindBaseMethod(manualTest);
+  }
+
   // ★ v4.189.26 — Manual Warp Find diagnostic
   function testWarpFindNow() {
     const now = nowMs();
-    const mode = CFG.warpFindUseFlyWing ? 'Fly Wing 601' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip skillId 53' : 'Direct random warp');
+    const baseMode = CFG.warpFindUseFlyWing ? 'Fly Wing 601' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip skillId 53' : 'Direct random warp');
+    const mode = CFG.teleportMacroEnabled === true ? ('Fixed Macro → ' + baseMode + ' fallback') : baseMode;
     const wingStock = inventory.has(601) ? (inventory.get(601) || 0) : 0;
     const autoCooldownLeft = Math.max(0, 3000 - (now - lastWarpFindAt));
     const before = { map: currentMap, x: player.x, y: player.y };
@@ -7422,7 +7446,8 @@
     if (sellState !== 'IDLE' || storageState !== 'IDLE') { log('❌ WarpFind Test: กำลัง Sell/Storage อยู่ — ยกเลิกทดสอบ'); return false; }
     const ok = sendWarpFind({ manualTest: true });
     if (!ok) {
-      if (CFG.warpFindUseFlyWing && wingStock <= 0) log('❌ WarpFind Test: ไม่มี Fly Wing 601');
+      if (CFG.teleportMacroEnabled === true) log('❌ WarpFind Test: Macro เริ่มไม่ได้ — ดู Debug Log');
+      else if (CFG.warpFindUseFlyWing && wingStock <= 0) log('❌ WarpFind Test: ไม่มี Fly Wing 601');
       else if (CFG.warpFindUseTeleportSkill && sp.cur != null && sp.cur < 30) log('❌ WarpFind Test: SP ต่ำกว่า 30 — Teleport Clip ใช้ไม่ได้');
       else if (CFG.warpFindUseTeleportSkill && typeof castingUntil !== 'undefined' && now < castingUntil) log('❌ WarpFind Test: กำลังติด cast lock อีก ' + Math.max(0, castingUntil - now) + 'ms');
       else log('❌ WarpFind Test: ส่งคำสั่งไม่สำเร็จ — ดู Debug Log เพิ่มเติม');
@@ -7996,17 +8021,36 @@
     return true;
   }
 
-  function doFlee(reason) {
-    const now = nowMs();
-    if (now - lastFleeAt < CFG.fleeCooldownMs) return false;
-    log('🏃 วาร์ปหนี:', reason);
+  // ★ v4.189.57 — หนีมอนรุม/มอนอันตรายใช้ Shared Macro ได้ด้วย
+  // Macro ON = ลอง Macro ก่อน; ถ้าไม่วาร์ปจึง fallback วาร์ปสุ่มเดิม
+  function monsterFleeDirectFallback(reason, macroReason) {
+    const why = [reason, macroReason].filter(Boolean).join(' · ');
     if (sendRandomWarp()) {
-      lastFleeAt = now;
+      lastFleeAt = nowMs();
       clearCombatThreat();
       abandonTarget('flee', false);
+      log('🌀 หนีมอน → fallback Direct random warp' + (why ? ' · ' + why : ''));
       return true;
     }
     return false;
+  }
+  function doFlee(reason) {
+    const now = nowMs();
+    if (now - lastFleeAt < CFG.fleeCooldownMs) return false;
+    if (teleportMacroPending) return true;
+    log('🏃 วาร์ปหนี:', reason);
+    if (CFG.teleportMacroEnabled === true) {
+      const started = startTeleportHotkeyMacro('monster-flee', 'หนีมอน',
+        (macroReason) => monsterFleeDirectFallback(reason, macroReason),
+        () => {
+          lastFleeAt = nowMs();
+          clearCombatThreat();
+          abandonTarget('flee', false);
+        }
+      );
+      if (started) return true;
+    }
+    return monsterFleeDirectFallback(reason, 'Macro ปิด/เริ่มไม่ได้');
   }
   // ★ v4.189.52 — Mob Flee แยกจาก Combat: เรียกได้ก่อน combatEnabled guard
   // คืน true เมื่อเข้าเงื่อนไขหนี (แม้ยังติด cooldown) เพื่อหยุด logic อื่นใน tick นั้นเหมือนพฤติกรรมเดิม
@@ -8044,10 +8088,8 @@
       if (d <= fleeR) {
         log('🚨 เจอ', e.name || e.id.toString(16), 'ในระยะ', d.toFixed(1), 'ช่อง → วาร์ปหนี!');
         logImportant('flee', '🚨 หนีมอน! เจอ ' + (e.name || e.id.toString(16)) + ' ในระยะ ' + d.toFixed(0) + ' ช่อง');
-        if (sendRandomWarp()) {
-          target = null; monsterAggro.clear(); mobAttackers.clear();
-          lastFarmWarpBackAt = now;
-        }
+        doFlee('มอนอันตราย ' + (e.name || e.id.toString(16)) + ' ระยะ ' + d.toFixed(1) + ' ช่อง');
+        lastFarmWarpBackAt = now;
         return true;
       }
     }
@@ -8910,7 +8952,7 @@
             } else if (e.kind === 0 && e._src === 'move') _ghost++;
           }
           dbg('🔍 ไม่เจอมอน ' + noMonSec.toFixed(0) + 's → วาร์ป — มอนในระยะ: ' + _inRange + ' (โดน antiKS: ' + _ks + ') | ghost 0x07 ใกล้ ๆ: ' + _ghost);
-          log('🌀 ไม่เจอมอน', noMonSec.toFixed(0) + 's → ' + (CFG.warpFindUseFlyWing ? 'Fly Wing (601)' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip' : 'วาร์ปสุ่ม')));
+          log('🌀 ไม่เจอมอน', noMonSec.toFixed(0) + 's → ' + (CFG.teleportMacroEnabled === true ? 'Fixed Macro' : (CFG.warpFindUseFlyWing ? 'Fly Wing (601)' : (CFG.warpFindUseTeleportSkill ? 'Teleport Clip' : 'วาร์ปสุ่ม'))));
           if (sendWarpFind()) noMonsterSince = now;   // สำเร็จ → reset (เริ่มนับใหม่ในแมปใหม่)
           // fail → ไม่ reset noMonsterSince แต่ lastWarpFindAt คุม cooldown แล้ว ไม่ spam
         } else {
@@ -10101,7 +10143,7 @@
     toggleMobFlee(on) { CFG.mobFleeEnabled = !!on; saveConfigDebounced(); log('🏃 หนีมอนรุม:', CFG.mobFleeEnabled ? 'ON' : 'OFF'); },
     toggleDangerFlee(on) { CFG.dangerFleeEnabled = !!on; saveConfigDebounced(); log('🚨 หนีมอนอันตราย:', CFG.dangerFleeEnabled ? 'ON' : 'OFF'); },
     toggleBlacklistFlee(on) { CFG.blacklistFleeEnabled = !!on; blacklistFleePendingClip = null; blacklistFleeNextTryAt = 0; saveConfigDebounced(); log('🌀 หนี Blacklist เมื่อถูกโจมตี:', CFG.blacklistFleeEnabled ? 'ON' : 'OFF'); },
-    toggleTeleportMacro(on) { CFG.teleportMacroEnabled = !!on; if (!CFG.teleportMacroEnabled) teleportMacroClear(); saveConfigDebounced(); log('⌨️ Teleport Hotkey Macro:', CFG.teleportMacroEnabled ? 'ON' : 'OFF'); },
+    toggleTeleportMacro(on) { CFG.teleportMacroEnabled = !!on; if (!CFG.teleportMacroEnabled) teleportMacroClear(); saveConfigDebounced(); log('⌨️ Shared Teleport Macro (WarpFind + Monster Flee):', CFG.teleportMacroEnabled ? 'ON' : 'OFF'); },
     testTeleportMacro() { return startTeleportHotkeyMacro('test', 'Teleport Macro Test', () => { log('❌ Teleport Macro Test: ยิง Alt→1→2→3 ครบแล้วไม่วาร์ป'); return false; }, () => log('✅ Teleport Macro Test: วาร์ปสำเร็จ')); },
     setFleeMob(n) { CFG.fleeOnMobCount = n; saveConfigDebounced(); log('🏃 flee รุม', n, 'ตัว' + (n ? '' : ' (off)')); },
     setFleeWarpCooldown(sec) { CFG.fleeWarpCooldownSec = Math.max(0, Math.min(30, sec)); saveConfigDebounced(); log('🏃 คูลดาวน์วาร์ปหนี:', CFG.fleeWarpCooldownSec + 's' + (CFG.fleeWarpCooldownSec === 0 ? ' (รัวสุด)' : '')); },
@@ -11243,13 +11285,7 @@
             <div class="field"><label>มอนที่จะไม่ตี — blacklist</label><input type="text" id="__assist_blacklist" placeholder="เช่น MVP,Boss"></div>
             <div class="btns"><button id="__assist_t_fightbackbl" class="on">🛡️ ตีกลับมอน blacklist ที่ตีเรา</button></div>
             <div class="btns"><button id="__assist_t_blacklistflee" class="off" title="ON = เมื่อมอนใน Target Blacklist โจมตีเรา จะหนีในแมพตามลำดับ Direct TP → Teleport Clip → Fly Wing 601">🌀 หนี Blacklist: OFF</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Trigger เฉพาะตอนมอนใน Target Blacklist โจมตีเรา · ไม่หนีเพียงเพราะเห็นมอนอยู่ใกล้<br>★ ลำดับหนี: Direct/Database TP → Teleport Clip → Hotkey Macro → Fly Wing 601 · ทำงานแม้ ⚔️ Combat OFF</div>
-            <h4 style="margin:8px 0 4px">⌨️ Teleport Macro จาก Hotbar</h4>
-            <div class="btns">
-              <button id="__assist_t_tpmacro" class="off">⌨️ Teleport Macro: OFF</button>
-              <button id="__assist_test_tpmacro">🧪 ทดสอบ</button>
-            </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Macro คงที่ตามชุดที่ตั้ง: Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ · เว้น 25ms ทุก event<br>★ ใช้เป็น fallback ของ HP Flee และ Blacklist Flee ก่อน Fly Wing · หลังยิงครบจะรอยืนยันว่าตำแหน่ง/แมพเปลี่ยนจริง</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Trigger เฉพาะตอนมอนใน Target Blacklist โจมตีเรา · ไม่หนีเพียงเพราะเห็นมอนอยู่ใกล้<br>★ ลำดับหนี: Direct/Database TP → Teleport Clip → Macro (ถ้าเปิด) → Fly Wing 601 · ทำงานแม้ ⚔️ Combat OFF</div>
             <div class="btns"><button id="__assist_applywhitelist">ตั้ง whitelist</button><button id="__assist_applyblacklist">ตั้ง blacklist</button></div>
             <div class="field"><label>ระยะโจมตี (ช่อง) — นักธนูตั้ง >2 เพื่อตีไกล</label><input type="number" id="__assist_attackrange" min="0" max="15"></div>
             <div class="field"><label>รัศมีค้นหามอน (ช่อง) — เลือกมอนในระยะนี้เท่านั้น (เล็ก=ไม่เดินไกล)</label><input type="number" id="__assist_maxacq" min="1" max="50" placeholder="30"></div>
@@ -11268,9 +11304,11 @@
               <button id="__assist_t_warpfind" class="off">🌀 วาร์ปหามอน</button>
               <button id="__assist_t_warpfindwing" class="off" title="ON = เมื่อไม่เจอมอน ใช้ Fly Wing Item ID 601 ตาม Rayrag · ต้องมีของใน Inventory">🪽 Fly Wing</button>
               <button id="__assist_t_warpfindskill" class="on" title="ON = เมื่อไม่เจอมอน ใช้ Teleport Lv.1 (skillId 53 / Teleport Clip) · เปิดอันนี้จะปิด Fly Wing">📎 Teleport Clip</button>
+              <button id="__assist_t_tpmacro" class="off" title="ON = ใช้ Fixed Macro Alt↓→1→2→3→Alt↑ เป็นอีกทางวาร์ป ใช้ร่วมทั้งหามอนและหนีมอน">⌨️ Macro</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
-              <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ทันที ไม่รอ timer และแสดงสาเหตุใน Log">🧪 ทดสอบวาร์ปหามอน</button>
+              <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ทันที · ถ้า Macro ON จะลอง Macro ก่อน">🧪 ทดสอบวาร์ปหามอน</button>
             </div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ Macro ON ใช้ร่วมทั้ง <b>วาร์ปหามอน</b> และ <b>หนีมอน</b>; ถ้า Macro ไม่ทำให้ตำแหน่งเปลี่ยน ระบบจะ fallback ต่อ</div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
             <div class="field"><label>เลิกตีมอนถ้าสู้นานเกิน (วินาที) — หันไปตีตัวอื่น</label><input type="number" id="__assist_engagesec" min="5" max="600" placeholder="40"></div>
@@ -11288,14 +11326,14 @@
             <div class="field"><label>มอนรอบ N ตัว (รวม passive · 0=ไม่ใช้ trigger นี้)</label><input type="number" id="__assist_fleeprox" min="0" max="20"></div>
             <div class="field"><label>รัศมีนับมอนทั้ง 3 แบบ (ช่อง)</label><input type="number" id="__assist_fleerprox" min="1" max="50" step="1" placeholder="8"></div>
             <div class="btns"><button id="__assist_applymobflee">💾 ใช้ค่าหนีมอนรุม</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ปุ่ม OFF = ปิด trigger รุม/aggro/มอนรอบทั้งหมดชั่วคราว แต่ไม่ลบค่าที่ตั้งไว้<br>★ ปุ่ม ON = กลับมาใช้ threshold เดิมทันที · ทำงานแม้ ⚔️ Combat OFF</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ปุ่ม OFF = ปิด trigger รุม/aggro/มอนรอบทั้งหมดชั่วคราว แต่ไม่ลบค่าที่ตั้งไว้<br>★ ปุ่ม ON = กลับมาใช้ threshold เดิมทันที · ทำงานแม้ ⚔️ Combat OFF<br>★ ถ้า ⌨️ Macro ON จะลอง Macro ก่อน แล้วค่อย fallback วาร์ปสุ่มถ้า Macro ไม่สำเร็จ</div>
             <hr style="border:none;border-top:1px solid #3a3f4b;margin:10px 0">
             <h4 style="margin:6px 0">🚨 มอนอันตรายที่ต้องหนี</h4>
             <div class="btns"><button id="__assist_t_dangerflee" class="on">🚨 หนีมอนอันตราย: ON</button></div>
             <div class="field"><label>มอนที่ต้องหนี (ชื่อหรือ sub-ID คั่นจุลภาค) — เจอในระยะ → วาร์ปหนี</label><input type="text" id="__assist_fleemonsters" placeholder="เช่น MVP,Boss,1234"></div>
             <div class="field"><label>ระยะหนีมอนอันตราย (ช่อง)</label><input type="number" id="__assist_fleemonsterradius" min="1" max="50" placeholder="20"></div>
             <div class="btns"><button id="__assist_applyflee">💾 ใช้ค่ามอนอันตราย</button></div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ OFF = หยุดตรวจรายชื่อมอนอันตรายชั่วคราว แต่ยังจำรายชื่อและระยะไว้<br>★ ทำงานแม้ ⚔️ Combat OFF เช่นเดียวกับหนีมอนรุม</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ OFF = หยุดตรวจรายชื่อมอนอันตรายชั่วคราว แต่ยังจำรายชื่อและระยะไว้<br>★ ทำงานแม้ ⚔️ Combat OFF เช่นเดียวกับหนีมอนรุม<br>★ ถ้า ⌨️ Macro ON จะลอง Macro ก่อน แล้วค่อย fallback วาร์ปสุ่มถ้า Macro ไม่สำเร็จ</div>
             <hr style="border:none;border-top:1px solid #3a3f4b;margin:10px 0">
             <h4 style="margin:6px 0">❤️ HP Emergency Flee</h4>
             <div class="btns">
@@ -11903,11 +11941,10 @@
     // ---- Fixed Teleport Hotkey Macro ----
     const _tpMacroBtn = root.querySelector('#__assist_t_tpmacro');
     const refreshTeleportMacroBtns = () => {
-      if (_tpMacroBtn) { _tpMacroBtn.className = CFG.teleportMacroEnabled === true ? 'on' : 'off'; _tpMacroBtn.textContent = '⌨️ Teleport Macro: ' + (CFG.teleportMacroEnabled === true ? 'ON' : 'OFF'); }
+      if (_tpMacroBtn) { _tpMacroBtn.className = CFG.teleportMacroEnabled === true ? 'on' : 'off'; _tpMacroBtn.textContent = '⌨️ Macro: ' + (CFG.teleportMacroEnabled === true ? 'ON' : 'OFF'); }
     };
     refreshTeleportMacroBtns();
     _tpMacroBtn?.addEventListener('click', () => { ASSIST.toggleTeleportMacro(CFG.teleportMacroEnabled !== true); refreshTeleportMacroBtns(); });
-    root.querySelector('#__assist_test_tpmacro')?.addEventListener('click', () => ASSIST.testTeleportMacro());
     // ★ populate flee inputs ครั้งเดียวตอนเริ่ม (ไม่ sync ตลอด — กันเด้ง)
     const _fm = root.querySelector('#__assist_fleemaps');
     const _fr = root.querySelector('#__assist_fleeradius');
@@ -13153,7 +13190,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncToggle('#__assist_t_blacklistflee', CFG.blacklistFleeEnabled === true);
     const _blfb = root.querySelector('#__assist_t_blacklistflee'); if (_blfb) _blfb.textContent = '🌀 หนี Blacklist: ' + (CFG.blacklistFleeEnabled === true ? 'ON' : 'OFF');
     syncToggle('#__assist_t_tpmacro', CFG.teleportMacroEnabled === true);
-    const _tpm = root.querySelector('#__assist_t_tpmacro'); if (_tpm) _tpm.textContent = '⌨️ Teleport Macro: ' + (CFG.teleportMacroEnabled === true ? 'ON' : 'OFF');
+    const _tpm = root.querySelector('#__assist_t_tpmacro'); if (_tpm) _tpm.textContent = '⌨️ Macro: ' + (CFG.teleportMacroEnabled === true ? 'ON' : 'OFF');
     // ★ ไม่ sync fleemaps/fleeradius — กันเขียนทับค่าที่กำลังแก้ (Unity แย่ง focus → isEditing คืน false)
     syncToggle('#__assist_t_dangerflee', CFG.dangerFleeEnabled !== false);
     const _dfb = root.querySelector('#__assist_t_dangerflee'); if (_dfb) _dfb.textContent = '🚨 หนีมอนอันตราย: ' + (CFG.dangerFleeEnabled !== false ? 'ON' : 'OFF');
