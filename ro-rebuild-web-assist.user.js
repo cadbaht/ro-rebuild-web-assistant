@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.50
+// @version      4.189.51
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.50';
+  const VERSION = '4.189.51';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.51', d: '2026-09-26', items: [
+      '🏃 Combat Mob Flee Toggle — เพิ่มปุ่มเปิด/ปิด “หนีมอนรุม” แยกจากค่าจำนวนมอน',
+      '   · ย้ายค่า รุม / aggro / มอนรอบ / รัศมีนับมอน ไปไว้ใน Sub-tab ⚔️ Combat',
+      '   · ปิด “หนีมอนรุม” แล้วระบบจะไม่ใช้ trigger ทั้ง 3 แบบ แต่ยังจำค่าจำนวนเดิมไว้',
+      '   · เปิดกลับมาแล้วใช้ threshold เดิมได้ทันทีโดยไม่ต้องตั้งใหม่',
+      '   · หนีผู้เล่น / HP Emergency Flee / รายชื่อมอนอันตราย ยังคงอยู่ใน Sub-tab 🏃 Flee ตามเดิม',
+      '   · เพิ่ม API ASSIST.toggleMobFlee(true/false)',
+    ]},
     { v: '4.189.50', d: '2026-09-26', items: [
       '♾️ Market All Shops Default — เพิ่มตัวเลือก “ทั้งหมด” และตั้งเป็นค่าเริ่มต้นของจำนวนร้านสูงสุด',
       '   · สแกนรอบตัว / กวาดตามจุดที่บันทึก / กวาดตลาดล่างพรอน จะตรวจ Shop ID ที่ค้นพบทั้งหมดโดยไม่หยุดที่ 200/500 ร้าน',
@@ -1530,7 +1538,7 @@
     'warpLootEnabled',
     'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'normalAttackEnabled', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
     'maxAcquireDistance', 'searchRadii', 'maxChaseDistance', 'attackPendingMax', 'attackAbandonMs', 'antiKS', 'avoidOtherPlayers', 'targetLowestHpFirst',
-    'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'hpFleeEnabled', 'hpFleePercent', 'hpFleeMode', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
+    'mobFleeEnabled', 'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'hpFleeEnabled', 'hpFleePercent', 'hpFleeMode', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
     'wanderEnabled', 'warpFindEnabled', 'warpFindUseFlyWing', 'warpFindUseTeleportSkill', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
     'restEnabled', 'restHpPercent', 'restSpPercent', 'restUntilPercent', 'restMaxSec', 'restDelayMs', 'postCombatDelayMs', 'autoRespawnEnabled', 'autoRespawnDelayMs',
     'sellEnabled', 'sellNpcName', 'sellNpcMap', 'sellNpcX', 'sellNpcY', 'sellIntervalMin', 'sellOnFull', 'sellItemIds',
@@ -2038,6 +2046,7 @@
     maxEngageSecSlow: 180,        // ★ abandon มอน "ตีช้า/เจาะไม่เข้า" (เห็ด/พืช) ถ้านานกว่านี้ (3 นาที)
     slowMonsterSubIds: [4010, 4011, 4013, 4017, 4041, 4030, 4106, 4153],  // ★ sub-ID ที่ตี damage 1
     // flee (วาร์ปหนี)
+    mobFleeEnabled: true,         // ★ สวิตช์หลักหนีมอนรุม (รุม/aggro/มอนรอบ) — ปิดแล้วยังจำ threshold เดิม
     fleeOnMobCount: 3,            // มอนรุม N ตัว (ที่ตีเรา) → วาร์ปหนี (0=off)
     fleeOnAggroCount: 5,          // มอนจับเราเป็นเป้า N ตัว → วาร์ปหนี (0=off)
     fleeOnProximityCount: 10,      // มอนอยู่รอบ N ตัวในระยะ → วาร์ปหนี (0=off)
@@ -8261,13 +8270,15 @@
     //   → มอน passive เดินอยู่ใกล้ครบเกณฑ์ก็โดนวาร์ปหนีว่า "aggro N ตัว" ทั้งที่ไม่ได้จับเราเป็นเ้า
     //   และยิงก่อน fleeOnProximityCount ที่ตั้งสูงกว่าไว้ — ตอนนี้:
     //   รุม = ตีเราจริง (mobAttackers) · aggro = เล็งเรา (0x18 dst=เรา) · มอนรอบ = ใกล้ตัว (รวม passive)
-    const _fleeAtkN = getMobAttackerCount(CFG.fleeOnProximityRadius);
-    const _fleeAggN = getAggroCount(CFG.fleeOnProximityRadius);
-    const _fleeNearN = countMonsters(CFG.fleeOnProximityRadius);
-    const _fleeCtx = ' (ตีเรา ' + _fleeAtkN + ' · เล็งเรา ' + _fleeAggN + ' · มอนรอบ ' + _fleeNearN + ')';
-    if (CFG.fleeOnMobCount > 0 && _fleeAtkN >= CFG.fleeOnMobCount) { doFlee('รุม ' + _fleeAtkN + ' ตัว' + _fleeCtx); return; }
-    if (CFG.fleeOnAggroCount > 0 && _fleeAggN >= CFG.fleeOnAggroCount) { doFlee('aggro ' + _fleeAggN + ' ตัว' + _fleeCtx); return; }
-    if (CFG.fleeOnProximityCount > 0 && _fleeNearN >= CFG.fleeOnProximityCount) { doFlee('มอนรอบ ' + _fleeNearN + ' ตัว' + _fleeCtx); return; }
+    if (CFG.mobFleeEnabled !== false) {
+      const _fleeAtkN = getMobAttackerCount(CFG.fleeOnProximityRadius);
+      const _fleeAggN = getAggroCount(CFG.fleeOnProximityRadius);
+      const _fleeNearN = countMonsters(CFG.fleeOnProximityRadius);
+      const _fleeCtx = ' (ตีเรา ' + _fleeAtkN + ' · เล็งเรา ' + _fleeAggN + ' · มอนรอบ ' + _fleeNearN + ')';
+      if (CFG.fleeOnMobCount > 0 && _fleeAtkN >= CFG.fleeOnMobCount) { doFlee('รุม ' + _fleeAtkN + ' ตัว' + _fleeCtx); return; }
+      if (CFG.fleeOnAggroCount > 0 && _fleeAggN >= CFG.fleeOnAggroCount) { doFlee('aggro ' + _fleeAggN + ' ตัว' + _fleeCtx); return; }
+      if (CFG.fleeOnProximityCount > 0 && _fleeNearN >= CFG.fleeOnProximityCount) { doFlee('มอนรอบ ' + _fleeNearN + ' ตัว' + _fleeCtx); return; }
+    }
     if (inCooldown && mobCount === 0) return;   // อยู่ใน cooldown + ไม่โดนรุม → รอ
 
     // === 1b. ★ ถ้ามีของรอเก็บ → หยุด combat ชั่วคราว ให้ loot ทำงานก่อน ===
@@ -9824,10 +9835,11 @@
     setTargetBlacklist(...namesOrIds) { CFG.targetBlacklist = namesOrIds; log('⚔️ blacklist =', namesOrIds.join(', ')); },
     addTargetBlacklist(...x) { for (const e of x) if (!CFG.targetBlacklist.includes(e)) CFG.targetBlacklist.push(e); log('⚔️ blacklist =', CFG.targetBlacklist.join(', ')); },
     clearTargetBlacklist() { CFG.targetBlacklist = []; log('⚔️ ล้าง blacklist'); },
-    setFleeMob(n) { CFG.fleeOnMobCount = n; log('🏃 flee รุม', n, 'ตัว' + (n ? '' : ' (off)')); },
+    toggleMobFlee(on) { CFG.mobFleeEnabled = !!on; saveConfigDebounced(); log('🏃 หนีมอนรุม:', CFG.mobFleeEnabled ? 'ON' : 'OFF'); },
+    setFleeMob(n) { CFG.fleeOnMobCount = n; saveConfigDebounced(); log('🏃 flee รุม', n, 'ตัว' + (n ? '' : ' (off)')); },
     setFleeWarpCooldown(sec) { CFG.fleeWarpCooldownSec = Math.max(0, Math.min(30, sec)); saveConfigDebounced(); log('🏃 คูลดาวน์วาร์ปหนี:', CFG.fleeWarpCooldownSec + 's' + (CFG.fleeWarpCooldownSec === 0 ? ' (รัวสุด)' : '')); },
-    setFleeAggro(n) { CFG.fleeOnAggroCount = n; log('🏃 flee aggro', n, 'ตัว' + (n ? '' : ' (off)')); },
-    setFleeProximity(n, radius) { CFG.fleeOnProximityCount = n; if (radius != null) CFG.fleeOnProximityRadius = radius; log('🏃 flee มอนรอบ', n, 'ตัวในระยะ', CFG.fleeOnProximityRadius); },
+    setFleeAggro(n) { CFG.fleeOnAggroCount = n; saveConfigDebounced(); log('🏃 flee aggro', n, 'ตัว' + (n ? '' : ' (off)')); },
+    setFleeProximity(n, radius) { CFG.fleeOnProximityCount = n; if (radius != null) CFG.fleeOnProximityRadius = radius; saveConfigDebounced(); log('🏃 flee มอนรอบ', n, 'ตัวในระยะ', CFG.fleeOnProximityRadius); },
     toggleHpFlee(on) { CFG.hpFleeEnabled = !!on; hpFleeLatched = false; hpFleePendingClip = null; hpFleeNextTryAt = 0; saveConfigDebounced(); log('❤️ HP Emergency Flee:', CFG.hpFleeEnabled ? 'ON < ' + CFG.hpFleePercent + '%' : 'OFF'); },
     setHpFleePercent(pct) { CFG.hpFleePercent = Math.max(1, Math.min(99, Number(pct) || 30)); hpFleeLatched = false; saveConfigDebounced(); log('❤️ HP Flee threshold =', CFG.hpFleePercent + '%'); },
     setHpFleeMode(mode) { CFG.hpFleeMode = mode === 'unstuck' ? 'unstuck' : 'sameMap'; hpFleeLatched = false; hpFleePendingClip = null; saveConfigDebounced(); log('❤️ HP Flee mode =', CFG.hpFleeMode === 'unstuck' ? 'Unstuck 0x73' : 'หนีในแมพ (DB → Clip → Wing)'); },
@@ -10994,6 +11006,14 @@
               <button id="__assist_t_warptominiboss" class="off">👹 วาร์ปไปสู้ Mini Boss</button>
             </div>
             <div class="btns"><button id="__assist_applycombat">ใช้ค่า combat</button></div>
+            <h4 style="margin-top:14px;">🏃 หนีมอนรุม</h4>
+            <div class="btns"><button id="__assist_t_mobflee" class="on">🏃 หนีมอนรุม: ON</button></div>
+            <div class="field"><label>รุม N ตัว (มอนที่กำลังตีเรา · 0=ไม่ใช้ trigger นี้)</label><input type="number" id="__assist_fleemob" min="0" max="20"></div>
+            <div class="field"><label>aggro N ตัว (มอนที่เล็งเรา · 0=ไม่ใช้ trigger นี้)</label><input type="number" id="__assist_fleeaggro" min="0" max="20"></div>
+            <div class="field"><label>มอนรอบ N ตัว (รวม passive · 0=ไม่ใช้ trigger นี้)</label><input type="number" id="__assist_fleeprox" min="0" max="20"></div>
+            <div class="field"><label>รัศมีนับมอนทั้ง 3 แบบ (ช่อง)</label><input type="number" id="__assist_fleerprox" min="1" max="50" step="1" placeholder="8"></div>
+            <div class="btns"><button id="__assist_applymobflee">💾 ใช้ค่าหนีมอนรุม</button></div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ปุ่ม OFF = ปิด trigger รุม/aggro/มอนรอบทั้งหมดชั่วคราว แต่ไม่ลบค่าที่ตั้งไว้<br>★ ปุ่ม ON = กลับมาใช้ threshold เดิมทันที</div>
             <h4 style="margin-top:14px;">🛡️ Guard — ยืนประจำตำแหน่ง (ตีกลับเฉพาะมอนที่มาตี)</h4>
             <div class="btns"><button id="__assist_t_guard" class="off">🛡️ Guard: ?</button></div>
             <div class="field"><label>แผนที่ประจำตำแหน่ง (ว่าง = ยึดแมปที่เปิด guard)</label><input type="text" id="__assist_guardmap" placeholder="เช่น izlude"></div>
@@ -11090,13 +11110,10 @@
             <div class="btns"><button id="__assist_applyhpflee">💾 ใช้ค่า HP Flee</button></div>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ หนีในแมพ: Direct/Database TP (0x40) ก่อน → ถ้ายังติด gap 3s ใช้ Teleport Clip → ถ้า Clip ไม่ตอบสนอง ~0.45s ใช้ Fly Wing 601 อัตโนมัติ<br>★ Unstuck: ส่ง 0x73 ทันที 1 ครั้ง · ทำงานแบบฉุกเฉินไม่ต้องรอ Combat target</div>
             <hr style="border:none;border-top:1px solid #3a3f4b;margin:8px 0">
-            <div class="field"><label>flee: รุม N ตัว (0=off)</label><input type="number" id="__assist_fleemob" min="0" max="20"></div>
-            <div class="field"><label>flee: aggro N ตัว (0=off)</label><input type="number" id="__assist_fleeaggro" min="0" max="20"></div>
-            <div class="field"><label>flee: มอนรอบ N ตัว ในระยะ (0=off)</label><input type="number" id="__assist_fleeprox" min="0" max="20"></div>
-            <div class="field"><label>รัศมีนับมอนของ flee ทั้ง 3 แบบ (ช่อง) — รุม/aggro/มอนรอบ นับมอนในระยะนี้</label><input type="number" id="__assist_fleerprox" min="1" max="50" step="1" placeholder="8"></div>
-            <div class="field"><label>🚨 มอนที่ต้องหนี (ชื่อหรือ sub-ID คั่นจุลภาค) — เจอในระยะ → วาร์ปหนี</label><input type="text" id="__assist_fleemonsters" placeholder="เช่น MVP,Boss,1234"></div>
+            <h4 style="margin:6px 0">🚨 มอนอันตรายที่ต้องหนี</h4>
+            <div class="field"><label>มอนที่ต้องหนี (ชื่อหรือ sub-ID คั่นจุลภาค) — เจอในระยะ → วาร์ปหนี</label><input type="text" id="__assist_fleemonsters" placeholder="เช่น MVP,Boss,1234"></div>
             <div class="field"><label>ระยะหนีมอนอันตราย (ช่อง)</label><input type="number" id="__assist_fleemonsterradius" min="1" max="50" placeholder="20"></div>
-            <div class="btns"><button id="__assist_applyflee">ใช้ค่า flee</button></div>
+            <div class="btns"><button id="__assist_applyflee">💾 ใช้ค่ามอนอันตราย</button></div>
           </div>
           <!-- 🪑 Rest -->
           <div class="__assist_subpage" data-sub="rest">
@@ -11635,20 +11652,31 @@
       if (!isNaN(p)) ASSIST.setHpFleePercent(p);
       refreshHpFleeBtns();
     });
-    root.querySelector('#__assist_applyflee').addEventListener('click', () => {
-      const fm = parseInt(root.querySelector('#__assist_fleemob').value, 10);
-      const fa = parseInt(root.querySelector('#__assist_fleeaggro').value, 10);
-      const fp = parseInt(root.querySelector('#__assist_fleeprox').value, 10);
+    const _mobFleeBtn = root.querySelector('#__assist_t_mobflee');
+    const refreshMobFleeBtn = () => {
+      if (!_mobFleeBtn) return;
+      _mobFleeBtn.className = CFG.mobFleeEnabled !== false ? 'on' : 'off';
+      _mobFleeBtn.textContent = '🏃 หนีมอนรุม: ' + (CFG.mobFleeEnabled !== false ? 'ON' : 'OFF');
+    };
+    refreshMobFleeBtn();
+    _mobFleeBtn?.addEventListener('click', () => { ASSIST.toggleMobFlee(CFG.mobFleeEnabled === false); refreshMobFleeBtn(); });
+    root.querySelector('#__assist_applymobflee')?.addEventListener('click', () => {
+      const fm = parseInt(root.querySelector('#__assist_fleemob')?.value, 10);
+      const fa = parseInt(root.querySelector('#__assist_fleeaggro')?.value, 10);
+      const fp = parseInt(root.querySelector('#__assist_fleeprox')?.value, 10);
       if (!isNaN(fm)) ASSIST.setFleeMob(fm);
       if (!isNaN(fa)) ASSIST.setFleeAggro(fa);
       if (!isNaN(fp)) ASSIST.setFleeProximity(fp);
-      // ★ รัศมีนับมอนของ flee ทั้ง 3 แบบ (รุม/aggro/มอนรอบ ใช้รัศมีเดียวกัน)
-      const fpr = parseInt(root.querySelector('#__assist_fleerprox').value, 10);
-      if (!isNaN(fpr) && fpr >= 1 && fpr <= 50) { CFG.fleeOnProximityRadius = fpr; log('🏃 รัศมีนับมอน flee =', fpr, 'ช่อง'); }
-      const fmList = root.querySelector('#__assist_fleemonsters').value.trim();
-      if (fmList !== '') CFG.fleeMonsters = fmList.split(',').map(s => s.trim()).filter(Boolean);
-      const fmr = parseInt(root.querySelector('#__assist_fleemonsterradius').value, 10);
+      const fpr = parseInt(root.querySelector('#__assist_fleerprox')?.value, 10);
+      if (!isNaN(fpr) && fpr >= 1 && fpr <= 50) { CFG.fleeOnProximityRadius = fpr; saveConfigDebounced(); log('🏃 รัศมีนับมอน flee =', fpr, 'ช่อง'); }
+    });
+    root.querySelector('#__assist_applyflee')?.addEventListener('click', () => {
+      const fmList = root.querySelector('#__assist_fleemonsters')?.value.trim() || '';
+      CFG.fleeMonsters = fmList === '' ? [] : fmList.split(',').map(s => s.trim()).filter(Boolean);
+      const fmr = parseInt(root.querySelector('#__assist_fleemonsterradius')?.value, 10);
       if (!isNaN(fmr)) CFG.fleeMonsterRadius = fmr;
+      saveConfigDebounced();
+      log('🚨 มอนอันตราย:', CFG.fleeMonsters.length ? CFG.fleeMonsters.join(',') : 'ไม่มี', 'ระยะ', CFG.fleeMonsterRadius);
     });
     // ---- rest wires ----
     root.querySelector('#__assist_restbtn').addEventListener('click', () => CFG.restEnabled ? ASSIST.restOff() : ASSIST.restOn());
@@ -12795,6 +12823,8 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncInput('#__assist_postcombatdelay', CFG.postCombatDelayMs);
     syncInput('#__assist_fleemob', CFG.fleeOnMobCount);
     syncInput('#__assist_fleeaggro', CFG.fleeOnAggroCount);
+    syncToggle('#__assist_t_mobflee', CFG.mobFleeEnabled !== false);
+    const _mfb = root.querySelector('#__assist_t_mobflee'); if (_mfb) _mfb.textContent = '🏃 หนีมอนรุม: ' + (CFG.mobFleeEnabled !== false ? 'ON' : 'OFF');
     // rest config sync
     const restBtn = root.querySelector('#__assist_restbtn');
     if (restBtn) { restBtn.textContent = 'Rest: ' + (CFG.restEnabled ? 'ON' : 'OFF') + (isResting ? ' 🪑' : ''); restBtn.className = CFG.restEnabled ? 'on' : 'off'; }
