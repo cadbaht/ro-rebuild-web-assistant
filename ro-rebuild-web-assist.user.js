@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.47
+// @version      4.189.48
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.47';
+  const VERSION = '4.189.48';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.48', d: '2026-09-26', items: [
+      '📐 Market Compact for 175% Zoom — ปรับขนาดเริ่มต้นให้ใกล้เคียงภาพตัวอย่างเมื่อเล่น Chrome Zoom 175%',
+      '   · ความกว้างใช้ 23vw (สูงสุด 420px) เพื่อให้หน้าต่างกินพื้นที่ประมาณ 1/4 ของจอแทนการล็อก 420px ตลอด',
+      '   · ความสูงใช้ 80vh (สูงสุด 640px) เพื่อคงพื้นที่ผลค้นหาแนวตั้งโดยไม่บังเกมมากเกินไป',
+      '   · ลด min-width จาก 340px เหลือ 220px เพื่อให้ browser zoom สูงยังย่อได้จริง',
+      '   · ยังคง resize:both สามารถลากขยาย/ย่อเองได้ตามเดิม',
+    ]},
     { v: '4.189.47', d: '2026-09-26', items: [
       '🗺️ Market Preset — แยก 43 จุดของ prt_fild08 เป็น Preset ชื่อ “กวาดตลาดล่างพรอน”',
       '   · เพิ่มปุ่ม 🗺️ กวาดตลาดล่างพรอน (43 จุด) ซึ่งใช้จุด Built-in และไม่ถูกลบโดยปุ่มล้าง Saved Points',
@@ -3623,7 +3630,7 @@
     }
     panel = document.createElement('div');
     panel.id='__assist_market_panel';
-    panel.style.cssText='position:fixed;right:12px;bottom:12px;width:min(420px,92vw);height:min(72vh,640px);min-width:min(340px,92vw);min-height:430px;max-width:520px;max-height:88vh;z-index:999999;background:#12121e;color:#e8e8e8;border:1px solid #3a3f4b;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.65);display:flex;flex-direction:column;padding:9px;font-family:Segoe UI,system-ui,sans-serif;resize:both;overflow:hidden';
+    panel.style.cssText='position:fixed;right:12px;bottom:12px;width:min(23vw,420px);height:min(80vh,640px);min-width:min(220px,92vw);min-height:min(360px,72vh);max-width:520px;max-height:88vh;z-index:999999;background:#12121e;color:#e8e8e8;border:1px solid #3a3f4b;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.65);display:flex;flex-direction:column;padding:9px;font-family:Segoe UI,system-ui,sans-serif;resize:both;overflow:hidden';
     panel.innerHTML=`
       <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex:0 0 auto">
         <div><b style="color:#ffd54f;font-size:13px">🔎 Market</b> <span style="font-size:8px;color:#777">v${VERSION}</span></div>
