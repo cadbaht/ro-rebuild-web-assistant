@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.74
+// @version      4.189.79
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,58 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.74';
+  const VERSION = '4.189.79';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.79', d: '2026-09-29', items: [
+      '🛠️ แก้ปุ่ม “ถอนทั้งหมด” — v4.189.78 ส่ง amount=0xFFFFFFFF ซึ่ง server ไม่ใช้เป็นคำสั่ง MAX จึงถูกปฏิเสธ',
+      '   · เปลี่ยนเป็น Smart Chunk Withdraw: ส่งจำนวน 32768→16384→8192→...→1 ทีละขั้น',
+      '   · ถ้าจำนวนที่ขอมากกว่าของคงเหลือ server จะปฏิเสธขั้นนั้น แล้วระบบลองขั้นที่เล็กลงต่อ',
+      '   · ผลรวมของชุดคำขอครอบคลุมได้ถึง 65,535 ชิ้น โดยไม่ต้องรู้จำนวนใน Storage ล่วงหน้า',
+      '   · หน่วงประมาณ 180ms ต่อคำขอ ลดการยิง packet ถี่เกินไป',
+      '   · ระหว่างทำงานปุ่มเปลี่ยนเป็น “หยุดถอนทั้งหมด” และกดซ้ำเพื่อยกเลิกได้',
+      '   · แสดงสถานะการทำงานใต้รายการ Item เพื่อให้เห็นว่าปุ่มรับคำสั่งแล้ว',
+      '   · ปุ่มถอนตามจำนวนเดิมยังทำงานเหมือนเดิม',
+    ]},
+    { v: '4.189.78', d: '2026-09-29', items: [
+      '🏦 เพิ่มปุ่ม “ถอนทั้งหมด” ใน Storage Manager ถัดจากปุ่มถอน',
+      '   · ใช้ Item ที่เลือกจากผลค้นหาเดียวกับปุ่มถอนปกติ',
+      '   · ส่งคำสั่งถอนด้วย amount=0xFFFFFFFF เพื่อขอจำนวนสูงสุดของ Item นั้นจาก Storage',
+      '   · ปุ่มถอนปกติยังใช้จำนวนจากช่องกรอกเหมือนเดิม',
+      '   · เพิ่ม API: ASSIST.storageWithdrawAll(itemId)',
+      '🧪 เก็บ Packet Diagnostic เดิมไว้สำหรับตรวจผลตอบกลับของเซิร์ฟเวอร์',
+    ]},
+    { v: '4.189.77', d: '2026-09-29', items: [
+      '✅ ยืนยัน packet Storage แล้วจากการทดสอบ Ambernite Card ×1 และ ×2',
+      '   · OUT 0x56 sub=0x01 = ฝากเข้า Storage',
+      '   · OUT 0x56 sub=0x02 = ถอนจาก Storage',
+      '   · bytes 2–5 = Item ID แบบ uint32 little-endian',
+      '   · bytes 6–9 = จำนวนแบบ uint32 little-endian',
+      '🏦 เพิ่ม “ค้นแล้วถอน” ในแท็บ Storage: ค้นด้วยชื่อ Item หรือ Item ID → เลือกรายการ → ระบุจำนวน → ถอน',
+      '   · ส่ง packet ถอนตรงรูปแบบ [56 02 itemId:u32le amount:u32le] โดยไม่ต้องเรียนรู้ template ก่อน',
+      '   · ถ้า Item DB ยังไม่โหลด สามารถกรอก Item ID ตัวเลขแล้วถอนได้ตรง',
+      '🧪 ปุ่มจับ packet เดิมยังเก็บไว้สำหรับตรวจสอบ/พัฒนา Storage list ต่อ',
+      '   · หมายเหตุ: ตอนนี้ค้นจาก Item DB ไม่ใช่รายการของที่มีจริงใน Storage; ถ้าไม่มีของ server จะปฏิเสธเอง',
+    ]},
+    { v: '4.189.76', d: '2026-09-29', items: [
+      '🏦 Storage Manager Merge — รวมบอทจัดการ Storage เข้ากับฐาน v4.189.75 Live Vendor Range Gate',
+      '   · คงระบบ Market v4.189.75 ทั้งหมดไว้: Live Vendor Range Gate, Event-driven Sweep, Direct Vendor Only และ Stable Shop Identity',
+      '   · เพิ่มปุ่ม เริ่ม/หยุดจับถอน, ดู packet และล้าง packet ในแท็บ Storage',
+      '   · จับ packet Storage เฉพาะ connection ปัจจุบัน สูงสุด 200 รายการ และดูสรุปผ่าน Console ได้',
+      '   · เรียนรู้ candidate ถอน 10 ไบต์ที่ไม่ใช่ฝาก [56 01] / ปิดคลัง [56 00]',
+      '   · เพิ่ม API: storageLearnOn/Off, storagePackets, storageClearPackets, storageLearnedWithdraw และ storageWithdrawRaw(rawId, amount)',
+      '   · ระบบฝากเดิม, ฝากเดี๋ยวนี้, ฝากตอนเต็ม, ฝากหลังขาย, Kafra Cancel และกฎไม่วาร์ปกลับถ้ายังไม่กด Combat ยังคงเดิม',
+      '   · หมายเหตุ: ฝั่งถอนยังเป็นโหมดเรียนรู้ packet จนกว่าจะยืนยันความหมาย rawId/slot จากการจับจริง',
+    ]},
+    { v: '4.189.75', d: '2026-09-27', items: [
+      '🎯 Live Vendor Range Gate — โหมด ♻️ อัปเดต >10 นาที / 🔄 รีเฟรชทั้งหมด ใช้พิกัด Vendor ปัจจุบันจาก entities โดยตรงก่อนยิง 0x6b',
+      '   · เปิดร้านเมื่อ Vendor อยู่ในระยะประมาณ 8 ช่อง และ entity ถูกเห็นสดภายใน ~2.5 วินาที',
+      '   · Vendor ที่เห็นจาก packet เก่า / ไม่มีพิกัด / ยังอยู่ไกล จะ defer ไว้ก่อน ไม่เสีย timeout ทันที',
+      '   · ถ้าพิกัดสดไม่มี แต่ร้านเดิมมี access point และอยู่ใกล้มาก <=6 ช่อง จึงค่อยใช้ access point เป็น fallback',
+      '🧹 แก้คอขวด Refresh All จากการยิงร้านทันทีที่ Vendor Marker โผล่ แม้ยังอยู่ไกลหรือเป็น packet เก่าใน buffer',
+      '📊 Diagnostic เพิ่ม live_gate + near/far/stale/noPos/accessFallback และบันทึก dist/age ของ SUCCESS/TIMEOUT sample',
+      '   · โหมด ⚡ กวาดร้านใหม่ไม่เปลี่ยน เพื่อรักษาความเร็ว/ความแม่นของ v4.189.72-74',
+    ]},
     { v: '4.189.74', d: '2026-09-27', items: [
       '🧩 Stable Shop Identity — ใช้ responseHint/responseShopId เป็นตัวตนร้านถาวร แทนการพึ่ง Actor ID อย่างเดียว',
       '   · Actor ID ของ Vendor สามารถเปลี่ยนระหว่างการโหลด/รอบสแกน ทำให้ v4.189.73 มองร้านเดิมเป็นร้านใหม่และ Proximity Gate แทบไม่ทำงาน',
@@ -3098,6 +3147,7 @@
   let marketSweepCheckedIds = new Set();
   let marketSweepDeferredFarIds = new Set(); // ★ v4.189.73 — Vendor ที่เห็นแล้วแต่ยังไกล access point
   let marketSweepHintMatchedIds = new Set(); // ★ v4.189.74 — Actor ID ปัจจุบันที่ match ร้านเดิมผ่าน responseHint
+  let marketSweepRangeSeen = {near:new Set(),far:new Set(),stale:new Set(),noPos:new Set(),accessFallback:new Set()}; // ★ v4.189.75
   let marketIndexDedupedOnLoad = 0;
   let marketSweepMode = ''; // 'new' | 'stale' | 'all'
   const MARKET_SWEEP_MAX_WAYPOINTS = 260;
@@ -3107,7 +3157,10 @@
   const MARKET_TURBO_MOVE_POLL_MS = 160;
   const MARKET_TURBO_ARRIVE_RADIUS = 6;
 
-  const MARKET_REFRESH_ACCESS_RADIUS = 16; // ★ v4.189.73 — refresh ร้านเดิมเมื่อเข้าใกล้จุดที่เคยเปิดสำเร็จ
+  const MARKET_REFRESH_ACCESS_RADIUS = 16; // legacy diagnostic / fallback history
+  const MARKET_REFRESH_ENTITY_RADIUS = 8;  // ★ v4.189.75 — ระยะเปิด Vendor จากพิกัด actor ปัจจุบัน
+  const MARKET_REFRESH_ENTITY_FRESH_MS = 2500;
+  const MARKET_REFRESH_ACCESS_FALLBACK_RADIUS = 6;
   // ★ v4.189.67 — Market Packet Diagnostic (เก็บ summary + sample ไม่เก็บ raw ทั้งหมด)
   let marketDiagActive = false;
   let marketDiagStartedAt = 0;
@@ -3291,10 +3344,16 @@
     if(ok) stat.ok++; else stat.timeout++;
     const bucket=ok?'ok':'timeout', arr=marketDiagCandidateSamples[bucket];
     if(arr.length<MARKET_DIAG_CANDIDATE_SAMPLES){
+      const e=entities.get(Number(id)>>>0);
+      const hasPos=!!(e && Number.isFinite(Number(e.x)) && Number.isFinite(Number(e.y)) && player.x!=null && player.y!=null);
+      const entityDist=hasPos?Math.hypot(Number(player.x)-Number(e.x),Number(player.y)-Number(e.y)):null;
+      const entityAge=e?Math.max(0,Date.now()-Number(e._lastSeenAt||0)):null;
       arr.push({
         id:Number(id)>>>0,
         ms:Math.max(0,Number(elapsed)||0),
         source:String(source||''),
+        dist:entityDist==null?null:Number(entityDist.toFixed(1)),
+        age:entityAge==null?null:Math.round(entityAge),
         op:rec?rec.op:null,
         len:rec?rec.len:null,
         hex:rec?marketDiagHex(rec.data,140):''
@@ -3317,7 +3376,8 @@
       'index_start='+(start.shops??'?')+'shops/'+(start.listings??'?')+'items index_end='+end.shops+'shops/'+end.listings+'items',
       'shop_signature='+sig,
       'vendor_direct=marker[00 08 00 00 00 03 00 01 00] actor@7 + responseHint@end directOnly='+(marketDirectVendorOnlyForMap()?'yes':'no')+' candidates='+marketDiscoverVendorOpenIds(5000,MARKET_PROBE_TTL_MS).length,
-      'refresh_gate=access<='+MARKET_REFRESH_ACCESS_RADIUS+' deferred_now='+marketSweepDeferredFarIds.size,
+      'refresh_gate=liveVendor<='+MARKET_REFRESH_ENTITY_RADIUS+' fresh<='+MARKET_REFRESH_ENTITY_FRESH_MS+'ms accessFallback<='+MARKET_REFRESH_ACCESS_FALLBACK_RADIUS+' deferred_now='+marketSweepDeferredFarIds.size,
+      'live_gate=near:'+marketSweepRangeSeen.near.size+' far:'+marketSweepRangeSeen.far.size+' stale:'+marketSweepRangeSeen.stale.size+' noPos:'+marketSweepRangeSeen.noPos.size+' accessFallback:'+marketSweepRangeSeen.accessFallback.size,
       'shop_identity=responseShopId canonical hintMatched='+marketSweepHintMatchedIds.size+' dedupOnLoad='+marketIndexDedupedOnLoad,
       'probe_latency='+(marketDiagProbeStats ? ('ok='+marketDiagProbeStats.ok+' timeout='+marketDiagProbeStats.timeout+' avg_ms='+(marketDiagProbeStats.ok?(marketDiagProbeStats.sumMs/marketDiagProbeStats.ok).toFixed(1):'0')+' max_ms='+marketDiagProbeStats.maxMs+' buckets<=100/'+marketDiagProbeStats.le100+' <=200/'+marketDiagProbeStats.le200+' <=250/'+marketDiagProbeStats.le250+' <=400/'+marketDiagProbeStats.le400+' <=650/'+marketDiagProbeStats.le650+' >650/'+marketDiagProbeStats.gt650) : 'none'),
       'sweep='+(marketSweepActive?'active':'inactive')+' mode='+(marketSweepMode||'-')+' waypoint='+(marketSweepWaypointIdx+1)+'/'+marketSweepWaypoints.length,
@@ -3333,10 +3393,10 @@
     else for(const r of cls.slice(0,80)) lines.push(r.key+' ok='+r.ok+' timeout='+r.timeout);
     lines.push('', '[CANDIDATE SUCCESS SAMPLES]');
     if(!marketDiagCandidateSamples.ok.length) lines.push('none');
-    else for(const r of marketDiagCandidateSamples.ok) lines.push('id='+r.id+' ms='+r.ms+' source='+r.source+' '+(r.op==null?'source=unknown':('IN 0x'+Number(r.op).toString(16).padStart(2,'0')+' len='+r.len))+(r.hex?' ['+r.hex+']':''));
+    else for(const r of marketDiagCandidateSamples.ok) lines.push('id='+r.id+' ms='+r.ms+' source='+r.source+(r.dist==null?'':' dist='+r.dist)+(r.age==null?'':' age='+r.age+'ms')+' '+(r.op==null?'source=unknown':('IN 0x'+Number(r.op).toString(16).padStart(2,'0')+' len='+r.len))+(r.hex?' ['+r.hex+']':''));
     lines.push('', '[CANDIDATE TIMEOUT SAMPLES]');
     if(!marketDiagCandidateSamples.timeout.length) lines.push('none');
-    else for(const r of marketDiagCandidateSamples.timeout) lines.push('id='+r.id+' ms='+r.ms+' source='+r.source+' '+(r.op==null?'source=unknown':('IN 0x'+Number(r.op).toString(16).padStart(2,'0')+' len='+r.len))+(r.hex?' ['+r.hex+']':''));
+    else for(const r of marketDiagCandidateSamples.timeout) lines.push('id='+r.id+' ms='+r.ms+' source='+r.source+(r.dist==null?'':' dist='+r.dist)+(r.age==null?'':' age='+r.age+'ms')+' '+(r.op==null?'source=unknown':('IN 0x'+Number(r.op).toString(16).padStart(2,'0')+' len='+r.len))+(r.hex?' ['+r.hex+']':''));
     lines.push('', '[SWEEP EVENTS]');
     for(const e of marketDiagEvents){
       const bits=['+'+e.dt+'ms',e.type];
@@ -4149,6 +4209,41 @@
     }
     return null;
   }
+  function marketRefreshReachability(id, indexed) {
+    id=Number(id)>>>0;
+    if(!id || player.x==null || player.y==null) return {allow:false,reason:'no-player-pos'};
+    const now=Date.now(), e=entities.get(id);
+    if(e && Number.isFinite(Number(e.x)) && Number.isFinite(Number(e.y))){
+      const age=Math.max(0,now-Number(e._lastSeenAt||0));
+      const dist=Math.hypot(Number(player.x)-Number(e.x),Number(player.y)-Number(e.y));
+      if(age<=MARKET_REFRESH_ENTITY_FRESH_MS){
+        if(dist<=MARKET_REFRESH_ENTITY_RADIUS){
+          marketSweepRangeSeen.near.add(id);
+          marketSweepDeferredFarIds.delete(id);
+          return {allow:true,reason:'live-near',dist,age};
+        }
+        marketSweepRangeSeen.far.add(id);
+        marketSweepDeferredFarIds.add(id);
+        return {allow:false,reason:'live-far',dist,age};
+      }
+      marketSweepRangeSeen.stale.add(id);
+    } else {
+      marketSweepRangeSeen.noPos.add(id);
+    }
+
+    // fallback เฉพาะกรณีร้านเดิมมี access point และเราอยู่ใกล้มากจริง ๆ
+    if(indexed && Number.isFinite(Number(indexed.accessX)) && Number.isFinite(Number(indexed.accessY))){
+      const ad=Math.hypot(Number(player.x)-Number(indexed.accessX),Number(player.y)-Number(indexed.accessY));
+      if(ad<=MARKET_REFRESH_ACCESS_FALLBACK_RADIUS){
+        marketSweepRangeSeen.accessFallback.add(id);
+        marketSweepDeferredFarIds.delete(id);
+        return {allow:true,reason:'access-fallback',dist:ad,age:null};
+      }
+    }
+    marketSweepDeferredFarIds.add(id);
+    return {allow:false,reason:'not-live',dist:null,age:null};
+  }
+
   // ★ v4.189.65 — Smart waypoint wait: จุดที่ไม่มี candidate ใหม่ไม่ต้องรอ 500ms
   function marketSweepEligibleCandidateIds(policy='new') {
     policy = ['new','stale','all'].includes(policy) ? policy : 'new';
@@ -4172,16 +4267,10 @@
       if(policy==='stale' && (!indexed || !marketShopNeedsPriceUpdate(id,MARKET_PRICE_STALE_MS))) continue;
       if(policy!=='all' && marketIsStaleId(id)) continue;
 
-      // ★ v4.189.73 — ร้านเดิมมี access point แล้ว: อย่ายิงเปิดจากระยะไกล
-      // Direct Vendor marker มีระยะมองเห็นกว้างกว่าระยะที่ server ยอมให้เปิดร้าน จึง defer ไว้ก่อน
-      if(policy!=='new' && indexed && player.x!=null && player.y!=null
-        && Number.isFinite(Number(indexed.accessX)) && Number.isFinite(Number(indexed.accessY))){
-        const d=Math.hypot(Number(player.x)-Number(indexed.accessX), Number(player.y)-Number(indexed.accessY));
-        if(d>MARKET_REFRESH_ACCESS_RADIUS){
-          marketSweepDeferredFarIds.add(id);
-          continue;
-        }
-        marketSweepDeferredFarIds.delete(id);
+      // ★ v4.189.75 — stale/all ใช้ระยะจาก Vendor actor สดโดยตรง ไม่อิง persistent identity เป็นหลัก
+      if(policy!=='new'){
+        const reach=marketRefreshReachability(id,indexed);
+        if(!reach.allow) continue;
       }
 
       out.push(id);
@@ -4364,7 +4453,7 @@
     }
     if(policy==='all') marketStaleOpenIds.clear();
     const policyLabel = policy==='new' ? '⚡ กวาดตลาด (ร้านใหม่)' : (policy==='stale' ? '♻️ อัปเดตราคา >10นาที' : '🔄 รีเฟรชทั้งหมด');
-    marketSweepActive=true; marketSweepCancel=false; marketSweepMode=policy; marketSweepCheckedIds=new Set(); marketSweepDeferredFarIds=new Set(); marketSweepHintMatchedIds=new Set(); marketSweepWaypointIdx=0;
+    marketSweepActive=true; marketSweepCancel=false; marketSweepMode=policy; marketSweepCheckedIds=new Set(); marketSweepDeferredFarIds=new Set(); marketSweepHintMatchedIds=new Set(); marketSweepRangeSeen={near:new Set(),far:new Set(),stale:new Set(),noPos:new Set(),accessFallback:new Set()}; marketSweepWaypointIdx=0;
     marketScanPauseAutomation();
     try{
       marketSweepWaypoints=marketBuildTurboAnchors(preset.points,MARKET_TURBO_ANCHOR_COUNT);
@@ -4379,7 +4468,7 @@
         }
       }
       marketScanStatus=policyLabel+' · Event Sweep '+marketSweepWaypoints.length+'/'+preset.points.length+' จุดนำทาง…'; renderMarketIndexUI();
-      marketDiagEvent('sweep_start',{mode:policy,anchors:marketSweepWaypoints.length,sourcePoints:preset.points.length,eventDriven:1,refreshGate:(policy==='new'?'off':('access<='+MARKET_REFRESH_ACCESS_RADIUS))});
+      marketDiagEvent('sweep_start',{mode:policy,anchors:marketSweepWaypoints.length,sourcePoints:preset.points.length,eventDriven:1,refreshGate:(policy==='new'?'off':('live<='+MARKET_REFRESH_ENTITY_RADIUS+' fresh<='+MARKET_REFRESH_ENTITY_FRESH_MS))});
       log('🚀 '+policyLabel+' เริ่ม — '+startMap+' · Event-driven Anchors '+marketSweepWaypoints.length+'/'+preset.points.length+' จุด · จับ Vendor ระหว่างเดิน · limit '+marketShopLimitLabel(maxShops));
       let skipped=0,smartSkipped=0,totalChecked=0,totalFound=0,totalRetry=0,totalSkipKnown=0,totalSkipFresh=0,totalSkipStale=0,totalWalkMs=0,totalScanMs=0,totalMoveScanBatches=0;
       for(let i=0;i<marketSweepWaypoints.length;i++){
@@ -4410,13 +4499,14 @@
       const extra = policy==='new' ? (' · ข้ามร้านเดิม '+totalSkipKnown) : (policy==='stale' ? (' · ข้ามข้อมูลสด '+totalSkipFresh) : '');
       const walkSec=(totalWalkMs/1000).toFixed(1), scanSec=(totalScanMs/1000).toFixed(1);
       const deferredFar=marketSweepDeferredFarIds.size, hintMatched=marketSweepHintMatchedIds.size;
-      marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ'+(policy==='new'?'':(' · hint '+hintMatched+' · รอเข้าใกล้ '+deferredFar));
-      marketDiagEvent('sweep_end',{done,checked:totalChecked,found:totalFound,retry:totalRetry,fastSkip:smartSkipped,walkFail:skipped,moveScanBatches:totalMoveScanBatches,walkMs:Math.round(totalWalkMs),scanMs:Math.round(totalScanMs),hintMatched,deferredFar,shops:marketShopIndex.size,listings:marketAllRows().length});
-      log('✅ '+policyLabel+' จบ — '+done+' · ฐาน '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+extra+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ · move-scan '+totalMoveScanBatches+' ครั้ง · hintMatched '+hintMatched+' · deferredFar '+deferredFar+' · เดินไม่ถึง '+skipped+' จุด');
+      const gateNear=marketSweepRangeSeen.near.size, gateFar=marketSweepRangeSeen.far.size, gateStale=marketSweepRangeSeen.stale.size, gateNoPos=marketSweepRangeSeen.noPos.size, gateAccess=marketSweepRangeSeen.accessFallback.size;
+      marketScanStatus='ล่าสุด: '+done+' · '+marketShopIndex.size+' ร้าน · '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ'+(policy==='new'?'':(' · near '+gateNear+' / far '+gateFar+' · รอ '+deferredFar));
+      marketDiagEvent('sweep_end',{done,checked:totalChecked,found:totalFound,retry:totalRetry,fastSkip:smartSkipped,walkFail:skipped,moveScanBatches:totalMoveScanBatches,walkMs:Math.round(totalWalkMs),scanMs:Math.round(totalScanMs),hintMatched,deferredFar,gateNear,gateFar,gateStale,gateNoPos,gateAccess,shops:marketShopIndex.size,listings:marketAllRows().length});
+      log('✅ '+policyLabel+' จบ — '+done+' · ฐาน '+marketShopIndex.size+' ร้าน / '+marketAllRows().length+' รายการ · ตรวจ '+totalChecked+' · อัปเดต '+totalFound+extra+' · เดิน '+walkSec+'วิ · สแกน '+scanSec+'วิ · move-scan '+totalMoveScanBatches+' ครั้ง · liveGate near/far/stale/noPos/access '+gateNear+'/'+gateFar+'/'+gateStale+'/'+gateNoPos+'/'+gateAccess+' · deferred '+deferredFar+' · เดินไม่ถึง '+skipped+' จุด');
       return true;
     } finally {
       if(marketDiagActive) marketDiagStopCapture(marketSweepCancel?'sweep-stopped':'sweep-finished');
-      marketSweepActive=false; marketSweepCancel=false; marketSweepMode=''; marketScanWaiter=null; marketSweepWaypoints=[]; marketSweepWaypointIdx=0; marketSweepDeferredFarIds=new Set(); marketSweepHintMatchedIds=new Set();
+      marketSweepActive=false; marketSweepCancel=false; marketSweepMode=''; marketScanWaiter=null; marketSweepWaypoints=[]; marketSweepWaypointIdx=0; marketSweepDeferredFarIds=new Set(); marketSweepHintMatchedIds=new Set(); marketSweepRangeSeen={near:new Set(),far:new Set(),stale:new Set(),noPos:new Set(),accessFallback:new Set()};
       marketScanRestoreAutomation(); renderMarketIndexUI(); updateMarketUI();
     }
   }
@@ -7882,6 +7972,263 @@
   let storageLastMoveAt = 0;      // throttle MOVE_TO_KAFRA + MOVE_ITEMS
   let storageKafraCancelSent = false; // ★ หลังปิด storage ส่ง Kafra Cancel [4F 05 00 00 00] 1 ครั้งก่อนวาร์ปกลับ
   let storageKafraCaptureHoldLogged = false; // ★ v4.189.20 temporary capture hold
+  // ---------- STORAGE MANAGER / PACKET LEARNER (v4.189.76) ----------
+  // Merged from Storage Manager v4.188.0. Candidates are observed packets,
+  // not proof that rawId is an item ID rather than a storage slot.
+  const storageSpy = {
+    enabled: false,
+    packets: [],
+    learnedWithdraw: null,
+    learnedSocket: null,
+    sending: false,
+  };
+  const storageWithdrawAllState = {
+    active: false,
+    token: 0,
+    itemId: 0,
+    step: 0,
+  };
+  function storageHex(u) {
+    return Array.from(u || []).map(b => b.toString(16).padStart(2, '0')).join(' ');
+  }
+  function storageSpyPush(dir, u, tag) {
+    if (!storageSpy.enabled || !u || !u.length) return;
+    const rec = { t: Date.now(), dir, op: u[0], len: u.length, hex: storageHex(u), tag: tag || '' };
+    storageSpy.packets.push(rec);
+    if (storageSpy.packets.length > 200) storageSpy.packets.shift();
+    if (u[0] === 0x56) log('🏦📦', dir, '0x56 len=' + u.length, rec.hex);
+  }
+  function storageSpyObserve(dir, u, socket = activeWS) {
+    if (!storageSpy.enabled || socket !== activeWS || !u || !u.length) return;
+    if (dir === 'IN') {
+      if (u[0] === 0x56 || u[0] === 0x32 || u[0] === 0x38 || u[0] === 0x4d) {
+        storageSpyPush(dir, u, 'storage-related');
+      }
+      return;
+    }
+    if (dir !== 'OUT' || u[0] !== 0x56) return;
+    storageSpyPush(dir, u, storageSpy.sending ? 'withdraw-test' : 'storage');
+    if (!storageSpy.sending && u.length === 10 && u[1] !== 0x00 && u[1] !== 0x01) {
+      storageSpy.learnedWithdraw = { bytes: Array.from(u), sub: u[1], len: u.length, learnedAt: Date.now() };
+      storageSpy.learnedSocket = activeWS;
+      log('🧪🏦 พบ candidate ถอน: sub=0x' + u[1].toString(16).padStart(2, '0') + ' len=10 — ยังต้องตรวจความหมาย rawId/จำนวน');
+    }
+  }
+  function storageSpySummary() {
+    const rows = storageSpy.packets.slice(-80).map((r, i) => ({
+      n: storageSpy.packets.length - Math.min(80, storageSpy.packets.length) + i + 1,
+      dir: r.dir,
+      op: '0x' + Number(r.op).toString(16).padStart(2, '0'),
+      len: r.len,
+      tag: r.tag,
+      hex: r.hex,
+    }));
+    console.table(rows);
+    if (storageSpy.learnedWithdraw) console.log('🏦 withdraw candidate:', storageLearnedWithdraw());
+    return rows;
+  }
+  function storageLearnedWithdraw() {
+    const t = storageSpy.learnedWithdraw;
+    return t ? { ...t, bytes: [...t.bytes] } : null;
+  }
+  function updateStorageManagerUI() {
+    const root = document.getElementById('__assist_root');
+    if (!root) return;
+    const button = root.querySelector('#__assist_storagespy');
+    if (button) {
+      button.textContent = storageSpy.enabled ? 'หยุดจับถอน' : 'เริ่มจับถอน';
+      button.classList.toggle('on', storageSpy.enabled);
+    }
+    const status = root.querySelector('#__assist_storagespystatus');
+    if (!status) return;
+    const t = storageSpy.learnedWithdraw;
+    status.textContent = (storageSpy.enabled ? '🟢 กำลังจับ' : 'หยุดจับ') + ' · ' + storageSpy.packets.length + '/200 packet · '
+      + (t ? 'พบ sub=0x' + t.sub.toString(16).padStart(2, '0') + ' len=' + t.len + ' · โครงสร้างถอนยืนยันแล้ว'
+        : 'เปิด Kafra แล้วถอนของด้วยมือ 1 รายการ จากนั้นกด “ดู packet”');
+  }
+  function setStorageLearnEnabled(on) {
+    storageSpy.enabled = !!on;
+    log('🏦📡 Storage learner:', storageSpy.enabled ? 'ON — ถอนของด้วยมือ 1 ครั้ง' : 'OFF');
+    updateStorageManagerUI();
+    return storageSpy.enabled;
+  }
+  function clearStorageSpyPackets() {
+    storageSpy.packets = [];
+    storageSpy.learnedWithdraw = null;
+    storageSpy.learnedSocket = null;
+    log('🧹🏦 ล้าง Storage packet learner แล้ว');
+    updateStorageManagerUI();
+  }
+  function resetStorageSpySession() {
+    storageSpy.enabled = false;
+    storageSpy.packets = [];
+    storageSpy.learnedWithdraw = null;
+    storageSpy.learnedSocket = null;
+    storageSpy.sending = false;
+    if (storageWithdrawAllState.active) {
+      storageWithdrawAllState.active = false;
+      storageWithdrawAllState.token++;
+      storageWithdrawAllState.itemId = 0;
+      storageWithdrawAllState.step = 0;
+    }
+    updateStorageManagerUI();
+    updateStorageWithdrawAllUI();
+  }
+  function updateStorageWithdrawAllUI(message='') {
+    const root = document.getElementById('__assist_root');
+    if (!root) return;
+    const btn = root.querySelector('#__assist_storagewithdrawall');
+    if (btn) {
+      btn.textContent = storageWithdrawAllState.active ? 'หยุดถอนทั้งหมด' : 'ถอนทั้งหมด';
+      btn.classList.toggle('on', storageWithdrawAllState.active);
+    }
+    const info = root.querySelector('#__assist_storagewithdrawinfo');
+    if (info && message) info.textContent = message;
+  }
+  function stopStorageWithdrawAll(reason='หยุดแล้ว') {
+    if (!storageWithdrawAllState.active) return false;
+    storageWithdrawAllState.active = false;
+    storageWithdrawAllState.token++;
+    storageWithdrawAllState.itemId = 0;
+    storageWithdrawAllState.step = 0;
+    updateStorageWithdrawAllUI('⏹ ' + reason);
+    log('🏦⬅️ ถอนทั้งหมด:', reason);
+    return true;
+  }
+  function sendStorageWithdrawRaw(itemId, amount) {
+    if (!activeWS || activeWS.readyState !== 1) {
+      log('⚠️ ยังไม่ได้เชื่อมต่อเกม');
+      return false;
+    }
+    if (storageState !== 'IDLE' || sellState !== 'IDLE' || marketScanActive || marketSweepActive) {
+      log('⚠️ รอระบบฝาก/ขาย/สแกนตลาดหยุดก่อนถอน');
+      return false;
+    }
+    const parseU32 = value => {
+      if (typeof value !== 'number' && !(typeof value === 'string' && value.trim())) return NaN;
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 0 && n <= 0xffffffff ? n : NaN;
+    };
+    itemId = parseU32(itemId);
+    amount = parseU32(amount);
+    if (!Number.isFinite(itemId) || itemId < 1 || !Number.isFinite(amount) || amount < 1) {
+      log('⚠️ Item ID และจำนวนต้องเป็นจำนวนเต็มบวก');
+      return false;
+    }
+    const b = new Uint8Array(10);
+    b[0] = 0x56;
+    b[1] = 0x02; // confirmed withdraw
+    const view = new DataView(b.buffer);
+    view.setUint32(2, itemId, true);
+    view.setUint32(6, amount, true);
+    storageSpy.sending = true;
+    try {
+      activeWS.send(b);
+      log('🏦⬅️ ถอน ' + nameOf(itemId) + ' ×' + amount + ' → ' + storageHex(b));
+      return true;
+    } catch (e) {
+      log('⚠️ ส่งถอนล้มเหลว:', e.message);
+      return false;
+    } finally {
+      storageSpy.sending = false;
+    }
+  }
+  function sendStorageWithdrawAll(itemId) {
+    itemId = Number(itemId);
+    if (!Number.isInteger(itemId) || itemId < 1 || itemId > 0xffffffff) {
+      log('⚠️ เลือก Item ก่อนกดถอนทั้งหมด');
+      return false;
+    }
+    if (storageWithdrawAllState.active) {
+      return stopStorageWithdrawAll('ยกเลิกโดยผู้ใช้');
+    }
+    if (!activeWS || activeWS.readyState !== 1) {
+      log('⚠️ ยังไม่ได้เชื่อมต่อเกม');
+      return false;
+    }
+    if (storageState !== 'IDLE' || sellState !== 'IDLE' || marketScanActive || marketSweepActive) {
+      log('⚠️ รอระบบฝาก/ขาย/สแกนตลาดหยุดก่อนถอนทั้งหมด');
+      return false;
+    }
+
+    // ★ v4.189.79 — server ไม่รองรับ 0xFFFFFFFF เป็น MAX
+    // ใช้ชุดกำลังสองจากมาก→น้อยแทน ถ้าขอเกิน stock ขั้นนั้นจะ fail
+    // แต่ขั้นถัดไปยังทำต่อ จึงถอนค่าจริงออกครบในรูป binary decomposition
+    const chunks = [32768,16384,8192,4096,2048,1024,512,256,128,64,32,16,8,4,2,1];
+    const token = ++storageWithdrawAllState.token;
+    storageWithdrawAllState.active = true;
+    storageWithdrawAllState.itemId = itemId;
+    storageWithdrawAllState.step = 0;
+    updateStorageWithdrawAllUI('🏦 กำลังถอนทั้งหมด ' + nameOf(itemId) + ' · เริ่มตรวจจำนวนคงเหลือ…');
+    log('🏦⬅️ เริ่มถอนทั้งหมด:', nameOf(itemId), 'Item ID', itemId, 'แบบ Smart Chunk');
+
+    const run = (idx) => {
+      if (!storageWithdrawAllState.active || token !== storageWithdrawAllState.token) return;
+      if (idx >= chunks.length) {
+        storageWithdrawAllState.active = false;
+        storageWithdrawAllState.itemId = 0;
+        storageWithdrawAllState.step = chunks.length;
+        updateStorageWithdrawAllUI('✅ ส่งชุดถอนทั้งหมดครบแล้ว · ตรวจ Inventory/Storage ว่าถอนครบตามพื้นที่และน้ำหนักที่รับได้');
+        log('✅🏦 ส่งชุดถอนทั้งหมดครบ:', nameOf(itemId));
+        return;
+      }
+      if (!activeWS || activeWS.readyState !== 1) {
+        stopStorageWithdrawAll('หยุด — WebSocket หลุด');
+        return;
+      }
+      if (inventoryFull) {
+        stopStorageWithdrawAll('หยุด — Inventory เต็ม');
+        return;
+      }
+      const amount = chunks[idx];
+      storageWithdrawAllState.step = idx + 1;
+      updateStorageWithdrawAllUI('🏦 ถอนทั้งหมด ' + nameOf(itemId) + ' · ขั้น ' + (idx + 1) + '/' + chunks.length + ' · ลอง ×' + amount);
+      sendStorageWithdrawRaw(itemId, amount);
+      setTimeout(() => run(idx + 1), 180);
+    };
+    run(0);
+    return true;
+  }
+  function storageSearchItemDB(query, limit = 30) {
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    if (/^\d+$/.test(q)) {
+      const id = Number(q);
+      if (Number.isInteger(id) && id > 0) {
+        out.push({ id, name: itemDisplayName(id) });
+      }
+    }
+    if (itemDB && itemDB.names) {
+      for (const [id0, nm0] of Object.entries(itemDB.names)) {
+        const id = Number(id0), nm = String(nm0 || '');
+        if (!id || !nm) continue;
+        if (String(id).includes(q) || nm.toLowerCase().includes(q)) {
+          if (!out.some(x => x.id === id)) out.push({ id, name: nm });
+          if (out.length >= limit) break;
+        }
+      }
+    }
+    return out.slice(0, limit);
+  }
+  function storageRenderWithdrawMatches(root, query) {
+    const sel = root && root.querySelector('#__assist_storagewithdrawmatches');
+    if (!sel) return [];
+    const rows = storageSearchItemDB(query, 30);
+    sel.innerHTML = '';
+    for (const r of rows) {
+      const o = document.createElement('option');
+      o.value = String(r.id);
+      o.textContent = r.name + ' (' + r.id + ')';
+      sel.appendChild(o);
+    }
+    const info = root.querySelector('#__assist_storagewithdrawinfo');
+    if (info) info.textContent = rows.length
+      ? ('พบ ' + rows.length + ' รายการ · เลือก Item แล้วกดถอน')
+      : 'ไม่พบใน Item DB — ถ้ารู้ Item ID ให้กรอกเป็นตัวเลข';
+    return rows;
+  }
+  // ---------- END STORAGE MANAGER / PACKET LEARNER ----------
   let noMonsterSince = 0;        // timestamp ที่เริ่มไม่เจอมอน
   let lastWanderAt = 0;
   let lastNavLogTag = '';   // ★ track last nav log target (กัน spam log)
@@ -10628,6 +10975,7 @@
   // ---------- patch WebSocket ----------
   function attach(ws) {
     if (ws.__loot) return; ws.__loot = true;
+    resetStorageSpySession(); // Storage templates belong to this connection only.
     activeWS = ws; log('🔌 ต่อ WebSocket แล้ว');
     try { gameServerUrl = ws.url || ''; } catch (_) {}   // ★ เก็บ URL เซิร์ฟเวอร์เกม
     // ★★ AUTO-LOGIN หลัง WS ต่อ: WS เปิด = เกมกด login แล้วเสมอ (เกมเปิด WS ตอนกด login!)
@@ -10644,12 +10992,12 @@
     ws.send = function (data) {
       try {
         const u = syncU8(data);
-        if (u) { marketObserveOutgoing(u); captureUnstuckOutgoing(u); handleOut(u); }
+        if (u) { storageSpyObserve('OUT', u, ws); marketObserveOutgoing(u); captureUnstuckOutgoing(u); handleOut(u); }
       } catch (e) {}
       return origSend(data);
     };
     ws.addEventListener('message', async (e) => {
-      try { const u = await toU8(e.data); if (u) { marketObserveIncoming(u); handleIn(u); } } catch (err) {}
+      try { const u = await toU8(e.data); if (u) { storageSpyObserve('IN', u, ws); marketObserveIncoming(u); handleIn(u); } } catch (err) {}
     });
   }
   const NativeWS = window.WebSocket;
@@ -10955,6 +11303,16 @@
     },
     getInventory() { return [...inventory.entries()].map(([id, c]) => ({ id, name: itemDisplayName(id), count: c, action: getItemAction(Number(id)) })).sort((a, b) => b.count - a.count); },
 
+    // ---------- Storage Manager (ทดลอง) ----------
+    storageLearnOn() { return setStorageLearnEnabled(true); },
+    storageLearnOff() { return setStorageLearnEnabled(false); },
+    storagePackets() { return storageSpySummary(); },
+    storageClearPackets() { clearStorageSpyPackets(); },
+    storageWithdraw(itemId, amount) { return sendStorageWithdrawRaw(itemId, amount); },
+    storageWithdrawAll(itemId) { return sendStorageWithdrawAll(itemId); },
+    storageWithdrawRaw(itemId, amount) { return sendStorageWithdrawRaw(itemId, amount); }, // compatibility alias
+    storageSearch(query, limit=30) { return storageSearchItemDB(query, limit); },
+    storageLearnedWithdraw() { return storageLearnedWithdraw(); },
     // ---------- Auto-Storage (ฝากเข้า Kafra) ----------
     storageOn()  { CFG.storageEnabled = true;  log('🏦 Auto-Storage: ON'); },
     storageOff() { CFG.storageEnabled = false; log('🏦 Auto-Storage: OFF'); },
@@ -12480,6 +12838,30 @@
               <button id="__assist_storagebtn" class="off">Storage: ?</button>
               <button id="__assist_depositnow" class="primary">ฝากเดี๋ยวนี้</button>
             </div>
+            <h4 style="margin-top:12px;">🏦 STORAGE MANAGER — ค้นแล้วถอน</h4>
+            <div class="field"><label>ค้นชื่อ Item / Item ID</label><input type="text" id="__assist_storagewithdrawq" placeholder="เช่น Ambernite Card หรือ 4032"></div>
+            <div class="btns">
+              <button id="__assist_storagewithdrawsearch" class="primary">ค้น Item</button>
+              <input type="number" id="__assist_storagewithdrawamt" min="1" step="1" value="1" style="width:90px;" title="จำนวนที่จะถอน">
+              <button id="__assist_storagewithdrawbtn" class="primary">ถอน</button>
+              <button id="__assist_storagewithdrawall" class="primary">ถอนทั้งหมด</button>
+            </div>
+            <select id="__assist_storagewithdrawmatches" size="5" style="width:100%;margin:6px 0;background:#111820;color:#e6edf3;border:1px solid #384657;border-radius:6px;"></select>
+            <div id="__assist_storagewithdrawinfo" style="font-size:10px;color:#9aa0a6;margin:4px 0 8px;line-height:1.5;">
+              เปิด Kafra Storage ก่อน → ค้น Item → เลือก → ถอนตามจำนวน หรือกด “ถอนทั้งหมด”
+            </div>
+            <details style="margin-top:8px;">
+              <summary style="cursor:pointer;">🧪 Packet Diagnostic</summary>
+              <div class="btns" style="margin-top:6px;">
+                <button id="__assist_storagespy">เริ่มจับถอน</button>
+                <button id="__assist_storageshow">ดู packet</button>
+                <button id="__assist_storageclear">ล้าง packet</button>
+              </div>
+              <div style="font-size:10px;color:#9aa0a6;margin:6px 0;line-height:1.5;">
+                ยืนยันแล้ว: OUT 0x56 / sub 0x02 / Item ID u32LE / Amount u32LE
+              </div>
+              <div id="__assist_storagespystatus" style="font-size:10px;color:#9aa0a6;margin:6px 0;line-height:1.5;">พร้อมจับข้อมูล</div>
+            </details>
             <div class="field"><label>ชื่อ NPC Kafra</label><input type="text" id="__assist_kafra" placeholder="เช่น Kafra Staff"></div>
             <div class="field"><label>แมปที่ Kafra อยู่ (ต้องตรงกับ Save Point หลัง Unstuck)</label><input type="text" id="__assist_kaframap" placeholder="เช่น izlude"></div>
             <div class="field"><label>จุดเดินหลัง Unstuck X</label><input type="number" id="__assist_kafrax" placeholder="0=ใช้ sell"><label style="margin-left:8px">Y</label><input type="number" id="__assist_kafray" placeholder="0=ใช้ sell"><button id="__assist_usekafrapos" style="margin-left:8px;font-size:10px">ใช้พิกัดตัวละคร</button></div>
@@ -13085,6 +13467,32 @@
     // ---- storage wires ----
     root.querySelector('#__assist_storagebtn').addEventListener('click', () => CFG.storageEnabled ? ASSIST.storageOff() : ASSIST.storageOn());
     root.querySelector('#__assist_depositnow').addEventListener('click', () => ASSIST.depositNow());
+    root.querySelector('#__assist_storagespy').addEventListener('click', () => setStorageLearnEnabled(!storageSpy.enabled));
+    root.querySelector('#__assist_storageshow').addEventListener('click', () => { storageSpySummary(); updateStorageManagerUI(); });
+    root.querySelector('#__assist_storageclear').addEventListener('click', () => clearStorageSpyPackets());
+    const swq = root.querySelector('#__assist_storagewithdrawq');
+    const swsel = root.querySelector('#__assist_storagewithdrawmatches');
+    root.querySelector('#__assist_storagewithdrawsearch').addEventListener('click', () => storageRenderWithdrawMatches(root, swq.value));
+    swq.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); storageRenderWithdrawMatches(root, swq.value); } });
+    swq.addEventListener('input', () => {
+      clearTimeout(swq.__storageSearchTimer);
+      swq.__storageSearchTimer = setTimeout(() => storageRenderWithdrawMatches(root, swq.value), 180);
+    });
+    root.querySelector('#__assist_storagewithdrawbtn').addEventListener('click', () => {
+      let id = Number(swsel && swsel.value);
+      if (!id && /^\d+$/.test(String(swq.value || '').trim())) id = Number(swq.value.trim());
+      const amount = Number(root.querySelector('#__assist_storagewithdrawamt').value || 1);
+      if (!id) { log('⚠️ เลือก Item ก่อนถอน'); return; }
+      sendStorageWithdrawRaw(id, amount);
+    });
+    root.querySelector('#__assist_storagewithdrawall').addEventListener('click', () => {
+      let id = Number(swsel && swsel.value);
+      if (!id && /^\d+$/.test(String(swq.value || '').trim())) id = Number(swq.value.trim());
+      if (!id) { log('⚠️ เลือก Item ก่อนถอนทั้งหมด'); return; }
+      sendStorageWithdrawAll(id);
+    });
+    updateStorageManagerUI();
+    updateStorageWithdrawAllUI();
     root.querySelector('#__assist_applykafra').addEventListener('click', () => {
       const kn = root.querySelector('#__assist_kafra').value.trim();
       const km = root.querySelector('#__assist_kaframap').value.trim();
