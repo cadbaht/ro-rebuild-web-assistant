@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.80
+// @version      4.189.82
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,28 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.80';
+  const VERSION = '4.189.82';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.82', d: '2026-09-30', items: [
+      '👑 Boss Tracker: พบอยู่ / ยืนยันตาย / ขาดการติดตาม พร้อมเวลาพบและเวลาตาย',
+      '   · เก็บประวัติ 100 รายการล่าสุดในเบราว์เซอร์ แยกแมพและ entity; หลังเปิดใหม่ต้องรับข้อมูลใหม่ก่อนยืนยันพบอยู่',
+      '   · แก้การแจ้งตายจาก despawn/ข้อมูลขาดหาย: ยืนยันตายเฉพาะเหตุการณ์ 0x0f subtype 3',
+      '   · ตั้งช่วงเกิดรายรายการเป็นนาที คาดการณ์จากเวลาตายที่รับข้อมูลได้ ไม่ยืนยันว่าบอสเกิดแล้ว',
+      '   · เวลาพบครั้งแรกไม่ใช่เวลาเกิดจริง; ยังไม่ยืนยันการตรวจครบทั้งแมพ',
+      '   · ตรวจ syntax และสถานการณ์จำลองแล้ว ยังไม่ได้ทดสอบในเกมจริง',
+    ]},
+    { v: '4.189.81', d: '2026-09-29', items: [
+      '👑 Boss Radar + Boss Target Lock',
+      '   · จับ Boss/Mini Boss จาก IN 0x3c flag=4/3 และแสดงพิกัด X,Y + ระยะ + Last seen',
+      '   · เพิ่ม Boss Radar ในแท็บ Combat พร้อมปุ่ม “🎯 ไปตี” รายตัว',
+      '   · ปุ่ม “ไปตี” วาร์ปไปพิกัด Boss/Mini Boss โดยตรง และล็อก entity นั้นเป็นเป้าหมายหลัก',
+      '   · Auto Warp Boss/Mini Boss เดิม เมื่อพบเป้าจะตั้ง Boss Lock ให้อัตโนมัติก่อนวาร์ป',
+      '   · Combat Acquire ให้ Boss Lock มาก่อนมอนปกติ เมื่อ Boss ยังมีชีวิตและ targetable',
+      '   · Boss Lock ถูกปล่อยเมื่อ Boss ตาย/หาย และไม่เปลี่ยนไปตีมอนอื่นก่อนโดยไม่จำเป็น',
+      '   · เพิ่ม API: ASSIST.bossRadar(), ASSIST.warpToBossEntity(id), ASSIST.clearBossLock()',
+      '   · Market Live Cleanup และ Storage Manager จาก v4.189.80 ยังคงเดิม',
+    ]},
     { v: '4.189.80', d: '2026-09-29', items: [
       '🧹 Live Market Cleanup — แก้ร้านเก่าที่ปิด/หายไปแล้วยังค้างในผลค้นหา',
       '   · ระหว่างกวาดตลาด เก็บ responseShopId ของ Vendor ที่เห็นจริงจาก IN 0x06 Vendor Marker ตลอดเส้นทาง',
@@ -5458,6 +5477,8 @@
   let lastFarmWarpBackAt = 0;          // ★ throttle retry วาร์ปกลับแมปฟาร์ม (กันติดแมปผิด)
   let bossAlertedIds = new Set();       // ★ entity IDs ที่ alert boss ไปแล้ว (กันสแปม)
   let lastBossWarpAt = 0;              // ★ throttle วาร์ปไปหา boss
+  let bossTargetLockId = 0;            // ★ v4.189.81 Boss/Mini Boss ที่ต้องตีเป็นอันดับแรก
+  let bossTargetLockAt = 0;
   const warpQueue = new Map();         // dropId -> {dropId,itemId,x,y,offsetIdx,warpAt,pickupSentAt}
   let lastWarpAt = 0;                  // throttle การวาร์ป
   let warpGuardUntil = 0;              // ★ ระยะหลังวาร์ป — รอ player pos อัปเดตก่อนคำนวณ dist
@@ -5813,6 +5834,7 @@
           if (rdOk) {
             recentlyDespawned.delete(id);
             entities.set(id, { id, kind: rd.kind, sub: rd.sub, name: rd.name, x, y, alive: true, _lastSeenAt: nowMs(), _src: 'restore', ...(rd.isBoss ? { _isBoss: true } : {}), ...(rd.isMiniBoss ? { _isMiniBoss: true } : {}) });
+            if (rd.isBoss || rd.isMiniBoss) bossObserve(entities.get(id));
             if (rd.kind === 1) dbg('♻️ คืนสถานะมอน', rd.name || id.toString(16), '(โดน 1b ลบไปแล้วกลับมาเคลื่อนที่ — ไม่เป็นผี)');
           } else { entities.set(id, { id, kind: 0, x, y, alive: true, _lastSeenAt: nowMs(), name: '', _src: 'move' }); }
         }
@@ -5962,7 +5984,7 @@
         if (name && name !== currentMap) {
           const prevMap = currentMap;
           if (prevMap) marketHandleMapChange(prevMap, name, 'MAP_NAME');
-          currentMap = name;
+          bossLeaveMap(); currentMap = name;
           log('🗺️ แมป:', name, player.x != null ? '@(' + Math.round(player.x) + ',' + Math.round(player.y) + ')' : '(pos ยังไม่รู้)');
           // ★★★ clear entities ของแมปเก่า — กัน monster ค้างติดมาแมปใหม่ (mirror world.js:293-306)
           //   ปัญหา: ไม่ clear → Merman/Strouf จากแมปเก่ายังค้าง → บอทพยายามตีมอนที่ไม่มีจริง
@@ -5972,7 +5994,7 @@
           //   เหตุ 2: entities.has(playerId) = true → SELF-DETECT (post-warp) ไม่ทำงาน
           //     → dot จริงของเรา (id ใหม่) ใน minimap แมปใหม่ถูกนับเป็น "ผู้เล่นคนอื่น"
           //     → หนีตัวเองรัว ๆ ข้ามแมป (วาร์ปส่วนใหญ่ล้ม = ยิ่งวนยิ่งหนี)
-          entities.clear();
+          bossLeaveMap(); entities.clear();
           monsterAggro.clear(); mobAttackers.clear();
           // ★ ต่อ warpGuard ใหม่ — แมปเพิ่งเปลี่ยน entityId ใหม่ ให้ SELF-DETECT จับ dot ตัวเองจาก minimap ได้
           //   (กัน server ช้า ส่ง minimap มาหลัง guard 3s จาก teleport หมดแล้ว → dot เรากลายเป็นผี)
@@ -6034,7 +6056,7 @@
             log('👤 player_id =', eid.toString(16), '(จาก SELECT_CHAR)');
           }
           // reset ทุกอย่างที่ผูกกับตัวละครเก่า — ตัวใหม่เริ่มสะอาด
-          entities.clear(); monsterAggro.clear(); mobAttackers.clear();
+          bossLeaveMap(); entities.clear(); monsterAggro.clear(); mobAttackers.clear();
           playerName = null;          // ★ ชื่อเก่าใช้ไม่ได้ — ให้ SPAWN ตัวใหม่ตั้งชื่อใหม่
                                     //   (ไม่ reset แล้ว guard ชื่อจะบล็อค SPAWN self ของตัวใหม่!)
           hp.cur = null; hp.max = null;
@@ -6054,7 +6076,7 @@
         if (name && name !== currentMap) {
           const prevMap = currentMap;
           if (prevMap) marketHandleMapChange(prevMap, name, 'SELECT_CHAR');
-          currentMap = name;
+          bossLeaveMap(); currentMap = name;
           log('🗺️ แมป:', name, '(จาก SELECT_CHAR)');
         }
       }
@@ -6309,7 +6331,7 @@
                 const prevMap = currentMap;
                 dbg('📍 /where ยืนยันแมป ' + whereMap + ' (เดิม ' + (currentMap || '?') + ') → อัปเดต currentMap');
                 if (prevMap) marketHandleMapChange(prevMap, whereMap, '/where');
-                currentMap = whereMap;
+                bossLeaveMap(); currentMap = whereMap;
               }
               if (playerId != null) {
                 const pe = entities.get(playerId);
@@ -6511,6 +6533,7 @@
               logImportant('card', label + ' ที่ (' + x + ', ' + y + ') ห่าง ' + dist + ' ช่อง');
             }
             const warpEnabled = isRealBoss ? CFG.warpToBoss : CFG.warpToMiniBoss;
+            if (warpEnabled) lockBossTarget(id, 'auto detect');
             if (warpEnabled && player.x != null && now - lastBossWarpAt > 10000) {
               const d = Math.hypot(x - player.x, y - player.y);
               if (d > 10) {
@@ -6697,7 +6720,7 @@
               dbg('🔄 player_id เปลี่ยน:', playerId.toString(16), '→', id.toString(16));
               // ★ stale เฉพาะ id เก่าที่ยืนยันแล้ว (id ที่ claim จาก minimap อาจเป็นของคนอื่น)
               if (selfIdConfirmed) stalePlayerIds.set(playerId, nowMs() + 300000);  // stale 5 นาที
-              entities.clear();
+              bossLeaveMap(); entities.clear();
               monsterAggro.clear(); mobAttackers.clear();
               playerId = id;
               selfIdConfirmed = true;
@@ -7131,10 +7154,11 @@
     else if (op === 0x0f && u.length >= 6 && u[5] === 3) {
       const id = u32(u, 1);
       const e = entities.get(id);
+      bossConfirmDeath(id, e);
       if (e) {
         e.alive = false;
         // ★ ถ้าเป็น boss/mini boss ที่ตาย → ล้าง bossAlertedIds เพื่อ alert ใหม่ตอนเกิดใหม่
-        if (e._isMiniBoss || e._isBoss) { bossAlertedIds.delete(id); log((e._isBoss ? '👑 Boss' : '👹 Mini Boss') + ' ตาย — จะ alert ใหม่เมื่อเกิดใหม่'); }
+        if (e._isMiniBoss || e._isBoss) { bossAlertedIds.delete(id); if (bossTargetLockId === id) clearBossTargetLock('Boss ตาย'); log((e._isBoss ? '👑 Boss' : '👹 Mini Boss') + ' ตาย — จะ alert ใหม่เมื่อเกิดใหม่'); }
       }
       entities.delete(id);
       // ★ นับ kill — ถ้าเป็นมอน (kind=1) และเรามี target หรือ mobAttacker ตัวนี้
@@ -8015,6 +8039,7 @@
     }
     if (extra && extra.isBoss) e._isBoss = true;
     if (extra && extra.isMiniBoss) e._isMiniBoss = true;
+    if (e._isBoss || e._isMiniBoss) bossObserve(e, now);
     return e;
   }
   const monsterAggro = new Map(); // monsterId -> timestamp (มอนจับเราเป็นเป้า)
@@ -8910,7 +8935,7 @@
     noMonsterSince = 0;
   }
   function playerFleeClearOldWorld() {
-    entities.clear();
+    bossLeaveMap(); entities.clear();
     queue.clear();
     recentDrops.clear();
     playerFleeClearCombat();
@@ -8974,7 +8999,7 @@
     );
   }
   function playerFleeCompleteSameMap(method, nearby) {
-    entities.clear();
+    bossLeaveMap(); entities.clear();
     queue.clear();
     recentDrops.clear();
     fleeCooldownUntil = nowMs() + CFG.fleeWarpCooldownSec * 1000;
@@ -9538,7 +9563,198 @@
     }
     return false;
   }
+  function getBossRadarRows(now=nowMs()) {
+    const rows = [];
+    for (const e of entities.values()) {
+      if (!e || !e.alive || (!e._isBoss && !e._isMiniBoss) || e.x == null || e.y == null) continue;
+      const age = Math.max(0, now - Number(e._lastSeenAt || now));
+      if (age > 60000) continue;
+      const dist = player.x != null ? Math.hypot(e.x - player.x, e.y - player.y) : null;
+      rows.push({
+        id: e.id, name: e.name || (e._isBoss ? 'Boss' : 'Mini Boss'),
+        type: e._isBoss ? 'Boss' : 'Mini Boss', x:e.x, y:e.y,
+        dist, ageMs:age, locked: bossTargetLockId === e.id
+      });
+    }
+    rows.sort((a,b) => (a.type === b.type ? 0 : (a.type === 'Boss' ? -1 : 1)) || ((a.dist ?? 99999) - (b.dist ?? 99999)));
+    return rows;
+  }
+  function clearBossTargetLock(reason='') {
+    if (!bossTargetLockId) return false;
+    const old = bossTargetLockId;
+    bossTargetLockId = 0; bossTargetLockAt = 0;
+    if (reason) log('🔓 Boss Lock', old.toString(16), '—', reason);
+    return true;
+  }
+  function lockBossTarget(id, reason='') {
+    id = Number(id) >>> 0;
+    const e = entities.get(id);
+    if (!id || !e || (!e._isBoss && !e._isMiniBoss)) return false;
+    bossTargetLockId = id; bossTargetLockAt = nowMs();
+    if (target && target.id !== id) target = null;
+    log('🔒', e._isBoss ? '👑 Boss Lock:' : '👹 Mini Boss Lock:', e.name || '?', '@(', e.x, e.y, ')', reason || '');
+    return true;
+  }
+  function warpToBossEntity(id) {
+    id = Number(id) >>> 0;
+    const e = entities.get(id);
+    if (!e || !e.alive || (!e._isBoss && !e._isMiniBoss) || e.x == null || e.y == null) {
+      log('⚠️ Boss/Mini Boss นี้หายจาก Radar แล้ว');
+      return false;
+    }
+    lockBossTarget(id, 'manual radar');
+    const d = player.x != null ? Math.hypot(e.x-player.x, e.y-player.y) : 99999;
+    if (d <= 10) {
+      log('🎯 Boss อยู่ใกล้แล้ว — ล็อกเป้าและให้ Combat เข้าตี');
+      return true;
+    }
+    log('🎯 วาร์ปไป', e._isBoss ? 'Boss' : 'Mini Boss', '@(', e.x, e.y, ')');
+    sendTeleport(currentMap, e.x, e.y);
+    lastBossWarpAt = nowMs();
+    return true;
+  }
+  function acquireLockedBossTarget(now) {
+    if (!bossTargetLockId) return null;
+    const m = entities.get(bossTargetLockId);
+    if (!m || !m.alive || (!m._isBoss && !m._isMiniBoss)) {
+      clearBossTargetLock('ตาย/หาย');
+      return null;
+    }
+    // หลังวาร์ป รอ SPAWN/ตำแหน่งจริงได้ แต่เมื่อเข้าเงื่อนไข targetable ให้ชนะมอนปกติทันที
+    if (!isTargetable(m, now)) return null;
+    const d = player.x != null ? Math.hypot(m.x-player.x, m.y-player.y) : 99999;
+    if (d > Math.max(1, Number(CFG.maxAcquireDistance)||1)) return null;
+    target = {
+      id:m.id, x:m.x, y:m.y, acquiredAt:now, engageAt:0,
+      lastAttackAt:0, lastAttackResultAt:0, pendingAttacks:0, firstAttackAt:0,
+      stuckCount:0, warpCount:0, lastDist:null,
+    };
+    lastTargetSwitchAt = now;
+    skillUsesOnTarget.clear();
+    log('👑🎯 Boss Lock → เป้าหมายหลัก:', m.name || (m._isBoss?'Boss':'Mini Boss'), '@ dist', d.toFixed(1));
+    return target;
+  }
+  // BOSS_TRACKER_START — observed evidence, never infer death from absence.
+  const BOSS_TRACKER_KEY = 'ro_assist_boss_tracker_v1';
+  const bossRecords = new Map();
+  let bossSaveTimer = null;
+  function bossSaveNow() {
+    try { localStorage.setItem(BOSS_TRACKER_KEY, JSON.stringify([...bossRecords.values()])); } catch (_) {}
+  }
+  function bossSaveSoon() {
+    if (bossSaveTimer !== null) return;
+    bossSaveTimer = setTimeout(() => { bossSaveTimer = null; bossSaveNow(); }, 1000);
+  }
+  function bossRecordKey(map, id) { return JSON.stringify([map, Number(id) >>> 0]); }
+  function bossTrim() {
+    const rows = [...bossRecords.entries()].sort((a,b) => b[1].updatedAt-a[1].updatedAt);
+    for (const [key] of rows.slice(100)) bossRecords.delete(key);
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(BOSS_TRACKER_KEY) || '[]');
+    if (Array.isArray(saved)) for (const r of saved.slice(-100)) {
+      if (!r || typeof r.map !== 'string' || !Number.isInteger(r.id) || r.id <= 0 || !Number.isFinite(r.lastSeenAt)) continue;
+      r.status = r.status === 'dead' && Number.isFinite(r.deathAt) && r.deathAt > 0 ? 'dead' : 'lost';
+      r.updatedAt = Number(r.updatedAt) || r.lastSeenAt;
+      r.firstSeenAt = Number(r.firstSeenAt) || r.lastSeenAt;
+      if (!(Number.isFinite(r.minMin) && Number.isFinite(r.maxMin) && r.minMin > 0 && r.maxMin >= r.minMin && r.maxMin <= 43200)) r.minMin = r.maxMin = 0;
+      bossRecords.set(bossRecordKey(r.map, r.id), r);
+    }
+  } catch (_) {}
+  function bossObserve(e, at=nowMs()) {
+    if (!currentMap || !e || !e.alive || (!e._isBoss && !e._isMiniBoss)) return;
+    const key = bossRecordKey(currentMap, e.id);
+    let r = bossRecords.get(key);
+    if (!r) {
+      r = {map:currentMap, id:e.id, firstSeenAt:at, minMin:0, maxMin:0};
+      bossRecords.set(key, r);
+    }
+    if (r.status === 'dead') { r.previousDeathAt = r.deathAt; r.firstSeenAt = at; }
+    Object.assign(r, {name:e.name || (e._isBoss?'Boss':'Mini Boss'), type:e._isBoss?'Boss':'Mini Boss',
+      x:e.x, y:e.y, status:'seen', lastSeenAt:at, updatedAt:at, deathAt:0});
+    e._bossTrackMap = currentMap;
+    bossTrim(); bossSaveSoon();
+  }
+  function bossMarkLost(id, map=currentMap) {
+    const r = bossRecords.get(bossRecordKey(map, id));
+    if (r && r.status === 'seen') { r.status = 'lost'; r.updatedAt = nowMs(); bossSaveSoon(); }
+  }
+  function bossLeaveMap() {
+    for (const r of bossRecords.values()) if (r.status === 'seen') bossMarkLost(r.id, r.map);
+  }
+  function bossConfirmDeath(id, e, at=nowMs()) {
+    // The incoming death packet supplies an entity id, not a species or spawn schedule.
+    const key = bossRecordKey(currentMap, id);
+    if (!bossRecords.has(key) && e && (e._isBoss || e._isMiniBoss)) bossObserve(e, at);
+    const r = bossRecords.get(key);
+    if (!r || r.status === 'dead') return;
+    Object.assign(r, {status:'dead', deathAt:at, updatedAt:at});
+    bossSaveSoon();
+  }
+  function bossSync(now=nowMs()) {
+    for (const e of entities.values()) {
+      if (!e || !e.alive || e._bossTrackMap !== currentMap || (!e._isBoss && !e._isMiniBoss)) continue;
+      const at=Number(e._lastSeenAt || 0), r=bossRecords.get(bossRecordKey(currentMap,e.id));
+      if (now-at<=60000 && (!r || at>Math.max(r.lastSeenAt,r.deathAt || 0))) bossObserve(e,at);
+    }
+    for (const r of bossRecords.values()) {
+      if (r.status !== 'seen') continue;
+      const e = r.map === currentMap ? entities.get(r.id) : null;
+      if (!e || !e.alive || e._bossTrackMap !== r.map || now-Number(e._lastSeenAt || 0)>60000) bossMarkLost(r.id,r.map);
+      else if (Number(e._lastSeenAt)>r.lastSeenAt) bossObserve(e,Number(e._lastSeenAt));
+    }
+  }
+  function bossSetWindow(key, min, max) {
+    const r = bossRecords.get(key);
+    if (!r || !Number.isFinite(min) || !Number.isFinite(max) || min<0 || max<min || max>43200 || (min===0 && max!==0)) return false;
+    r.minMin=min; r.maxMin=max; bossSaveSoon(); return true;
+  }
+  function bossForecast(r, now=nowMs()) {
+    if (r.status!=='dead' || !r.deathAt || !r.minMin || r.maxMin<r.minMin) return null;
+    const from=r.deathAt+r.minMin*60000, to=r.deathAt+r.maxMin*60000;
+    return {from,to, phase:now<from?'รอช่วงคาดการณ์':now<=to?'อยู่ในช่วงคาดการณ์':'พ้นช่วงคาดการณ์ — ยังไม่พบใหม่'};
+  }
+  function bossEscape(v) { return String(v == null?'?':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function bossTime(t) { return Number.isFinite(t) && t>0 ? new Date(t).toLocaleString('th-TH',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '—'; }
+  function renderBossRadar(root) {
+    const box=root && root.querySelector('#__assist_bossradar');
+    if (!box) return;
+    bossSync();
+    const rows=[...bossRecords.values()].sort((a,b)=>(a.map===currentMap?-1:0)-(b.map===currentMap?-1:0) || b.updatedAt-a.updatedAt);
+    box.innerHTML='<div style="font-size:10px;color:#9aa0a6">ข้อมูลที่เกมส่งมาเท่านั้น • ไม่พบ ≠ ไม่มีบอสทั้งแมพ<br>เวลาพบ ≠ เวลาเกิดจริง • ประวัติ 100 รายการในเบราว์เซอร์นี้</div>';
+    if (!rows.length) { box.innerHTML+='<div>ยังไม่มีข้อมูล Boss / Mini Boss</div>'; return; }
+    box.innerHTML+=rows.map((r,i)=>{
+      const f=bossForecast(r), e=r.map===currentMap?entities.get(r.id):null;
+      const canGo=r.status==='seen' && e && e.alive && e._bossTrackMap===currentMap;
+      const status=r.status==='seen'?'🟢 พบอยู่':r.status==='dead'?'☠️ ยืนยันตาย (รับเหตุการณ์ตาย)':'⚪ ขาดการติดตาม';
+      return '<div style="margin:5px 0;padding:6px;border:1px solid #384657;border-radius:6px;font-size:10px">'
+        +'<b>'+bossEscape(r.name)+' · '+status+'</b><br>'+bossEscape(r.map)+' @ '+bossEscape(r.x)+','+bossEscape(r.y)+' · ID '+r.id.toString(16)
+        +'<br>พบครั้งแรก '+bossTime(r.firstSeenAt)+'<br>พบล่าสุด '+bossTime(r.lastSeenAt)
+        +(r.deathAt?'<br>รับเหตุการณ์ตาย '+bossTime(r.deathAt):'')
+        +(f?'<br>⏳ คาดการณ์ '+bossTime(f.from)+' – '+bossTime(f.to)+'<br>'+f.phase:'')
+        +'<br><button data-bosstime="'+i+'">⏱ '+(r.minMin?r.minMin+'–'+r.maxMin+' นาที':'ตั้งช่วงเกิด')+'</button> '
+        +(canGo?'<button data-bosswarp="'+r.id+'">🎯 ไปตี'+(bossTargetLockId===r.id?' 🔒':'')+'</button>':'')+'</div>';
+    }).join('');
+    box.querySelectorAll('[data-bosswarp]').forEach(b=>b.addEventListener('click',()=>warpToBossEntity(Number(b.dataset.bosswarp))));
+    box.querySelectorAll('[data-bosstime]').forEach(b=>b.addEventListener('click',()=>{
+      const r=rows[Number(b.dataset.bosstime)];
+      const input=prompt('ช่วงเกิดหลังตาย (นาที) เช่น 60-90 หรือ 60; 0 = ปิด\nต้องใช้ข้อมูลของเซิร์ฟเวอร์นี้ ตั้งเฉพาะรายการนี้ ไม่ใช่เวลาเกิดที่ยืนยัน',r.minMin?r.minMin+'-'+r.maxMin:'0');
+      if (input===null) return;
+      const m=input.trim().match(/^(\d+(?:\.\d+)?)\s*(?:-\s*(\d+(?:\.\d+)?))?$/);
+      if (!m || !bossSetWindow(bossRecordKey(r.map,r.id),Number(m[1]),Number(m[2] || m[1]))) { alert('ช่วงเวลาไม่ถูกต้อง: เช่น 60-90, 60 หรือ 0 (สูงสุด 43200 นาที)'); return; }
+      renderBossRadar(root);
+    }));
+  }
+  setInterval(() => bossSync(), 1000);
+  window.addEventListener('pagehide', bossSaveNow);
+  // BOSS_TRACKER_END
+
   function acquireTarget(now) {
+    // ★ v4.189.81 Boss Lock ชนะ target selection ปกติ
+    if (bossTargetLockId) {
+      const bt = acquireLockedBossTarget(now);
+      if (bt) return bt;
+    }
     // ★ cooldown: กันสลับ target บ่อยเกินไป (สลับได้ทุก 1.5s)
     if (now - lastTargetSwitchAt < TARGET_REACQUIRE_MS) return null;
     // whitelist ว่าง = ตีทุกมอน kind=1 (ตามความหมายของ whitelist); ตั้งค่า = ตีเฉพาะที่ match
@@ -9717,7 +9933,7 @@
         // ★ จำสถานะไว้ 60s — ถ้า id นี้ขยับกลับมา (1b หลอก/ยืนนิ่งนาน) จะได้คืนเป็นมอน ไม่ใช่ผี kind=0
         recentlyDespawned.set(id, { kind: e.kind, sub: e.sub, name: e.name, isBoss: e._isBoss, isMiniBoss: e._isMiniBoss, expireAt: nowS + 60000 });
         entities.delete(id);
-        if (e._isMiniBoss || e._isBoss) { bossAlertedIds.delete(id); log((e._isBoss ? '👑 Boss' : '👹 Mini Boss') + ' ตาย — จะ alert ใหม่เมื่อเกิดใหม่'); }
+        if (e._isMiniBoss || e._isBoss) { bossMarkLost(id); bossAlertedIds.delete(id); if (bossTargetLockId === id) clearBossTargetLock('ขาดการติดตาม'); log('📡 Boss/Mini Boss ขาดการติดตาม — ยังไม่ยืนยันตาย'); }
         if (target && target.id === id) { abandonTarget('despawn', false); target = null; }
       }
     }
@@ -11420,6 +11636,9 @@
     warpToBossOff()    { CFG.warpToBoss = false;    saveConfigDebounced(); log('👑 วาร์ปไปสู้ Boss: ปิด'); },
     warpToMiniBossOn() { CFG.warpToMiniBoss = true; saveConfigDebounced(); log('👹 วาร์ปไปสู้ Mini Boss: เปิด'); },
     warpToMiniBossOff(){ CFG.warpToMiniBoss = false;saveConfigDebounced(); log('👹 วาร์ปไปสู้ Mini Boss: ปิด'); },
+    bossRadar() { return getBossRadarRows(); },
+    warpToBossEntity(id) { return warpToBossEntity(id); },
+    clearBossLock() { return clearBossTargetLock('API'); },
     fleeFromPlayersOn()  { CFG.fleeFromPlayers = true;  saveConfigDebounced(); log('🏃 หนีผู้เล่น: เปิด'); },
     fleeFromPlayersOff() { CFG.fleeFromPlayers = false; saveConfigDebounced(); log('🏃 หนีผู้เล่น: ปิด'); },
     setDepositItems(...ids) { CFG.depositItemIds = ids; log('🏦 ฝาก item:', ids.map(nameOf).join(', ')); },
@@ -12777,6 +12996,13 @@
               <button id="__assist_t_warptoboss" class="off">👑 วาร์ปไปสู้ Boss</button>
               <button id="__assist_t_warptominiboss" class="off">👹 วาร์ปไปสู้ Mini Boss</button>
             </div>
+            <div style="margin-top:8px;padding:7px;border:1px solid #384657;border-radius:7px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+                <b style="font-size:11px;">📡 Boss Radar</b>
+                <button id="__assist_bossunlock" style="font-size:9px;">🔓 ปลดล็อก</button>
+              </div>
+              <div id="__assist_bossradar"><div style="font-size:10px;color:#9aa0a6;">ยังไม่พบ Boss / Mini Boss</div></div>
+            </div>
             <div class="btns"><button id="__assist_applycombat">ใช้ค่า combat</button></div>
             <h4 style="margin-top:14px;">🏃 หนีมอนรุม</h4>
             <div class="btns"><button id="__assist_t_mobflee" class="on">🏃 หนีมอนรุม: ON</button></div>
@@ -13360,6 +13586,7 @@
     if (_nws) _nws.value = CFG.noMonsterWarpSec;
     root.querySelector('#__assist_t_warptoboss').addEventListener('click', () => { CFG.warpToBoss = !CFG.warpToBoss; saveConfigDebounced(); log('👑 วาร์ปไปสู้ Boss:', CFG.warpToBoss ? 'เปิด' : 'ปิด'); });
     root.querySelector('#__assist_t_warptominiboss').addEventListener('click', () => { CFG.warpToMiniBoss = !CFG.warpToMiniBoss; saveConfigDebounced(); log('👹 วาร์ปไปสู้ Mini Boss:', CFG.warpToMiniBoss ? 'เปิด' : 'ปิด'); });
+    root.querySelector('#__assist_bossunlock').addEventListener('click', () => { clearBossTargetLock('ปลดล็อกโดยผู้ใช้'); renderBossRadar(root); });
     root.querySelector('#__assist_t_fleeplayers').addEventListener('click', () => { CFG.fleeFromPlayers = !CFG.fleeFromPlayers; saveConfigDebounced(); log('🏃 หนีผู้เล่น:', CFG.fleeFromPlayers ? 'เปิด' : 'ปิด'); });
     root.querySelector('#__assist_t_fleemode_change').addEventListener('click', () => { CFG.fleeMode = 'changeMap'; saveConfigDebounced(); log('🗺️ หนีผู้เล่น: เปลี่ยนแมป'); });
     root.querySelector('#__assist_t_fleemode_same').addEventListener('click', () => { CFG.fleeMode = 'sameMap'; saveConfigDebounced(); log('📍 หนีผู้เล่น: วาร์ปสุ่มในแมปเดิม'); });
@@ -14409,7 +14636,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
               if ((e._isMiniBoss || e._isBoss) && bossAlertedIds.has(e.id)) {
                 bossAlertedIds.delete(e.id);
                 entities.delete(e.id);
-                log('👹 Mini Boss หายไป (ไม่ได้รับตำแหน่ง 60s) — จะ alert ใหม่เมื่อเกิดใหม่');
+                bossMarkLost(e.id); log('📡 Boss/Mini Boss ขาดการติดตาม (ไม่ได้รับตำแหน่ง 60s) — ยังไม่ยืนยันตาย');
               }
               continue;
             }
@@ -14686,6 +14913,7 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     syncInput('#__assist_stuckwarp', CFG.stuckWarpOnAbandon);
     syncToggle('#__assist_t_warptoboss', CFG.warpToBoss === true);
     syncToggle('#__assist_t_warptominiboss', CFG.warpToMiniBoss === true);
+    renderBossRadar(root);
     syncToggle('#__assist_t_fleeplayers', CFG.fleeFromPlayers === true);
     syncToggle('#__assist_t_fleemode_change', CFG.fleeMode !== 'sameMap');
     syncToggle('#__assist_t_fleemode_same', CFG.fleeMode === 'sameMap');
