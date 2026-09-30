@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.83
+// @version      4.189.84
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,16 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.83';
+  const VERSION = '4.189.84';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.84', d: '2026-09-30', items: [
+      '🔬 เพิ่ม Refine Diagnostic ใน Storage: เริ่ม/หยุด, ทำเครื่องหมายก่อนกดและผลที่เห็น, ส่งออก JSON',
+      '   · บันทึกเฉพาะทิศทาง opcode ขนาด และเวลา ไม่เก็บเนื้อหา packet; ข้าม login/เลือกตัวละคร/chat',
+      '   · พักออโต้ก่อนจับ 60 วินาที สูงสุด 2000 รายการ; คืนค่าออโต้ด้วยปุ่มเมื่อพร้อม',
+      '   · เป็นขั้นค้นหา packet ที่เกี่ยวข้อง ยังไม่ถอดผล/อัตราตีบวก และไม่ทำนายผลครั้งถัดไป',
+      '   · ตรวจ syntax/สถานการณ์จำลอง ยังไม่มีผลทดสอบตีบวกในเกมจริง',
+    ]},
     { v: '4.189.83', d: '2026-09-30', items: [
       '🚶 ลากมอนก่อนตี: ตั้งจำนวน 2–20 ตัว, รัศมีนับ, เวลาลากสูงสุด และ HP ที่ให้หยุดลาก',
       '   · ค่าเริ่มต้น OFF · 3 ตัว / 6 ช่อง / 20 วิ / HP 50% · เปิดใน Combat → ลากมอนก่อนตี',
@@ -11517,9 +11524,114 @@
     }
   }
 
+  // REFINE_RECORDER_START
+  // Protocol-discovery pass: no payload, credentials, chat, IDs, or guessed decoding.
+  const refineRecorder = { active:false, rows:[], started:0, socket:null, map:null, timer:null, paused:null, reason:'ยังไม่ได้เริ่ม', serial:0 };
+  const REFINE_PAUSE_KEYS = ['combatEnabled','lootEnabled','healEnabled','skillEnabled','buffEnabled',
+    'buffOthersEnabled','buffVisitEnabled','unstuckBuffEnabled','warpFindEnabled','wanderEnabled',
+    'fleeFromPlayers','mobFleeEnabled','dangerFleeEnabled','hpFleeEnabled','blacklistFleeEnabled',
+    'restEnabled','warpLootEnabled','sellEnabled','storageEnabled','autoRespawnEnabled',
+    'tradeAcceptAll','tradeRejectAll','autoLoginEnabled','autoRefreshEnabled'];
+  function refineRecorderBusy() {
+    return sellState !== 'IDLE' || storageState !== 'IDLE' || unstuckBuffState !== 'IDLE'
+      || buffVisitState !== 'IDLE' || unstuckBuffAutoFinishPending || marketScanActive
+      || marketSweepActive || marketShopTravelActive || marketStationaryActive
+      || playerFleePending || teleportMacroPending || hpFleePendingClip
+      || blacklistFleePendingClip || monsterFleePendingClip || pendingTeleport
+      || kafraCancelCaptureActive || tradeCaptureActive || unstuckPacketCaptureActive;
+  }
+  function refineRecorderUI() {
+    const el = document.getElementById('__assist_refine_status');
+    if (el) el.textContent = (refineRecorder.active ? 'กำลังบันทึก' : refineRecorder.reason)
+      + ' · ' + refineRecorder.rows.length + '/2000 รายการ'
+      + (refineRecorder.paused ? ' · ออโต้ยังพักอยู่ กดคืนค่าเมื่อพร้อม' : '');
+  }
+  function refineRecorderStop(reason = 'หยุดด้วยมือ') {
+    if (refineRecorder.active) {
+      refineRecorder.active = false;
+      refineRecorder.reason = reason;
+      clearInterval(refineRecorder.timer);
+      refineRecorder.timer = null;
+      refineRecorder.socket = null;
+    }
+    refineRecorderUI();
+  }
+  function refineRecorderStart() {
+    if (refineRecorder.active) return false;
+    if (!activeWS || activeWS.readyState !== 1 || playerId == null || !currentMap || isDead) {
+      log('🔬 เข้าเกมและอยู่ในจุดปลอดภัยก่อนเริ่มบันทึกตีบวก'); return false;
+    }
+    if (refineRecorderBusy()) { log('🔬 รอจบงานขาย/ฝาก/เดินตลาด/วาร์ป/จับ packet เดิมก่อน'); return false; }
+    if (refineRecorder.rows.length) { log('🔬 ส่งออกและล้างบันทึกเดิมก่อนเริ่มรอบใหม่'); return false; }
+    if (!refineRecorder.paused) refineRecorder.paused = Object.fromEntries(REFINE_PAUSE_KEYS.map(k=>[k,CFG[k]]));
+    REFINE_PAUSE_KEYS.forEach(k=>{ CFG[k] = false; });
+    mobLureReset('บันทึกตีบวก', true);
+    target = null; noMonsterSince = 0;
+    refineRecorder.started = performance.now();
+    refineRecorder.socket = activeWS;
+    refineRecorder.map = currentMap;
+    refineRecorder.serial++;
+    refineRecorder.active = true;
+    refineRecorder.reason = '';
+    refineRecorder.timer = setInterval(() => {
+      if (!refineRecorder.socket || refineRecorder.socket.readyState !== 1 || activeWS !== refineRecorder.socket) refineRecorderStop('การเชื่อมต่อเปลี่ยน/ปิด');
+      else if (currentMap !== refineRecorder.map || isDead) refineRecorderStop('ย้ายแมปหรือตัวละครตาย');
+      else if (performance.now() - refineRecorder.started >= 60000) refineRecorderStop('ครบ 60 วินาที');
+      else if (REFINE_PAUSE_KEYS.some(k=>CFG[k]) || refineRecorderBusy()) refineRecorderStop('มีการเปิดออโต้หรืองานอื่น');
+      else refineRecorderUI();
+    }, 250);
+    refineRecorderUI();
+    return true;
+  }
+  function refineRecorderPush(row) {
+    if (!refineRecorder.active) return;
+    if (performance.now() - refineRecorder.started >= 60000) { refineRecorderStop('ครบ 60 วินาที'); return; }
+    refineRecorder.rows.push(row);
+    if (refineRecorder.rows.length >= 2000) refineRecorderStop('ครบ 2000 รายการ');
+  }
+  function refineRecorderObserve(dir, u, socket, stamp, serial) {
+    if (!refineRecorder.active || socket !== refineRecorder.socket || serial !== refineRecorder.serial || !u || !u.length) return;
+    // Login, character selection, and chat are excluded entirely, both directions.
+    if ([0x00,0x03,0x08,0x2c].includes(u[0])) return;
+    refineRecorderPush({kind:'packet',ms:Math.max(0,Math.round(stamp-refineRecorder.started)),dir,
+      opcode:'0x'+u[0].toString(16).padStart(2,'0'),bytes:u.length});
+  }
+  function refineRecorderMark(label) {
+    if (!['before_click','success_seen','failure_seen','unclear_seen'].includes(label)) return false;
+    if (!refineRecorder.active) { log('🔬 เริ่มบันทึกก่อนทำเครื่องหมาย'); return false; }
+    refineRecorderPush({kind:'manual_marker',ms:Math.round(performance.now()-refineRecorder.started),label,source:'user_observation'});
+    refineRecorderUI(); return true;
+  }
+  function refineRecorderClear() {
+    refineRecorderStop(); refineRecorder.rows = []; refineRecorder.reason = 'ล้างแล้ว'; refineRecorderUI();
+  }
+  function refineRecorderRestore() {
+    refineRecorderStop();
+    if (refineRecorder.paused) {
+      for (const [k,v] of Object.entries(refineRecorder.paused)) if (CFG[k] === false) CFG[k] = v;
+      refineRecorder.paused = null;
+    }
+    refineRecorderUI();
+  }
+  function refineRecorderExport() {
+    if (!refineRecorder.rows.length) { log('🔬 ยังไม่มีข้อมูลให้ส่งออก'); return false; }
+    refineRecorderStop('ส่งออกแล้ว');
+    const report = {schema:'ro-assist-refine-timeline-v1',version:VERSION,
+      mode:'metadata_only',stopReason:refineRecorder.reason,
+      limitations:['No packet payload or decoded refine result.','Manual markers are user observations, not server evidence.',
+        'Packet order and timing cannot predict upgrade success.','IN timing is browser message arrival; OUT timing is send attempt.'],
+      events:refineRecorder.rows.slice().sort((a,b)=>a.ms-b.ms)};
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+    const a = document.createElement('a'); a.href = url; a.download = 'ro-refine-timeline-'+Date.now()+'.json'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000); return true;
+  }
+  // REFINE_RECORDER_END
+
   // ---------- patch WebSocket ----------
   function attach(ws) {
     if (ws.__loot) return; ws.__loot = true;
+    refineRecorderStop('การเชื่อมต่อเปลี่ยน');
+    ws.addEventListener('close', () => { if (refineRecorder.socket === ws) refineRecorderStop('การเชื่อมต่อปิด'); });
     resetStorageSpySession(); // Storage templates belong to this connection only.
     activeWS = ws; log('🔌 ต่อ WebSocket แล้ว');
     try { gameServerUrl = ws.url || ''; } catch (_) {}   // ★ เก็บ URL เซิร์ฟเวอร์เกม
@@ -11537,12 +11649,13 @@
     ws.send = function (data) {
       try {
         const u = syncU8(data);
-        if (u) { storageSpyObserve('OUT', u, ws); marketObserveOutgoing(u); captureUnstuckOutgoing(u); handleOut(u); }
+        if (u) { refineRecorderObserve('OUT', u, ws, performance.now(), refineRecorder.serial); storageSpyObserve('OUT', u, ws); marketObserveOutgoing(u); captureUnstuckOutgoing(u); handleOut(u); }
       } catch (e) {}
       return origSend(data);
     };
     ws.addEventListener('message', async (e) => {
-      try { const u = await toU8(e.data); if (u) { storageSpyObserve('IN', u, ws); marketObserveIncoming(u); handleIn(u); } } catch (err) {}
+      const refineStamp = performance.now(), refineSerial = refineRecorder.active ? refineRecorder.serial : -1;
+      try { const u = await toU8(e.data); if (u) { refineRecorderObserve('IN', u, ws, refineStamp, refineSerial); storageSpyObserve('IN', u, ws); marketObserveIncoming(u); handleIn(u); } } catch (err) {}
     });
   }
   const NativeWS = window.WebSocket;
@@ -11554,6 +11667,9 @@
   //  API ควบคุมจาก console — พิมพ์ ASSIST.<method>()
   // ============================================================
   window.ASSIST = {
+    refineStart: refineRecorderStart, refineStop: refineRecorderStop,
+    refineMark: refineRecorderMark, refineExport: refineRecorderExport,
+    refineClear: refineRecorderClear, refineRestore: refineRecorderRestore,
     // ---------- สถานะ ----------
     status() {
       const pct = hpPct();
@@ -13440,6 +13556,17 @@
               เปิด Kafra Storage ก่อน → ค้น Item → เลือก → ถอนตามจำนวน หรือกด “ถอนทั้งหมด”
             </div>
             <details style="margin-top:8px;">
+              <summary>🔬 Refine Diagnostic — บันทึกตีบวกด้วยมือ</summary>
+              <p style="font-size:11px">อยู่ในจุดปลอดภัยและเปิดหน้าตีบวกก่อน เริ่ม → ก่อนกด → ตีบวกในเกม 1 ครั้ง → ระบุผลที่เห็น → ส่งออก<br>เก็บเฉพาะ opcode/ขนาด/เวลา ไม่เก็บเนื้อหา packet ยังอ่านผลหรือทำนายไม่ได้<br>พักออโต้รวมระบบหนีระหว่างจับ สูงสุด 60 วิ / 2000 รายการ กดคืนค่าเมื่อพร้อม</p>
+              <div class="btns">
+                <button id="__assist_refine_start">พักออโต้และเริ่ม</button><button id="__assist_refine_stop">หยุด</button>
+                <button id="__assist_refine_before">ก่อนกดตีบวก</button><button id="__assist_refine_success">เห็นว่าติด</button>
+                <button id="__assist_refine_failure">เห็นว่าไม่ติด</button><button id="__assist_refine_unclear">ผลไม่ชัด</button>
+                <button id="__assist_refine_export">ส่งออก JSON</button><button id="__assist_refine_clear">ล้าง</button>
+                <button id="__assist_refine_restore">คืนค่าออโต้เดิม</button>
+              </div><div id="__assist_refine_status" style="font-size:11px">ยังไม่ได้เริ่ม</div>
+            </details>
+            <details style="margin-top:8px;">
               <summary style="cursor:pointer;">🧪 Packet Diagnostic</summary>
               <div class="btns" style="margin-top:6px;">
                 <button id="__assist_storagespy">เริ่มจับถอน</button>
@@ -14067,6 +14194,13 @@
       if (yEl) yEl.value = CFG.sellNpcY;
     });
     root.querySelector('#__assist_t_sellfull').addEventListener('click', () => { CFG.sellOnFull = !CFG.sellOnFull; ASSIST.toggleSellOnFull(CFG.sellOnFull); });
+    for (const [id,fn] of Object.entries({start:refineRecorderStart,stop:()=>refineRecorderStop(),
+      before:()=>refineRecorderMark('before_click'),success:()=>refineRecorderMark('success_seen'),
+      failure:()=>refineRecorderMark('failure_seen'),unclear:()=>refineRecorderMark('unclear_seen'),
+      export:refineRecorderExport,clear:refineRecorderClear,restore:refineRecorderRestore})) {
+      root.querySelector('#__assist_refine_'+id).addEventListener('click',fn);
+    }
+    refineRecorderUI();
     // ---- storage wires ----
     root.querySelector('#__assist_storagebtn').addEventListener('click', () => CFG.storageEnabled ? ASSIST.storageOff() : ASSIST.storageOn());
     root.querySelector('#__assist_depositnow').addEventListener('click', () => ASSIST.depositNow());
