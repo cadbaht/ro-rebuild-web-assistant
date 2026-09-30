@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.82
+// @version      4.189.83
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,20 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.82';
+  const VERSION = '4.189.83';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.83', d: '2026-09-30', items: [
+      '🚶 ลากมอนก่อนตี: ตั้งจำนวน 2–20 ตัว, รัศมีนับ, เวลาลากสูงสุด และ HP ที่ให้หยุดลาก',
+      '   · ค่าเริ่มต้น OFF · 3 ตัว / 6 ช่อง / 20 วิ / HP 50% · เปิดใน Combat → ลากมอนก่อนตี',
+      '   · นับจากมอนที่มีข้อมูลเล็งหรือโจมตีเราในระยะ ใช้ตัวกรองเป้าเดิม และไม่รวม Boss/Mini Boss',
+      '   · เดินรวบโดยพักการโจมตี/Auto-Skill/เก็บของ เมื่อครบจำนวนให้ตีชุดนั้นต่อจนจบแล้วค่อยเก็บของ',
+      '   · ครบเวลาหรือเดินไม่คืบหน้า 4 วิ: ตีมอนที่ตามมา หรือเป้าที่หาได้ 1 ตัวถ้ายังไม่มีตัวตาม',
+      '   · HP ต่ำตามเกณฑ์: หยุดลากและตีกลับชุดที่ตามมา; ถ้าไม่มีมอนตามจะพักลาก',
+      '   · ระบบหนีฉุกเฉินยังมีลำดับก่อนลาก; แสดงคำเตือนเมื่อจำนวนหนีอาจขัดกับจำนวนลาก',
+      '   · Guard / เป้าด้วยมือ / Boss Lock และงานขาย-ฝาก-รับบัพพักโหมดลาก; มอน passive อาจไม่เดินตาม',
+      '   · ตรวจ syntax และสถานการณ์จำลองแล้ว ยังไม่ได้ทดสอบในเกมจริง',
+    ]},
     { v: '4.189.82', d: '2026-09-30', items: [
       '👑 Boss Tracker: พบอยู่ / ยืนยันตาย / ขาดการติดตาม พร้อมเวลาพบและเวลาตาย',
       '   · เก็บประวัติ 100 รายการล่าสุดในเบราว์เซอร์ แยกแมพและ entity; หลังเปิดใหม่ต้องรับข้อมูลใหม่ก่อนยืนยันพบอยู่',
@@ -1809,6 +1820,7 @@
     'lootEnabled', 'lootDelayAfterDropMs', 'lootUseKillPos', 'pickRadiusKill', 'lootRespectOthers', 'filter', 'sendThrottleMs', 'maxAttempts',
     'warpLootEnabled',
     'combatEnabled', 'targetWhitelist', 'targetBlacklist', 'fightBackBlacklisted', 'blacklistFleeEnabled', 'teleportMacroEnabled', 'normalAttackEnabled', 'guardEnabled', 'guardMap', 'guardX', 'guardY', 'autoLoginEnabled', 'autoLoginUser', 'autoLoginPass', 'autoLoginSlot', 'autoRefreshEnabled', 'autoRefreshStallSec', 'attackRange', 'rangedAttackRange',
+    'mobLureEnabled', 'mobLureCount', 'mobLureRadius', 'mobLureMaxSec', 'mobLureStopHp',
     'maxAcquireDistance', 'searchRadii', 'maxChaseDistance', 'attackPendingMax', 'attackAbandonMs', 'antiKS', 'avoidOtherPlayers', 'targetLowestHpFirst',
     'mobFleeEnabled', 'dangerFleeEnabled', 'fleeOnMobCount', 'fleeOnAggroCount', 'fleeOnProximityCount', 'fleeOnProximityRadius', 'fleeMonsters', 'fleeMonsterRadius', 'hpFleeEnabled', 'hpFleePercent', 'hpFleeMode', 'maxEngageSec', 'maxEngageSecSlow', 'slowMonsterSubIds',
     'wanderEnabled', 'warpFindEnabled', 'warpFindUseFlyWing', 'warpFindUseTeleportSkill', 'warpToMonster', 'stuckWarpOnAbandon', 'stepAsideOnAbandon', 'warpToBoss', 'warpToMiniBoss', 'bossAlertRadius', 'noMonsterWarpSec',
@@ -2339,6 +2351,12 @@
     antiKSCooldownMs: 5000,       // มอนที่ถูกตีโดยคนอื่น จะถูกข้ามไป N ms
     avoidOtherPlayers: true,      // ไม่ตีมอนที่อยู่ใกล้ผู้เล่นคนอื่น
     playerProximityRadius: 10,
+    // Walk-only mob collection; disabled until explicitly enabled.
+    mobLureEnabled: false,
+    mobLureCount: 3,
+    mobLureRadius: 6,
+    mobLureMaxSec: 20,
+    mobLureStopHp: 50,
     // target selection
     targetLowestHpFirst: true,    // ถูกรุม ≥2 ตัว → ตีเลือดน้อยสุดก่อน
     // stuck
@@ -5021,6 +5039,7 @@
     if (!activeWS || activeWS.readyState !== 1) return false;
     try {
       activeWS.send(FIXED_UNSTUCK_PACKET);
+      mobLureReset('Unstuck');
       log('🏠 ส่ง Direct Unstuck → 0x73 len=1 [73]');
       return true;
     } catch (e) { log('⚠️ ส่ง Direct Unstuck 0x73 ไม่สำเร็จ:', e && e.message); return false; }
@@ -5599,6 +5618,7 @@
     writeI16LE(b, p, Math.round(y)); p += 2;
     b[p] = 0x00;
     activeWS.send(b);
+    mobLureReset('วาร์ป');
     lastTeleportSentAt = nowMs();
     // ★★★ อัปเดต player.x/y หลังวาร์ป — กันตำแหน่งค้างตลอดกาล (ทำเมื่อ "ส่งจริง" เท่านั้น)
     //   กรณี 1: วาร์ปไปพิกัดเฉพาะ (x,y ≠ -999) → อัปเดตทันที (เรารู้ปลายทาง)
@@ -7242,7 +7262,7 @@
 
   // ---------- loop เก็บของ ----------
   const lootLoop = setInterval(() => {
-    if (chatPauseActive) return;
+    if (chatPauseActive || mobLureOwnsRound()) return;
     if (!CFG.lootEnabled) return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
     // ★ ห้ามเก็บของตอนขาย/ฝาก — อยู่คนละแมป (คิวเก็บ cross-map พังตำแหน่ง + ยิง pickup พลาด)
@@ -7296,7 +7316,7 @@
   //  offset pattern: กลาง → เหนือ3 → ตอ3 → ใต้3 → ตต3 (เหมือนบอทหลัก)
   const WARP_OFFSETS = [[0,0,'กลาง'], [0,-3,'เหนือ3'], [3,0,'ตอ3'], [0,3,'ใต้3'], [-3,0,'ตต3']];
   const warpLoop = setInterval(() => {
-    if (chatPauseActive) return;
+    if (chatPauseActive || mobLureOwnsRound()) return;
     if (!CFG.warpLootEnabled) return;
     if (!currentMap) return;                          // ไม่รู้แมป → ไม่วาร์ป (กัน packet ผิด)
     // ★ ห้ามวาร์ปไปเก็บของตอนขาย/ฝาก (warp ตีกับ warp ของ routine — server ดรอปตัวหลัง)
@@ -8792,6 +8812,7 @@
   const HP_FLEE_RETRY_MS = 1500;
 
   function hpFleeClearCombat() {
+    mobLureReset('หนีฉุกเฉิน');
     target = null;
     monsterAggro.clear();
     mobAttackers.clear();
@@ -8929,6 +8950,7 @@
   // ลำดับ: Direct target-map พร้อม → ไปทันที
   //        Direct ยัง cooldown 30s → Macro → Teleport Clip → Fly Wing → รอ Direct พร้อม → target-map
   function playerFleeClearCombat() {
+    mobLureReset('หนีฉุกเฉิน');
     target = null;
     monsterAggro.clear();
     mobAttackers.clear();
@@ -9214,6 +9236,7 @@
   }
   function triggerChatPause(name, message, chatType, typeName, isTest) {
     chatPauseLast = { name:name||'?', message:String(message||''), chatType:Number(chatType), typeName:typeName||'แชท', at:Date.now(), isTest:!!isTest };
+    mobLureReset('พักการทำงาน', true);
     chatPauseActive = true;
     target = null;
     noMonsterSince = 0;
@@ -9286,7 +9309,7 @@
     activeWS.send(new Uint8Array([0x57, 0x00, 0x00, 0x00, 0x00]));   // sell 0 items = cancel
     return true;
   }
-  function clearCombatThreat() { monsterAggro.clear(); mobAttackers.clear(); }
+  function clearCombatThreat() { mobLureReset('หนีมอน'); monsterAggro.clear(); mobAttackers.clear(); }
 
   // ---------- combat state machine ----------
   // abandon target + (ถ้าเป็น stuck/ล้มเหลว) ตั้ง cooldown กันเลือกตัวเดิมซ้ำทันที
@@ -9327,6 +9350,7 @@
   const BLACKLIST_FLEE_RETRY_MS = 1500;
 
   function blacklistFleeClearCombat() {
+    mobLureReset('หนีฉุกเฉิน');
     target = null;
     monsterAggro.clear();
     mobAttackers.clear();
@@ -9590,6 +9614,7 @@
     id = Number(id) >>> 0;
     const e = entities.get(id);
     if (!id || !e || (!e._isBoss && !e._isMiniBoss)) return false;
+    mobLureReset('Boss Lock', true);
     bossTargetLockId = id; bossTargetLockAt = nowMs();
     if (target && target.id !== id) target = null;
     log('🔒', e._isBoss ? '👑 Boss Lock:' : '👹 Mini Boss Lock:', e.name || '?', '@(', e.x, e.y, ')', reason || '');
@@ -9680,6 +9705,7 @@
     if (r && r.status === 'seen') { r.status = 'lost'; r.updatedAt = nowMs(); bossSaveSoon(); }
   }
   function bossLeaveMap() {
+    mobLureReset('เปลี่ยนแมพ/ตำแหน่ง');
     for (const r of bossRecords.values()) if (r.status === 'seen') bossMarkLost(r.id, r.map);
   }
   function bossConfirmDeath(id, e, at=nowMs()) {
@@ -9749,6 +9775,220 @@
   window.addEventListener('pagehide', bossSaveNow);
   // BOSS_TRACKER_END
 
+  // MOB_LURE_START — walk-only collection, then finish one observed pack.
+  const mobLure = {
+    phase: 'IDLE', map: '', selfId: null, socket: null, startedAt: 0,
+    lastMoveAt: 0, progressAt: 0, pos: null, lastPos: null, lastTickAt: 0,
+    members: new Set(), visited: new Map(), heading: 0, note: '', count: 0,
+  };
+  function mobLureSettings() {
+    const bounded = (v, fallback, min, max) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
+    };
+    return {
+      count: bounded(CFG.mobLureCount, 3, 2, 20),
+      radius: bounded(CFG.mobLureRadius, 6, 2, 12),
+      maxSec: bounded(CFG.mobLureMaxSec, 20, 3, 120),
+      hp: bounded(CFG.mobLureStopHp, 50, 0, 95),
+    };
+  }
+  function mobLureCanRun() {
+    return !!(CFG.mobLureEnabled && CFG.combatEnabled && !manualMode && !CFG.guardEnabled
+      && !bossTargetLockId && !isDead && !isResting && !chatPauseActive
+      && activeWS && activeWS.readyState === 1 && currentMap && playerId != null
+      && Number.isFinite(player.x) && Number.isFinite(player.y)
+      && sellState === 'IDLE' && storageState === 'IDLE' && unstuckBuffState === 'IDLE'
+      && buffVisitState === 'IDLE' && !unstuckBuffAutoFinishPending
+      && !marketScanActive && !marketSweepActive && !marketShopTravelActive
+      && !playerFleePending && !teleportMacroPending && !hpFleePendingClip
+      && !blacklistFleePendingClip && !monsterFleePendingClip && !pendingTeleport
+      && nowMs() >= warpGuardUntil && nowMs() >= fleeCooldownUntil);
+  }
+  function mobLureOwnsRound() {
+    return mobLure.phase !== 'IDLE' && mobLureCanRun();
+  }
+  function mobLureReset(note = '', stopWalk = false) {
+    if (stopWalk && mobLure.phase === 'GATHER' && activeWS && activeWS.readyState === 1
+        && mobLure.map === currentMap && !isDead && Number.isFinite(player.x) && Number.isFinite(player.y)) {
+      sendMove(player.x, player.y);
+    }
+    if (target && target._mobLure) target = null;
+    mobLure.phase = 'IDLE'; mobLure.members.clear(); mobLure.visited.clear();
+    mobLure.startedAt = 0; mobLure.lastMoveAt = 0; mobLure.progressAt = 0;
+    mobLure.pos = null; mobLure.lastPos = null; mobLure.lastTickAt = 0;
+    mobLure.count = 0; mobLure.note = note;
+  }
+  function mobLureSyncContext(now) {
+    if (mobLure.phase === 'IDLE') return;
+    const jumped = mobLure.lastPos && Number.isFinite(player.x) && Number.isFinite(player.y)
+      && Math.hypot(player.x - mobLure.lastPos.x, player.y - mobLure.lastPos.y) > 18;
+    if (!mobLureCanRun() || mobLure.map !== currentMap || mobLure.selfId !== playerId
+        || mobLure.socket !== activeWS || jumped || now - mobLure.lastTickAt > 3000) {
+      mobLureReset('พักรอบลาก');
+      return;
+    }
+    mobLure.lastTickAt = now; mobLure.lastPos = { x: player.x, y: player.y };
+  }
+  function mobLureEligible(m, now, range) {
+    if (!m || m._isBoss || m._isMiniBoss || m._despawnPendingAt || !isTargetable(m, now)) return false;
+    if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) return false;
+    const evidence = Math.max(m._lastSeenAt || 0, m._lastDamageAt || 0,
+      mobAttackers.get(m.id) || 0, monsterAggro.get(m.id) || 0);
+    return evidence > 0 && now - evidence <= 15000
+      && Math.hypot(m.x - player.x, m.y - player.y) <= range;
+  }
+  function mobLureFollowing(m, now) {
+    const hit = mobAttackers.get(m.id), aggro = monsterAggro.get(m.id);
+    return (hit != null && now - hit < CFG.fleeMobWindowMs)
+      || (aggro != null && now - aggro < (CFG.aggroKeepAliveMs || 10000));
+  }
+  function mobLureStartFight(pack, reason, now) {
+    if (!pack.length) return false;
+    mobLure.phase = 'FIGHT'; mobLure.members = new Set(pack.map(m => m.id));
+    mobLure.note = reason; mobLure.count = pack.length;
+    // Cancel the last collection walk, especially for skill-only combat.
+    sendMove(player.x, player.y);
+    log('🚶⚔️ หยุดลาก: ' + reason + ' · ตีชุดนี้ ' + pack.length + ' ตัว');
+    mobLureAcquire(now);
+    return true;
+  }
+  function mobLureAcquire(now) {
+    if (mobLure.phase !== 'FIGHT') return null;
+    let best = null, score = Infinity;
+    for (const id of mobLure.members) {
+      const m = entities.get(id);
+      if (!mobLureEligible(m, now, CFG.maxChaseDistance)) { mobLure.members.delete(id); continue; }
+      const d = Math.hypot(m.x - player.x, m.y - player.y);
+      const s = CFG.targetLowestHpFirst ? monsterHpPct(m) * 1000 + d : d;
+      if (s < score) { best = m; score = s; }
+    }
+    if (!best) return null;
+    target = { id: best.id, x: best.x, y: best.y, acquiredAt: now, engageAt: 0,
+      lastAttackAt: 0, lastAttackResultAt: 0, pendingAttacks: 0, firstAttackAt: 0,
+      stuckCount: 0, warpCount: 0, lastDist: null, _mobLure: true };
+    lastTargetSwitchAt = now; skillUsesOnTarget.clear();
+    return target;
+  }
+  function mobLureWalk(now, candidates, followers) {
+    if (now - mobLure.lastMoveAt < 700) return;
+    if (now < castingUntil || (lastSkillSentAt && now - lastSkillSentAt < lastSkillCastMs)) return;
+    mobLure.lastMoveAt = now;
+    for (const [id, until] of mobLure.visited) if (now >= until) mobLure.visited.delete(id);
+    const followingIds = new Set(followers.map(m => m.id));
+    // Revisit a passive monster only later; do not run back and forth on top of it.
+    for (const m of candidates) {
+      if (!followingIds.has(m.id) && Math.hypot(m.x - player.x, m.y - player.y) <= 2)
+        mobLure.visited.set(m.id, now + 6000);
+    }
+    const next = candidates.find(m => !followingIds.has(m.id) && !mobLure.visited.has(m.id));
+    const near = followers.length ? Math.max(...followers.map(m => Math.hypot(m.x-player.x, m.y-player.y))) : 0;
+    if (near > mobLureSettings().radius + 1) {
+      // Wait for the trailing pack rather than walking out of its leash range.
+      sendMove(player.x, player.y);
+      mobLure.progressAt = now;
+      mobLure.note = 'รอมอนตามเข้าระยะ';
+      return;
+    }
+    let angle = mobLure.heading;
+    if (next) angle = Math.atan2(next.y - player.y, next.x - player.x);
+    else if (followers.length) {
+      const cx = followers.reduce((sum, m) => sum + m.x, 0) / followers.length;
+      const cy = followers.reduce((sum, m) => sum + m.y, 0) / followers.length;
+      if (Math.hypot(player.x - cx, player.y - cy) > 0.5) angle = Math.atan2(player.y - cy, player.x - cx);
+    }
+    // Short strides keep the current pack close while seeking the next monster.
+    const step = followers.length ? 3 : 4;
+    const hasGat = gatCache.has(currentMap);
+    for (const turn of [0, Math.PI/4, -Math.PI/4, Math.PI/2, -Math.PI/2, Math.PI]) {
+      const a = angle + turn;
+      const tx = Math.round(player.x + Math.cos(a) * step), ty = Math.round(player.y + Math.sin(a) * step);
+      if (tx < 0 || ty < 0 || (tx === Math.round(player.x) && ty === Math.round(player.y))) continue;
+      if (hasGat && !gatLineWalkable(player.x, player.y, tx, ty)) continue;
+      if (sendMove(tx, ty)) { mobLure.heading = a; return; }
+    }
+  }
+  function mobLureTick(now) {
+    if (!mobLureCanRun()) return false;
+    const opt = mobLureSettings();
+    const scanRange = Math.max(opt.radius, Math.min(CFG.maxAcquireDistance, CFG.maxChaseDistance));
+    const candidates = [...entities.values()].filter(m => mobLureEligible(m, now, scanRange))
+      .sort((a, b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y));
+    const followers = candidates.filter(m => mobLureFollowing(m, now));
+    const nearby = followers.filter(m => Math.hypot(m.x-player.x, m.y-player.y) <= opt.radius);
+    if (mobLure.phase === 'IDLE') {
+      // If enabled mid-fight, finish that target before beginning a new pull.
+      if (target && entities.get(target.id)?.alive) { mobLure.note = 'รอเป้าเดิมจบ'; return false; }
+      target = null;
+      if (CFG.lootEnabled && (queue.size || (CFG.warpLootEnabled && warpQueue.size))) return true;
+      mobLure.phase = 'GATHER'; mobLure.map = currentMap; mobLure.selfId = playerId;
+      mobLure.socket = activeWS; mobLure.startedAt = now; mobLure.lastTickAt = now;
+      mobLure.pos = { x: player.x, y: player.y }; mobLure.progressAt = now;
+      mobLure.heading = Math.random() * Math.PI * 2;
+      mobLure.note = 'เดินรวบมอน';
+    }
+    if (mobLure.phase === 'FIGHT') {
+      // Keep fighting this pack as its size falls; never start pulling after the first kill.
+      for (const id of mobLure.members) if (!mobLureEligible(entities.get(id), now, CFG.maxChaseDistance)) mobLure.members.delete(id);
+      // New eligible attackers that joined the fight also belong to this round.
+      for (const m of nearby) mobLure.members.add(m.id);
+      if (target && !mobLure.members.has(target.id)) {
+        sendMove(player.x, player.y); target = null;
+      }
+      if (!mobLure.members.size) {
+        mobLureReset('จบชุด · เก็บของก่อนลากรอบใหม่');
+        combatCooldownUntil = Math.max(combatCooldownUntil, now + Math.max(800, CFG.postCombatDelayMs || 0));
+        return true;
+      }
+      mobLure.count = mobLure.members.size;
+      if (!target) mobLureAcquire(now);
+      return false;
+    }
+    mobLure.count = nearby.length;
+    const pct = hpSafetyPct();
+    const lowHp = opt.hp > 0 && pct != null && pct <= opt.hp;
+    if (lowHp && followers.length) return !mobLureStartFight(followers, 'HP ≤ ' + opt.hp + '%', now);
+    if (opt.hp > 0 && (pct == null || lowHp)) {
+      mobLure.note = pct == null ? 'รอข้อมูล HP' : 'พักลาก · HP ต่ำ';
+      if (mobLure.lastMoveAt) { sendMove(player.x, player.y); mobLure.lastMoveAt = 0; }
+      mobLure.startedAt = now; mobLure.progressAt = now;
+      return true;
+    }
+    if (nearby.length >= opt.count) return !mobLureStartFight(nearby, 'ครบ ' + opt.count + ' ตัว', now);
+    if (Math.hypot(player.x-mobLure.pos.x, player.y-mobLure.pos.y) >= 1) {
+      mobLure.pos = { x: player.x, y: player.y }; mobLure.progressAt = now;
+    }
+    const timedOut = now - mobLure.startedAt >= opt.maxSec * 1000;
+    const stuck = mobLure.lastMoveAt > 0 && now - mobLure.progressAt >= 4000;
+    if (timedOut || stuck) {
+      const pack = followers.length ? followers : candidates.slice(0, 1);
+      if (mobLureStartFight(pack, timedOut ? 'ครบเวลาลาก ' + opt.maxSec + ' วิ' : 'เดินไม่คืบหน้า 4 วิ', now)) return false;
+      mobLure.startedAt = now; mobLure.progressAt = now;
+      mobLure.heading += Math.PI / 2;
+    }
+    mobLure.note = 'เดินรวบมอน'; noMonsterSince = 0;
+    mobLureWalk(now, candidates, followers);
+    return true; // No acquire, retaliation, attack, Auto-Skill or Warp Find while collecting.
+  }
+  function mobLureStatus() {
+    const o = mobLureSettings();
+    if (!CFG.mobLureEnabled) return 'ปิด';
+    if (!CFG.combatEnabled) return 'รอ Combat ON';
+    if (CFG.guardEnabled || manualMode || bossTargetLockId) return 'พักลาก · Guard / เป้ามือ / Boss Lock';
+    if (!mobLureCanRun()) return 'พักลาก · รอระบบหลักพร้อม';
+    if (mobLure.phase === 'GATHER') return mobLure.note + ' · ' + mobLure.count + '/' + o.count + ' ตัว · '
+      + Math.max(0, Math.ceil(o.maxSec - (nowMs()-mobLure.startedAt)/1000)) + ' วิ';
+    if (mobLure.phase === 'FIGHT') return 'กำลังตีชุดนี้ · เหลือ ' + mobLure.count + ' ตัว · ' + mobLure.note;
+    return mobLure.note || 'พร้อมลาก';
+  }
+  function mobLureFleeWarning() {
+    if (!CFG.mobLureEnabled || CFG.mobFleeEnabled === false) return '';
+    const n = mobLureSettings().count;
+    const limits = [CFG.fleeOnMobCount, CFG.fleeOnAggroCount, CFG.fleeOnProximityCount];
+    return limits.some(x => Number(x) > 0 && Number(x) <= n)
+      ? 'เกณฑ์หนีมอนรุมบางช่อง ≤ จำนวนลาก: ระบบอาจหนีก่อนครบจำนวน ตรวจจำนวนและรัศมีหนีด้านล่าง' : '';
+  }
+  // MOB_LURE_END
   function acquireTarget(now) {
     // ★ v4.189.81 Boss Lock ชนะ target selection ปกติ
     if (bossTargetLockId) {
@@ -9965,6 +10205,7 @@
   }, 10000);
   const combatLoop = setInterval(() => {
     const now = nowMs();
+    mobLureSyncContext(now);
     // ★★ กำลังขาย/ฝากของ → routine เป็นเจ้าของตัวละคร — หยุด combatLoop ทั้งก้อน
     //   (เคสจริงจาก log: สุ่มเดินแย่งทาย NPC / ตี+สกิลมอนข้ามแมปจากพิกัด optimistic /
     //    farm-guard ส่ง warp กลับฟาร์มสู้กับ warp ของ routine จนลูป "ยังอยู่แมปผิด" นาที)
@@ -10241,7 +10482,7 @@
     // === 1b. ★ ถ้ามีของรอเก็บ → หยุด combat ชั่วคราว ให้ loot ทำงานก่อน ===
     //   เหตุผล: ฆ่ามอนได้ → เก็บของก่อน แล้วค่อยไปตีตัวใหม่ (เหมือนบอทหลัก _lootBlockingFarm)
     //   ยกเว้น: ถ้ากำลังโดนรุม (mobAttackers ≥1) → ยังตีต่อเพื่อป้องกันตัวเอง
-    if (CFG.lootEnabled && queue.size > 0 && getMobAttackerCount() === 0) {
+    if (CFG.lootEnabled && queue.size > 0 && getMobAttackerCount() === 0 && !mobLureOwnsRound()) {
       return;   // มีของรอเก็บ + ไม่โดนรุม → รอ lootLoop เก็บก่อน
     }
 
@@ -10265,6 +10506,9 @@
       return;
     }
 
+    // Walk-only collection owns the combat tick until the pack is ready.
+    if (mobLureTick(now)) return;
+
     // === 1b. Defensive retarget === ถ้าโดนมอนตี/aggro (ที่ไม่ใช่ target ปัจจุบัน) → สลับมาตีตัวนั้น
     //   สำคัญ: ถ้ามอน aggro เรา ต้องสู้กลับ ไม่ใช่เดินหาตัวอื่น
     //   ★★ sticky target guard: ถ้ากำลังตีอยู่ + server ตอบกลับ < 5s → ไม่สลับ (กันสลับไปมา)
@@ -10273,7 +10517,7 @@
     const _mobAtkCount = getMobAttackerCount();
     const _hpPct = hpPct();
     const _breakSticky = _mobAtkCount >= 2 || (_hpPct != null && _hpPct < 50);
-    if (!unstuckBuffAutoFinishPending && player.x != null && (!_breakSticky || !target) && !(target && target.lastAttackResultAt && now - target.lastAttackResultAt < 5000)) {
+    if (mobLure.phase !== 'FIGHT' && !unstuckBuffAutoFinishPending && player.x != null && (!_breakSticky || !target) && !(target && target.lastAttackResultAt && now - target.lastAttackResultAt < 5000)) {
       let attacker = null, attackerDist = Infinity;
       // ★★ รวม mobAttackers (ตีกายภาพ) + monsterAggro (สกิลเล็งเรา) → ตอบโต้ทุกกรณี
       const threats = new Map();
@@ -10559,6 +10803,8 @@
       // ★★ กำลังเดินไป/ยืนรับบัพ/กลับจากบอทบัพ (buffVisit) — ไม่หามอนใหม่ ไม่ wander
       //   (ให้ buffVisitLoop เป็นเจ้าของการเดิน · ถ้าโดนมอนตีระหว่างทาง combat ตีกลับผ่าน defensive อยู่แล้ว)
       if (typeof buffVisitState !== 'undefined' && buffVisitState !== 'IDLE') return;
+      // Do not acquire an unrelated monster after a pulled target was abandoned.
+      if (mobLure.phase === 'FIGHT') { mobLureAcquire(now); return; }
       const t = CFG.guardEnabled ? acquireGuardTarget(now) : acquireTarget(now);
       if (t) { target = t; noMonsterSince = 0; return; }
       // ★★ GUARD: ไม่มีมอนตี → กลับจุดยืน + ห้าม wander/วาร์ปหามอน (นิ่งประจำการ)
@@ -11780,6 +12026,28 @@
       log('📦 ดีเลย์ก่อนเก็บ =', ms + 'ms' + (ms ? ' (รอหลังของตก)' : ' (เก็บทันที)'));
     },
 
+    toggleMobLure(on) {
+      mobLureReset('', true);
+      CFG.mobLureEnabled = !!on;
+      saveConfigDebounced();
+      log('🚶 ลากมอนก่อนตี:', on ? 'ON · เป้าหมาย ' + mobLureSettings().count + ' ตัว' : 'OFF');
+    },
+    setMobLureOptions(options) {
+      const fields = { count: ['mobLureCount',2,20], radius: ['mobLureRadius',2,12],
+        maxSec: ['mobLureMaxSec',3,120], hp: ['mobLureStopHp',0,95] };
+      const updates = [];
+      for (const [key, value] of Object.entries(options || {})) {
+        const f = fields[key], n = Number(value);
+        if (!f || value === '' || value == null || !Number.isInteger(n) || n < f[1] || n > f[2]) return false;
+        updates.push([f[0], n]);
+      }
+      for (const [key, value] of updates) CFG[key] = value;
+      saveConfigDebounced();
+      return true;
+    },
+    mobLureStatus() { return { enabled: !!CFG.mobLureEnabled, phase: mobLure.phase,
+      observedCount: mobLure.count, settings: mobLureSettings(), status: mobLureStatus(), warning: mobLureFleeWarning() }; },
+
     // ---------- Auto-Combat ----------
     combatOn() {
       CFG.combatEnabled = true;
@@ -11790,6 +12058,7 @@
       log('⚔️ Auto-Combat: ON · Warp Find เปิดใช้งานตามค่าที่ตั้ง และเริ่มนับ AB auto ใหม่');
     },
     combatOff() {
+      mobLureReset('รอ Combat ON', true);
       CFG.combatEnabled = false; target = null;
       // ★ v4.189.60 — Combat เป็น Master Switch ของ Combat Flee: ยกเลิก fallback/pending ที่ยังค้างอยู่ทันที
       hpFleeLatched = false; hpFleePendingClip = null; hpFleeNextTryAt = 0;
@@ -12965,6 +13234,17 @@
             <div style="font-size:10px;color:#ffd166;margin:4px 0 6px;line-height:1.5">⚔️ Combat เป็นสวิตช์หลัก: Combat OFF = ปิด HP Flee / หนี Blacklist / หนีมอนอันตราย / หนีมอนรุมทั้งหมด</div>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ Trigger เฉพาะตอนมอนใน Target Blacklist โจมตีเรา · ไม่หนีเพียงเพราะเห็นมอนอยู่ใกล้<br>★ ลำดับหนี: Direct/Database TP → Macro (ถ้าเปิด) → Teleport Clip → Fly Wing 601 · ต้องเปิด ⚔️ Combat</div>
             <div class="btns"><button id="__assist_applywhitelist">ตั้ง whitelist</button><button id="__assist_applyblacklist">ตั้ง blacklist</button></div>
+            <div style="margin:8px 0;padding:8px;border:1px solid #384657;border-radius:7px;">
+              <b>🚶 ลากมอนก่อนตี</b>
+              <div class="btns"><button id="__assist_t_moblure" class="off">ลากมอน: OFF</button></div>
+              <div class="field"><label>ลากครบกี่ตัวค่อยตี (2–20)</label><input type="number" id="__assist_lurecount" min="2" max="20" step="1"></div>
+              <div class="field"><label>รัศมีนับมอนที่เล็ง/ตีเรา (2–12 ช่อง)</label><input type="number" id="__assist_lureradius" min="2" max="12" step="1"></div>
+              <div class="field"><label>เวลาลากสูงสุด (3–120 วินาที)</label><input type="number" id="__assist_luremaxsec" min="3" max="120" step="1"></div>
+              <div class="field"><label>หยุดลากเมื่อ HP ≤ % (0 = ไม่ใช้, สูงสุด 95)</label><input type="number" id="__assist_lurehp" min="0" max="95" step="1"></div>
+              <div id="__assist_lurestatus" style="font-size:11px;color:#7dd3fc;margin:4px 0;">ปิด</div>
+              <div id="__assist_lurewarning" style="font-size:10px;color:#ffd166;"></div>
+              <div style="font-size:10px;color:#9aa0a6;line-height:1.5;">ปรับค่าแล้วบันทึกเมื่อออกจากช่อง · เปิดร่วมกับ Combat<br>เดินรวบ → ตีชุดนี้ → เก็บของ · ระหว่างลากพัก Auto-Skill และวาร์ปหามอน<br>นับเฉพาะมอนตามตัวกรองเป้าเดิมที่มีข้อมูลเล็ง/ตีเรา ไม่รวม Boss/Mini Boss · มอน passive อาจไม่ตาม<br>ครบเวลาหรือเดินติด 4 วิจะตีเท่าที่หาได้ · HP ต่ำหยุดลาก · ระบบหนีมีลำดับก่อนลากเสมอ</div>
+            </div>
             <div class="field"><label>ระยะโจมตี (ช่อง) — นักธนูตั้ง >2 เพื่อตีไกล</label><input type="number" id="__assist_attackrange" min="0" max="15"></div>
             <div class="field"><label>รัศมีค้นหามอน (ช่อง) — เลือกมอนในระยะนี้เท่านั้น (เล็ก=ไม่เดินไกล)</label><input type="number" id="__assist_maxacq" min="1" max="50" placeholder="30"></div>
             <div class="field"><label>ไล่ตามมอนสูงสุด (ช่อง) — ไกลกว่านี้ abandon</label><input type="number" id="__assist_maxchase" min="5" max="100" placeholder="40"></div>
@@ -13546,6 +13826,19 @@
       if (!CFG.combatEnabled && !confirm('เปิด Auto-Combat?\n\nส่ง packet โจมตีจริง — ตั้ง whitelist ก่อน\nใช้ในความรับผิดชอบของคุณ')) return;
       CFG.combatEnabled ? ASSIST.combatOff() : ASSIST.combatOn();
     });
+    root.querySelector('#__assist_t_moblure').addEventListener('click', () => ASSIST.toggleMobLure(!CFG.mobLureEnabled));
+    const lureInputs = { '#__assist_lurecount': 'count', '#__assist_lureradius': 'radius',
+      '#__assist_luremaxsec': 'maxSec', '#__assist_lurehp': 'hp' };
+    for (const [sel, key] of Object.entries(lureInputs)) {
+      const el = root.querySelector(sel);
+      el.value = mobLureSettings()[key];
+      el.addEventListener('change', () => {
+        if (!ASSIST.setMobLureOptions({ [key]: el.value })) {
+          el.value = mobLureSettings()[key];
+          log('⚠️ ค่าลากมอนไม่ถูกต้อง — ใช้จำนวนเต็มในช่วงที่ระบุ');
+        }
+      });
+    }
     root.querySelector('#__assist_applywhitelist').addEventListener('click', () => ASSIST.setTargetWhitelist(...parseList('#__assist_whitelist')));
     root.querySelector('#__assist_applyblacklist').addEventListener('click', () => ASSIST.setTargetBlacklist(...parseList('#__assist_blacklist')));
     root.querySelector('#__assist_applycombat').addEventListener('click', () => {
@@ -14891,6 +15184,18 @@ return `<div class="invslot" data-itemid="${x.id}" data-name="${esc(nameBar)}" d
     if (combatBtn) { combatBtn.textContent = 'Combat: ' + (CFG.combatEnabled ? 'ON' : 'OFF'); combatBtn.className = CFG.combatEnabled ? 'on' : 'off'; }
     const syncInput = (sel, val) => { const el = root.querySelector(sel); if (el && !isEditing(el)) el.value = val; };
     const syncToggle = (sel, on) => { const el = root.querySelector(sel); if (el) el.className = on ? 'on' : 'off'; };
+    const lureOpt = mobLureSettings();
+    syncInput('#__assist_lurecount', lureOpt.count);
+    syncInput('#__assist_lureradius', lureOpt.radius);
+    syncInput('#__assist_luremaxsec', lureOpt.maxSec);
+    syncInput('#__assist_lurehp', lureOpt.hp);
+    syncToggle('#__assist_t_moblure', CFG.mobLureEnabled);
+    const lureBtn = root.querySelector('#__assist_t_moblure');
+    if (lureBtn) lureBtn.textContent = 'ลากมอน: ' + (CFG.mobLureEnabled ? 'ON' : 'OFF');
+    const lureInfo = root.querySelector('#__assist_lurestatus');
+    if (lureInfo) lureInfo.textContent = mobLureStatus();
+    const lureWarn = root.querySelector('#__assist_lurewarning');
+    if (lureWarn) lureWarn.textContent = mobLureFleeWarning();
     syncInput('#__assist_whitelist', CFG.targetWhitelist.join(','));
     syncInput('#__assist_blacklist', CFG.targetBlacklist.join(','));
     syncInput('#__assist_attackrange', CFG.rangedAttackRange > 0 ? CFG.rangedAttackRange : CFG.attackRange);
