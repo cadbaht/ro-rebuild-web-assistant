@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.85
+// @version      4.189.86
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.85';
+  const VERSION = '4.189.86';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.86', d: '2026-10-02', items: [
+      '🌀 ถอด Direct/Database TP ออกจากวาร์ปหามอนและปุ่มทดสอบวาร์ปหามอน',
+      '   · ลำดับใหม่: Macro → Teleport Clip → Fly Wing; วิธีที่ปิดหรือใช้ไม่ได้จะถูกข้าม',
+      '   · วาร์ปหามอนไม่รอ cooldown ของ Direct; คงช่วงห่างวาร์ปอัตโนมัติอย่างน้อย 3 วินาที',
+      '   · ปุ่มทดสอบใช้ลำดับใหม่ และทดสอบ Macro ได้แม้ Combat OFF',
+      '   · ต้องเปิดวิธีวาร์ปอย่างน้อย 1 วิธี; Clip ใช้ SP ≥30 และ Fly Wing ต้องมีไอเทม 601',
+      '   · ตรวจ syntax/สถานการณ์จำลองแล้ว ยังไม่ได้ทดสอบในเกมจริง',
+    ]},
     { v: '4.189.85', d: '2026-09-30', items: [
       '🧹 ถอด Refine Diagnostic: เอาปุ่มบันทึกตีบวก ทำเครื่องหมายผล และส่งออก JSON ออกจาก Storage',
       '   · เอาตัวบันทึกตีบวก การพักออโต้ระหว่างจับ และคำสั่ง refine ใน console ออก',
@@ -2311,7 +2319,7 @@
     targetBlacklist: [],          // ไม่ตีมอนเหล่านี้ (ชื่อหรือ sprite id)
     fightBackBlacklisted: true,   // ★ โดนมอนใน blacklist ตี → ตีกลับไหม? (false = เคารพ blacklist เด็ดขาด แม้โดนตี)
     blacklistFleeEnabled: false,   // ★ โดนมอนใน targetBlacklist โจมตี → หนีในแมพด้วย Direct → Macro → Clip → Fly Wing
-    teleportMacroEnabled: false,   // ★ Shared Fixed Macro: priority หลัง Direct และก่อน Teleport Clip ในทุกระบบวาร์ป
+    teleportMacroEnabled: false,   // ★ Shared Fixed Macro: Warp Find เริ่มที่ Macro; ระบบหนีใช้หลัง Direct และก่อน Clip
     normalAttackEnabled: true,    // ★★ โหมดเวทย์: ปิด = ไม่ส่ง ATTACK เลย (ใช้แต่สกิล — นักเวทย์ร่ายไกล ไม่โดนลากเข้าปะทะ)
     // ★★ GUARD MODE — ยืนประจำตำแหน่ง ไม่หามอนเอง ตีกลับเฉพาะมอนที่มาตีเรา
     //   เตรียมไว้สำหรับบอทบัพ (คอยประจำจุดใช้สกิลให้คนอื่น)
@@ -8688,17 +8696,17 @@
     if (!currentMap) { log('⚠️ วาร์ปหนี: ยังไม่รู้ชื่อแมป'); return false; }
     return sendTeleport(currentMap, -999, -999);
   }
-  // ★ v4.189.58 — Unified Warp Find priority:
-  // Direct/Database TP → Fixed Macro → Teleport Clip → Fly Wing
+  // ★ v4.189.86 — Warp Find priority (ไม่มี Direct/Database TP):
+  // Fixed Macro → Teleport Clip → Fly Wing
   // วิธีที่ปิด/ใช้ไม่ได้จะถูกข้าม แต่ลำดับ priority จะไม่สลับ
   const WARP_FIND_CLIP_FALLBACK_MS = 450;
 
   function warpFindPriorityLabel() {
-    const parts = ['Direct'];
+    const parts = [];
     if (CFG.teleportMacroEnabled === true) parts.push('Macro');
     if (CFG.warpFindUseTeleportSkill) parts.push('Clip');
     if (CFG.warpFindUseFlyWing) parts.push('Fly Wing');
-    return parts.join(' → ');
+    return parts.length ? parts.join(' → ') : 'ไม่มีวิธีวาร์ปที่เปิดอยู่';
   }
 
   function warpFindUseFlyWing(reason) {
@@ -8747,7 +8755,7 @@
 
   function warpFindTryMacroThenClipWing(manualTest, reason) {
     if (CFG.teleportMacroEnabled === true) {
-      const started = startTeleportHotkeyMacro('warpfind', 'Warp Find',
+      const started = startTeleportHotkeyMacro(manualTest ? 'test' : 'warpfind', 'Warp Find',
         (macroReason) => warpFindTryClipThenWing(manualTest, [reason, macroReason].filter(Boolean).join(' · ')),
         () => { lastWarpFindAt = nowMs(); }
       );
@@ -8767,23 +8775,14 @@
     if (!currentMap) return false;
 
     const now = nowMs();
-    // Priority 1 — Direct/Database TP. ใช้ gate เดียวกับระบบหนีเพื่อไม่ยิง Direct ซ้อนกับ cross-map teleport ที่เพิ่งส่ง
-    const directReady = directPriorityReady(now);
-    if (directReady) {
-      log('🌀 WarpFind → Direct/Database TP ก่อน');
-      if (sendRandomWarp()) {
-        lastWarpFindAt = nowMs();
-        return true;
-      }
-      log('⚠️ WarpFind: Direct ส่งไม่สำเร็จ → Macro');
-    } else {
-      const left = directPriorityCooldownLeft(now);
-      dbg('🌀 WarpFind: Direct ยัง cooldown ' + Math.ceil(left / 1000) + 's → Macro');
+    if (CFG.teleportMacroEnabled !== true && !CFG.warpFindUseTeleportSkill && !CFG.warpFindUseFlyWing) {
+      log('⚠️ WarpFind: ต้องเปิด Macro / Teleport Clip / Fly Wing อย่างน้อย 1 วิธี');
+      return false;
     }
 
-    // Priority 2 → 4: Macro → Clip → Wing
+    // Priority 1 → 3: Macro → Clip → Wing; ไม่เรียก Direct หรืออ่าน cooldown ของ Direct
     lastWarpFindAt = now;
-    return warpFindTryMacroThenClipWing(manualTest, directReady ? 'Direct ส่งไม่สำเร็จ' : 'Direct ยัง cooldown 30s');
+    return warpFindTryMacroThenClipWing(manualTest);
   }
 
   // ★ v4.189.26 — Manual Warp Find diagnostic
@@ -8792,9 +8791,8 @@
     const mode = warpFindPriorityLabel();
     const wingStock = inventory.has(601) ? (inventory.get(601) || 0) : 0;
     const autoCooldownLeft = Math.max(0, 3000 - (now - lastWarpFindAt));
-    const directCdLeft = directPriorityCooldownLeft(now);
     const before = { map: currentMap, x: player.x, y: player.y };
-    log('🧪 WarpFind Test — priority=' + mode + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF') + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF') + ' | noMonster=' + CFG.noMonsterWarpSec + 's | autoCD=' + autoCooldownLeft + 'ms | DirectCD=' + Math.ceil(directCdLeft / 1000) + 's | SP=' + (sp.cur == null ? '?' : sp.cur) + ' | Wing=' + wingStock);
+    log('🧪 WarpFind Test — priority=' + mode + ' | Combat=' + (CFG.combatEnabled ? 'ON' : 'OFF') + ' | WarpFind=' + (CFG.warpFindEnabled ? 'ON' : 'OFF') + ' | noMonster=' + CFG.noMonsterWarpSec + 's | autoCD=' + autoCooldownLeft + 'ms | SP=' + (sp.cur == null ? '?' : sp.cur) + ' | Wing=' + wingStock);
     if (!CFG.warpFindEnabled) log('ℹ️ WarpFind Test: ปุ่ม Auto วาร์ปหามอนยัง OFF — Test จะลองวาร์ปให้ แต่ Auto จะไม่ทำงานจนกว่าจะเปิด');
     if (!CFG.combatEnabled) log('ℹ️ WarpFind Test: Combat ยัง OFF — Test bypass ชั่วคราว แต่ Auto WarpFind จะถูกบล็อก');
     if (!currentMap) { log('❌ WarpFind Test: ยังไม่รู้ชื่อแมป'); return false; }
@@ -13273,13 +13271,13 @@
             <div class="btns">
               <button id="__assist_t_wander" class="on">🚶 เดินหามอน</button>
               <button id="__assist_t_warpfind" class="off">🌀 วาร์ปหามอน</button>
-              <button id="__assist_t_warpfindwing" class="off" title="ON = อนุญาต Fly Wing เป็น fallback ขั้นสุดท้ายหลัง Direct → Macro → Clip · ต้องมี Item ID 601">🪽 Fly Wing</button>
-              <button id="__assist_t_warpfindskill" class="on" title="ON = อนุญาต Teleport Clip เป็น fallback หลัง Direct → Macro และก่อน Fly Wing · เปิดพร้อม Fly Wing ได้">📎 Teleport Clip</button>
+              <button id="__assist_t_warpfindwing" class="off" title="ON = อนุญาต Fly Wing เป็น fallback ขั้นสุดท้ายหลัง Macro → Clip · ต้องมี Item ID 601">🪽 Fly Wing</button>
+              <button id="__assist_t_warpfindskill" class="on" title="ON = อนุญาต Teleport Clip หลัง Macro และก่อน Fly Wing · เปิดพร้อม Fly Wing ได้">📎 Teleport Clip</button>
               <button id="__assist_t_tpmacro" class="off" title="ON = ใช้ Fixed Macro Alt↓→1→2→3→Alt↑ เป็นอีกทางวาร์ป ใช้ร่วมทั้งหามอนและหนีมอน">⌨️ Macro</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
-              <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ตามลำดับ Direct → Macro → Clip → Fly Wing">🧪 ทดสอบวาร์ปหามอน</button>
+              <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ตามลำดับ Macro → Clip → Fly Wing">🧪 ทดสอบวาร์ปหามอน</button>
             </div>
-            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับมาตรฐานทุกระบบวาร์ป: <b>Direct → Macro → Teleport Clip → Fly Wing</b> · หลังใช้ Direct จะ cooldown 30 วิ ระหว่างนั้นข้ามไป Macro ทันที · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม</div>
+            <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับวาร์ปหามอน: <b>Macro → Teleport Clip → Fly Wing</b> · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม · ต้องเปิดอย่างน้อย 1 วิธี</div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
             <div class="field"><label>เลิกตีมอนถ้าสู้นานเกิน (วินาที) — หันไปตีตัวอื่น</label><input type="number" id="__assist_engagesec" min="5" max="600" placeholder="40"></div>
