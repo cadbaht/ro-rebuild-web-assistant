@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.86
+// @version      4.189.87
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,17 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.86';
+  const VERSION = '4.189.87';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.87', d: '2026-10-03', items: [
+      '🪽 แก้อ่าน Inventory ข้ามทั้งชุดเมื่อน้ำหนักสูงสุดมีทศนิยม ทำให้มองไม่เห็น Fly Wing และไอเทมอื่น',
+      '   · อ่านน้ำหนักหน่วย ×10 ได้แม้หาร 10 ไม่ลงตัว; คงการตรวจรูปแบบและขอบเขตข้อมูล',
+      '🧪 เพิ่มปุ่มทดสอบ Fly Wing อย่างเดียว ใช้ 1 ชิ้นโดยไม่ผ่าน Macro / Clip / Direct',
+      '   · ปิด Combat ก่อนทดสอบ; แสดงจำนวนก่อน–หลังใช้และตำแหน่งเปลี่ยนแยกกัน ไม่ถือว่าส่งคำสั่งแล้วคือวาร์ปสำเร็จ',
+      '   · คงลำดับวาร์ปหามอน Macro → Teleport Clip → Fly Wing และค่าเปิด/ปิดเดิม',
+      '   · ตรวจ syntax/สถานการณ์จำลองแล้ว ยังไม่ได้ทดสอบในเกมจริง',
+    ]},
     { v: '4.189.86', d: '2026-10-02', items: [
       '🌀 ถอด Direct/Database TP ออกจากวาร์ปหามอนและปุ่มทดสอบวาร์ปหามอน',
       '   · ลำดับใหม่: Macro → Teleport Clip → Fly Wing; วิธีที่ปิดหรือใช้ไม่ได้จะถูกข้าม',
@@ -2963,6 +2971,7 @@
   let buffVisitLastMoveAt = 0;
   let buffVisitLastWarpAt = 0;
   const buffVisitLoop = setInterval(() => {
+    if (flyWingTestPending) return;
     if (chatPauseActive && buffVisitState === 'IDLE') return;
     if (!CFG.buffVisitEnabled) return;
     if (typeof unstuckBuffAutoFinishPending !== 'undefined' && unstuckBuffAutoFinishPending) return; // ★ v4.189.0 AB Auto รอปิดงานมอนล่าสุด
@@ -5357,6 +5366,7 @@
     clearUnstuckBuffAutoFinishPending();
   }
   const unstuckBuffLoop = setInterval(() => {
+    if (flyWingTestPending) return;
     if (chatPauseActive && unstuckBuffState === 'IDLE') return;
     if (!CFG.unstuckBuffEnabled) return;
     // ★ v4.188.2: Combat gate ใช้กับรอบ Auto ตอน IDLE เท่านั้น
@@ -6428,7 +6438,9 @@
         //   → รับ 0x01-0x20 (ไม่รับ 0 = กันตัดเข้าก้อน stat ที่เป็นเลข 0)
         if (u[i] < 0x01 || u[i] > 0x20 || u[i+1] || u[i+2] || u[i+3]) continue;
         const _mw = u32(u, i + 4);
-        if (_mw % 10 !== 0 || _mw < 1000 || _mw > 999990) continue;
+        // ★ v4.189.87 — maxWeight มีทศนิยมได้ (เช่น 3128.4 → 31284)
+        // ห้ามบังคับหาร 10 ลงตัว: จะข้าม Inventory ทั้งชุดและมองว่า Fly Wing หมด
+        if (_mw < 1000 || _mw > 999990) continue;
         // ★ f32 สัดส่วน ~0.04-0.99 → exponent byte = 3d/3e/3f (เดิมรับ 3f เท่านั้น — หลุดเคส < 0.5)
         if (u[i + 11] < 0x3d || u[i + 11] > 0x3f) continue;
         const _cw = u16(u, i + 12);
@@ -7283,6 +7295,7 @@
 
   // ---------- loop เก็บของ ----------
   const lootLoop = setInterval(() => {
+    if (flyWingTestPending) return;
     if (chatPauseActive || mobLureOwnsRound()) return;
     if (!CFG.lootEnabled) return;
     if (typeof unstuckBuffState !== 'undefined' && unstuckBuffState !== 'IDLE') return;
@@ -7337,6 +7350,7 @@
   //  offset pattern: กลาง → เหนือ3 → ตอ3 → ใต้3 → ตต3 (เหมือนบอทหลัก)
   const WARP_OFFSETS = [[0,0,'กลาง'], [0,-3,'เหนือ3'], [3,0,'ตอ3'], [0,3,'ใต้3'], [-3,0,'ตต3']];
   const warpLoop = setInterval(() => {
+    if (flyWingTestPending) return;
     if (chatPauseActive || mobLureOwnsRound()) return;
     if (!CFG.warpLootEnabled) return;
     if (!currentMap) return;                          // ไม่รู้แมป → ไม่วาร์ป (กัน packet ผิด)
@@ -7622,6 +7636,7 @@
   }
   // สร้าง trigger check + state machine ใน loop เดียว
   const sellLoop = setInterval(() => {
+    if (flyWingTestPending) return;
     if (chatPauseActive && sellState === 'IDLE') return;
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
@@ -7831,6 +7846,7 @@
     return queue;
   }
   const storageLoop = setInterval(() => {
+    if (flyWingTestPending) return;
     if (chatPauseActive && storageState === 'IDLE') return;
     if (!activeWS || activeWS.readyState !== 1) return;
     if (isDead) return;
@@ -8765,6 +8781,7 @@
   }
 
   function sendWarpFind(opts) {
+    if (flyWingTestPending) return false;
     const manualTest = !!(opts && opts.manualTest);
     // Auto WarpFind ต้อง Combat ON; ปุ่มทดสอบ manual bypass gate นี้
     if (!manualTest && !CFG.combatEnabled) { dbg('🛑 WarpFind ถูกบล็อก: Combat OFF'); return false; }
@@ -8810,6 +8827,45 @@
       const moved = before.x != null && before.y != null && player.x != null && player.y != null ? Math.hypot(player.x - before.x, player.y - before.y) >= 2 : false;
       if (mapChanged || moved) log('✅ WarpFind Test: เห็นการวาร์ปแล้ว → ' + (currentMap || '?') + ' @(' + Math.round(player.x) + ',' + Math.round(player.y) + ')');
       else log('⚠️ WarpFind Test: ยังไม่เห็นตำแหน่งเปลี่ยนหลัง 2.2s — ลำดับที่ลอง: ' + mode);
+    }, 2200);
+    return true;
+  }
+
+  // ★ v4.189.87 — ทดสอบไอเทมจริง 1 ครั้ง แยกจากลำดับ Macro/Clip
+  let flyWingTestPending = false;
+  function testFlyWingNow() {
+    if (flyWingTestPending) { log('⏳ Fly Wing Test: กำลังรอผลรอบก่อน'); return false; }
+    if (CFG.combatEnabled) { log('⚠️ Fly Wing Test: ปิด Combat ก่อน และยืนอยู่กับที่ระหว่างทดสอบ'); return false; }
+    if (teleportMacroPending || playerFleePending || hpFleePendingClip || monsterFleePendingClip || blacklistFleePendingClip || pendingTeleport) {
+      log('⚠️ Fly Wing Test: ยังมีลำดับวาร์ปอื่นค้างอยู่ — รอให้จบก่อน'); return false;
+    }
+    if (sellState !== 'IDLE' || storageState !== 'IDLE' || buffVisitState !== 'IDLE' || unstuckBuffState !== 'IDLE') {
+      log('⚠️ Fly Wing Test: กำลังขาย/ฝาก/รับบัพ — รอให้จบก่อน'); return false;
+    }
+    if (isDead) { log('❌ Fly Wing Test: ตัวละครตายอยู่'); return false; }
+    if (!activeWS || activeWS.readyState !== 1) { log('❌ Fly Wing Test: การเชื่อมต่อเกมยังไม่พร้อม'); return false; }
+    if (!currentMap || player.x == null || player.y == null) { log('❌ Fly Wing Test: ยังไม่รู้แมปหรือพิกัดตัวละคร'); return false; }
+    const stock = inventory.get(601) || 0;
+    if (stock <= 0) { log('❌ Fly Wing Test: ไม่พบ Fly Wing (601) ในข้อมูลกระเป๋า — รีโหลดเกมหลังติดตั้งรุ่นนี้เพื่ออ่านกระเป๋าใหม่'); return false; }
+    const before = { ws: activeWS, map: currentMap, x: player.x, y: player.y, stock };
+    try {
+      if (!sendUseItem(601)) { log('❌ Fly Wing Test: ส่งคำสั่งใช้ไอเทมไม่ได้'); return false; }
+    } catch (_) { log('❌ Fly Wing Test: การส่งคำสั่งใช้ไอเทมขัดข้อง'); return false; }
+    flyWingTestPending = true;
+    lastWarpFindAt = nowMs();
+    log('📤 Fly Wing Test: ส่งใช้ไอเทม 601 จำนวน 1 ครั้ง · มี ' + stock + ' ชิ้น · รอผล 2.2s · ไม่ต้องเปิด Auto Fly Wing');
+    setTimeout(() => {
+      flyWingTestPending = false;
+      if (activeWS !== before.ws || !activeWS || activeWS.readyState !== 1) { log('⚠️ Fly Wing Test: การเชื่อมต่อเปลี่ยน/หลุด — ยืนยันผลรอบนี้ไม่ได้'); return; }
+      const after = inventory.get(601) || 0;
+      const countDown = after < before.stock;
+      const movedMap = !!currentMap && currentMap !== before.map;
+      const movedPos = player.x != null && player.y != null && Math.hypot(player.x - before.x, player.y - before.y) >= 2;
+      log('🧪 Fly Wing Test: จำนวน ' + before.stock + ' → ' + after + ' · ตำแหน่ง' + (movedMap || movedPos ? 'เปลี่ยน' : 'ยังไม่เปลี่ยน/ยังไม่ทราบ'));
+      if (countDown && (movedMap || movedPos)) log('✅ Fly Wing Test: พบจำนวนลดพร้อมตำแหน่งเปลี่ยน — งดเดินหรือใช้วาร์ปอื่นระหว่างทดสอบเพื่อแยกผล');
+      else if (countDown) log('⚠️ Fly Wing Test: จำนวนลดแล้ว แต่ยังไม่เห็นตำแหน่งเปลี่ยน — ตรวจข้อความในเกม');
+      else if (movedMap || movedPos) log('⚠️ Fly Wing Test: ตำแหน่งเปลี่ยน แต่ยังไม่ยืนยันว่าจำนวน Fly Wing ถูกหัก');
+      else log('⚠️ Fly Wing Test: ส่งคำสั่งแล้ว แต่ยังไม่เห็นจำนวนลดหรือตำแหน่งเปลี่ยน — ตรวจข้อความในเกม/Debug Log');
     }, 2200);
     return true;
   }
@@ -10216,6 +10272,7 @@
   }, 10000);
   const combatLoop = setInterval(() => {
     const now = nowMs();
+    if (flyWingTestPending) return; // ไม่ให้ Combat/หนีผู้เล่นแทรกช่วงทดสอบไอเทม 2.2s
     mobLureSyncContext(now);
     // ★★ กำลังขาย/ฝากของ → routine เป็นเจ้าของตัวละคร — หยุด combatLoop ทั้งก้อน
     //   (เคสจริงจาก log: สุ่มเดินแย่งทาย NPC / ตี+สกิลมอนข้ามแมปจากพิกัด optimistic /
@@ -12121,6 +12178,7 @@
     toggleWander(on) { CFG.wanderEnabled = !!on; log('⚔️ wander =', CFG.wanderEnabled); },
     toggleWarpFind(on) { CFG.warpFindEnabled = !!on; log('⚔️ warpFind =', CFG.warpFindEnabled); },
     testWarpFind() { return testWarpFindNow(); },
+    testFlyWing() { return testFlyWingNow(); },
     toggleChatPauseAlert(on) { CFG.chatPauseOnIncoming = !!on; saveConfigDebounced(); if (!CFG.chatPauseOnIncoming) resumeChatPause(); log('💬 Chat Alert + Pause:', CFG.chatPauseOnIncoming ? 'ON' : 'OFF'); },
     resumeChatPause() { resumeChatPause(); },
     testChatAlert() { triggerChatPause('ผู้เล่นทดสอบ', 'สวัสดีครับ (ข้อความทดสอบ)', 0, 'ใกล้', true); },
@@ -13276,6 +13334,7 @@
               <button id="__assist_t_tpmacro" class="off" title="ON = ใช้ Fixed Macro Alt↓→1→2→3→Alt↑ เป็นอีกทางวาร์ป ใช้ร่วมทั้งหามอนและหนีมอน">⌨️ Macro</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
               <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ตามลำดับ Macro → Clip → Fly Wing">🧪 ทดสอบวาร์ปหามอน</button>
+              <button id="__assist_testflywing" title="ปิด Combat ก่อน · ใช้ Fly Wing 601 จำนวน 1 ชิ้นโดยไม่ผ่าน Macro/Clip/Direct · งดเดินหรือใช้วาร์ปอื่น 2.2 วินาที">🧪 ทดสอบ Fly Wing อย่างเดียว</button>
             </div>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับวาร์ปหามอน: <b>Macro → Teleport Clip → Fly Wing</b> · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม · ต้องเปิดอย่างน้อย 1 วิธี</div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
@@ -14236,6 +14295,7 @@
     tBtn('#__assist_t_warpfindwing', (v) => ASSIST.toggleWarpFindFlyWing(v), 'warpFindUseFlyWing');
     tBtn('#__assist_t_warpfindskill', (v) => ASSIST.toggleWarpFindTeleportSkill(v), 'warpFindUseTeleportSkill');
     root.querySelector('#__assist_testwarpfind').addEventListener('click', () => ASSIST.testWarpFind());
+    root.querySelector('#__assist_testflywing').addEventListener('click', () => ASSIST.testFlyWing());
     tBtn('#__assist_t_guard', (v) => ASSIST.toggleGuard(v), 'guardEnabled');
     tBtn('#__assist_t_farmondeath', (v) => { saveConfigDebounced(); log('☠️ ตายเปลี่ยนแมปฟาร์ม:', v ? 'เปิด (' + (Array.isArray(CFG.farmMaps) ? CFG.farmMaps.length : 0) + ' แมปในรายการ)' : 'ปิด'); }, 'farmRotateOnDeath');
     // ★ Guard — ใช้พิกัดตัวละครปัจจุบันเป็นจุดยืน
