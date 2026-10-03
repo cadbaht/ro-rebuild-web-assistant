@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.87
+// @version      4.189.88
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,15 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.87';
+  const VERSION = '4.189.88';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.88', d: '2026-10-04', items: [
+      '📡 เพิ่มปุ่มจับ Packet Fly Wing 30 วินาที พร้อมหยุดจับและคัดลอกผล',
+      '   · กดใช้จากกระเป๋า/Hotbar แล้วเทียบกับปุ่มทดสอบ Assist; จับได้แม้อ่านจำนวนในกระเป๋าไม่ได้',
+      '   · แสดงเฉพาะคำสั่งใช้ Fly Wing 601 แบบ 9 ไบต์ที่รู้จัก ไม่เก็บ Login/Chat หรือแพ็กเก็ตอื่น',
+      '   · เป็นเครื่องมือวิเคราะห์ ยังไม่ได้แก้คำสั่งวาร์ปหรือยืนยันผลในเกมจริง',
+    ]},
     { v: '4.189.87', d: '2026-10-03', items: [
       '🪽 แก้อ่าน Inventory ข้ามทั้งชุดเมื่อน้ำหนักสูงสุดมีทศนิยม ทำให้มองไม่เห็น Fly Wing และไอเทมอื่น',
       '   · อ่านน้ำหนักหน่วย ×10 ได้แม้หาร 10 ไม่ลงตัว; คงการตรวจรูปแบบและขอบเขตข้อมูล',
@@ -2732,6 +2738,54 @@
     _clear() { this.pendingItemId = null; this.pendingHpBefore = null; this.pendingCheckAt = 0; this.pendingCountBefore = null; },
   };
 
+  // ★ v4.189.88 — bounded, opt-in Fly Wing command capture (no auth/chat payloads).
+  let flyWingAssistSendDepth = 0;
+  const flyWingCapture = { active: false, startedAt: 0, timer: null, rows: [] };
+  function flyWingCaptureText() {
+    const state = flyWingCapture.active ? 'กำลังจับ' : 'หยุดจับ';
+    const lines = ['RO Rebuild Web Assist v' + VERSION + ' — Fly Wing Packet',
+      state + ' · ' + flyWingCapture.rows.length + ' รายการ',
+      'จับเฉพาะ OUT: opcode 0x2f, item 601, 9 bytes; ไม่พบรายการไม่ได้แปลว่าเกมไม่ส่งคำสั่ง'];
+    for (const row of flyWingCapture.rows) lines.push('+' + row.ms + 'ms | ' + row.source + ' | ' + row.hex);
+    return lines.join('\n');
+  }
+  function renderFlyWingCapture() {
+    const button = document.querySelector('#__assist_captureflywing');
+    const output = document.querySelector('#__assist_flywingpacket');
+    if (button) button.textContent = flyWingCapture.active ? '⏹ หยุดจับ Packet Fly Wing' : '📡 จับ Packet Fly Wing (30s)';
+    if (output) output.value = flyWingCaptureText();
+  }
+  function stopFlyWingCapture(reason) {
+    if (!flyWingCapture.active) return false;
+    flyWingCapture.active = false;
+    clearTimeout(flyWingCapture.timer); flyWingCapture.timer = null;
+    log('📡 Fly Wing Packet: หยุดจับ · ' + flyWingCapture.rows.length + ' รายการ' + (reason ? ' · ' + reason : ''));
+    renderFlyWingCapture(); return true;
+  }
+  function toggleFlyWingCapture() {
+    if (flyWingCapture.active) return stopFlyWingCapture('ผู้ใช้กดหยุด');
+    if (!activeWS || activeWS.readyState !== 1) { log('⚠️ Fly Wing Packet: การเชื่อมต่อเกมยังไม่พร้อม'); return false; }
+    flyWingCapture.rows = []; flyWingCapture.startedAt = Date.now(); flyWingCapture.active = true;
+    flyWingCapture.timer = setTimeout(() => stopFlyWingCapture('ครบ 30 วินาที'), 30000);
+    log('📡 Fly Wing Packet: เริ่มจับ 30 วินาที — กดใช้ Fly Wing จากกระเป๋า/Hotbar แล้วกดทดสอบ Assist เพื่อเทียบ; รอบใหม่ล้างผลเดิม');
+    renderFlyWingCapture(); return true;
+  }
+  function observeFlyWingSent(u, ws) {
+    if (!flyWingCapture.active || ws !== activeWS) return;
+    if (Date.now() - flyWingCapture.startedAt >= 30000) { stopFlyWingCapture('ครบ 30 วินาที'); return; }
+    if (!u || u.length !== 9 || u[0] !== 0x2f) return;
+    const itemId = new DataView(u.buffer, u.byteOffset, u.byteLength).getInt32(1, true);
+    if (itemId !== 601) return;
+    const row = { ms: Date.now() - flyWingCapture.startedAt,
+      source: flyWingAssistSendDepth > 0 ? 'Assist' : 'เกม/คำสั่งอื่น',
+      hex: Array.from(u, byte => byte.toString(16).padStart(2, '0')).join(' ') };
+    flyWingCapture.rows.push(row);
+    log('📡 Fly Wing Packet: ' + row.source + ' · ' + row.hex);
+    if (flyWingCapture.rows.length >= 20) stopFlyWingCapture('ครบ 20 รายการ');
+    else renderFlyWingCapture();
+  }
+  // ---------- end Fly Wing capture ----------
+
   // ส่งคำสั่งใช้ item: packet 0x2f, [2f][item_id:4 LE][target:4 LE], target=FFFFFFFF (self)
   function sendUseItem(itemId) {
     if (!activeWS || activeWS.readyState !== 1) return false;
@@ -2740,7 +2794,8 @@
     b[1] = itemId & 0xff; b[2] = (itemId >> 8) & 0xff;
     b[3] = (itemId >> 16) & 0xff; b[4] = (itemId >>> 24) & 0xff;
     b[5] = 0xff; b[6] = 0xff; b[7] = 0xff; b[8] = 0xff;   // target = FFFFFFFF (self)
-    activeWS.send(b);
+    flyWingAssistSendDepth++;
+    try { activeWS.send(b); } finally { flyWingAssistSendDepth--; }
     return true;
   }
 
@@ -11607,7 +11662,9 @@
         const u = syncU8(data);
         if (u) { storageSpyObserve('OUT', u, ws); marketObserveOutgoing(u); captureUnstuckOutgoing(u); handleOut(u); }
       } catch (e) {}
-      return origSend(data);
+      const sent = origSend(data);
+      try { const u = syncU8(data); if (u) observeFlyWingSent(u, ws); } catch (_) {}
+      return sent;
     };
     ws.addEventListener('message', async (e) => {
       try { const u = await toU8(e.data); if (u) { storageSpyObserve('IN', u, ws); marketObserveIncoming(u); handleIn(u); } } catch (err) {}
@@ -12179,6 +12236,8 @@
     toggleWarpFind(on) { CFG.warpFindEnabled = !!on; log('⚔️ warpFind =', CFG.warpFindEnabled); },
     testWarpFind() { return testWarpFindNow(); },
     testFlyWing() { return testFlyWingNow(); },
+    captureFlyWingPacket() { return toggleFlyWingCapture(); },
+    getFlyWingPackets() { return flyWingCaptureText(); },
     toggleChatPauseAlert(on) { CFG.chatPauseOnIncoming = !!on; saveConfigDebounced(); if (!CFG.chatPauseOnIncoming) resumeChatPause(); log('💬 Chat Alert + Pause:', CFG.chatPauseOnIncoming ? 'ON' : 'OFF'); },
     resumeChatPause() { resumeChatPause(); },
     testChatAlert() { triggerChatPause('ผู้เล่นทดสอบ', 'สวัสดีครับ (ข้อความทดสอบ)', 0, 'ใกล้', true); },
@@ -13334,8 +13393,11 @@
               <button id="__assist_t_tpmacro" class="off" title="ON = ใช้ Fixed Macro Alt↓→1→2→3→Alt↑ เป็นอีกทางวาร์ป ใช้ร่วมทั้งหามอนและหนีมอน">⌨️ Macro</button>
               <button id="__assist_t_warptomon" class="off">🌀 วาร์ปไปหามอนที่ตี</button>
               <button id="__assist_testwarpfind" title="ทดสอบ Warp Find ตามลำดับ Macro → Clip → Fly Wing">🧪 ทดสอบวาร์ปหามอน</button>
+              <button id="__assist_captureflywing" title="เริ่ม/หยุดจับเฉพาะคำสั่งใช้ Fly Wing; กดใช้จากเกมเองแล้วเทียบกับปุ่มทดสอบ Assist">📡 จับ Packet Fly Wing (30s)</button>
+              <button id="__assist_copyflywingpacket">📋 คัดลอก Packet Fly Wing</button>
               <button id="__assist_testflywing" title="ปิด Combat ก่อน · ใช้ Fly Wing 601 จำนวน 1 ชิ้นโดยไม่ผ่าน Macro/Clip/Direct · งดเดินหรือใช้วาร์ปอื่น 2.2 วินาที">🧪 ทดสอบ Fly Wing อย่างเดียว</button>
             </div>
+            <textarea id="__assist_flywingpacket" readonly rows="4" aria-label="ผลจับ Packet Fly Wing" style="width:100%;box-sizing:border-box;font-size:11px;margin-top:4px" placeholder="กดจับ Packet แล้วใช้ Fly Wing จากกระเป๋า/Hotbar; กดคัดลอกเพื่อส่งผล"></textarea>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับวาร์ปหามอน: <b>Macro → Teleport Clip → Fly Wing</b> · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม · ต้องเปิดอย่างน้อย 1 วิธี</div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
@@ -14296,6 +14358,14 @@
     tBtn('#__assist_t_warpfindskill', (v) => ASSIST.toggleWarpFindTeleportSkill(v), 'warpFindUseTeleportSkill');
     root.querySelector('#__assist_testwarpfind').addEventListener('click', () => ASSIST.testWarpFind());
     root.querySelector('#__assist_testflywing').addEventListener('click', () => ASSIST.testFlyWing());
+    root.querySelector('#__assist_captureflywing').addEventListener('click', () => ASSIST.captureFlyWingPacket());
+    root.querySelector('#__assist_copyflywingpacket').addEventListener('click', async () => {
+      const output = root.querySelector('#__assist_flywingpacket');
+      output.value = ASSIST.getFlyWingPackets();
+      try { await navigator.clipboard.writeText(output.value); log('📋 คัดลอก Packet Fly Wing แล้ว'); }
+      catch (_) { output.focus(); output.select(); output.setSelectionRange(0, output.value.length); log('📋 เลือกผล Packet Fly Wing แล้ว — แตะค้างแล้วเลือกคัดลอก'); }
+    });
+    renderFlyWingCapture();
     tBtn('#__assist_t_guard', (v) => ASSIST.toggleGuard(v), 'guardEnabled');
     tBtn('#__assist_t_farmondeath', (v) => { saveConfigDebounced(); log('☠️ ตายเปลี่ยนแมปฟาร์ม:', v ? 'เปิด (' + (Array.isArray(CFG.farmMaps) ? CFG.farmMaps.length : 0) + ' แมปในรายการ)' : 'ปิด'); }, 'farmRotateOnDeath');
     // ★ Guard — ใช้พิกัดตัวละครปัจจุบันเป็นจุดยืน
