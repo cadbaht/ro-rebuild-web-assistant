@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RO Rebuild Web Assist
 // @namespace    ro-rebuild-web-assist
-// @version      4.189.88
+// @version      4.189.89
 // @description  ผู้ช่วยเล่นเว็บ client RO — auto-loot, auto-heal, auto-combat, auto-rest + อัปเดตอัตโนมัติ (Unity WebGL / WebSocket)
 // @match        *://*.rayrag.com/*
 // @run-at       document-start
@@ -116,9 +116,14 @@
   // ============================================================
   //  VERSION + config persistence (localStorage)
   // ============================================================
-  const VERSION = '4.189.88';
+  const VERSION = '4.189.89';
   // ★★ CHANGELOG — แสดงในปุ่ม 📜 Update Log (ใหม่สุดขึ้นก่อน)
   const CHANGELOG = [
+    { v: '4.189.89', d: '2026-10-04', items: [
+      '🧪 แสดงผล Fly Wing Test ใต้ปุ่มทันที ทั้งเหตุที่ถูกบล็อกและผลหลังส่งคำสั่ง',
+      '   · รวมผลทดสอบในข้อความคัดลอก Packet; แสดงชนิดข้อผิดพลาดเมื่อปุ่มทดสอบทำงานขัดข้อง',
+      '   · ไม่เปลี่ยนคำสั่งวาร์ป; ตรวจ syntax/จำลองแล้ว ยังไม่ได้ทดสอบในเกมจริง',
+    ]},
     { v: '4.189.88', d: '2026-10-04', items: [
       '📡 เพิ่มปุ่มจับ Packet Fly Wing 30 วินาที พร้อมหยุดจับและคัดลอกผล',
       '   · กดใช้จากกระเป๋า/Hotbar แล้วเทียบกับปุ่มทดสอบ Assist; จับได้แม้อ่านจำนวนในกระเป๋าไม่ได้',
@@ -2457,11 +2462,17 @@
   const player = { x: null, y: null }; // ตำแหน่งตัวเรา
 
   // ---------- log buffer (สำหรับ panel log console) ----------
+  let flyWingTestReport = [];
   const LOG_BUF_MAX = 500;
   const logBuf = [];
   function log(...a) {
     const msg = a.map(x => (typeof x === 'object' ? (() => { try { return JSON.stringify(x); } catch (e) { return String(x); } })() : String(x))).join(' ');
     logBuf.push({ t: Date.now(), msg });
+    if (msg.includes('Fly Wing Test:')) {
+      flyWingTestReport.push(msg);
+      if (flyWingTestReport.length > 12) flyWingTestReport.shift();
+      try { renderFlyWingCapture(); } catch (_) {}
+    }
     while (logBuf.length > LOG_BUF_MAX) logBuf.shift();
     if (CFG.verbose) console.log('[ASSIST]', ...a);
   }
@@ -2747,6 +2758,7 @@
       state + ' · ' + flyWingCapture.rows.length + ' รายการ',
       'จับเฉพาะ OUT: opcode 0x2f, item 601, 9 bytes; ไม่พบรายการไม่ได้แปลว่าเกมไม่ส่งคำสั่ง'];
     for (const row of flyWingCapture.rows) lines.push('+' + row.ms + 'ms | ' + row.source + ' | ' + row.hex);
+    if (flyWingTestReport.length) lines.push('', 'ผลปุ่มทดสอบ Fly Wing:', ...flyWingTestReport);
     return lines.join('\n');
   }
   function renderFlyWingCapture() {
@@ -12235,7 +12247,16 @@
     toggleWander(on) { CFG.wanderEnabled = !!on; log('⚔️ wander =', CFG.wanderEnabled); },
     toggleWarpFind(on) { CFG.warpFindEnabled = !!on; log('⚔️ warpFind =', CFG.warpFindEnabled); },
     testWarpFind() { return testWarpFindNow(); },
-    testFlyWing() { return testFlyWingNow(); },
+    testFlyWing() {
+      flyWingTestReport = [];
+      log('🧪 Fly Wing Test: รับการกดปุ่มแล้ว — กำลังตรวจเงื่อนไข');
+      try { return testFlyWingNow(); }
+      catch (error) {
+        const kind = ['ReferenceError', 'TypeError', 'RangeError', 'Error'].includes(error && error.name) ? error.name : 'Error';
+        log('❌ Fly Wing Test: ปุ่มทดสอบขัดข้อง (' + kind + ') — คัดลอกผลนี้ส่งมาตรวจ');
+        return false;
+      }
+    },
     captureFlyWingPacket() { return toggleFlyWingCapture(); },
     getFlyWingPackets() { return flyWingCaptureText(); },
     toggleChatPauseAlert(on) { CFG.chatPauseOnIncoming = !!on; saveConfigDebounced(); if (!CFG.chatPauseOnIncoming) resumeChatPause(); log('💬 Chat Alert + Pause:', CFG.chatPauseOnIncoming ? 'ON' : 'OFF'); },
@@ -13397,7 +13418,7 @@
               <button id="__assist_copyflywingpacket">📋 คัดลอก Packet Fly Wing</button>
               <button id="__assist_testflywing" title="ปิด Combat ก่อน · ใช้ Fly Wing 601 จำนวน 1 ชิ้นโดยไม่ผ่าน Macro/Clip/Direct · งดเดินหรือใช้วาร์ปอื่น 2.2 วินาที">🧪 ทดสอบ Fly Wing อย่างเดียว</button>
             </div>
-            <textarea id="__assist_flywingpacket" readonly rows="4" aria-label="ผลจับ Packet Fly Wing" style="width:100%;box-sizing:border-box;font-size:11px;margin-top:4px" placeholder="กดจับ Packet แล้วใช้ Fly Wing จากกระเป๋า/Hotbar; กดคัดลอกเพื่อส่งผล"></textarea>
+            <textarea id="__assist_flywingpacket" readonly rows="4" aria-label="ผลจับ Packet และผลทดสอบ Fly Wing" style="width:100%;box-sizing:border-box;font-size:11px;margin-top:4px" placeholder="กดจับ Packet แล้วใช้ Fly Wing จากกระเป๋า/Hotbar; กดคัดลอกเพื่อส่งผล; ปุ่มทดสอบจะแสดงสาเหตุที่นี่ด้วย"></textarea>
             <div style="font-size:10px;color:#9aa0a6;margin-top:4px;line-height:1.5">★ ⌨️ Macro = Alt↓ → 1↓ → 1↑ → 2↓ → 2↑ → 3↓ → 3↑ → Alt↑ (25ms/event)<br>★ ลำดับวาร์ปหามอน: <b>Macro → Teleport Clip → Fly Wing</b> · วิธีที่ OFF/ใช้ไม่ได้จะถูกข้าม · ต้องเปิดอย่างน้อย 1 วิธี</div>
             <div class="field"><label>วาร์ปหามอนเมื่อไม่เจอมอน (วินาที) — 0 = วาร์ปทันทีที่ไม่เจอมอน (คูลดาวน์ ≥3 วิระหว่างวาร์ป)</label><input type="number" id="__assist_nowarpsec" min="0" max="120" placeholder="30"></div>
             <div class="field"><label>stuck abandon N ครั้งใน 60s → วาร์ปสุ่ม (0=ปิด)</label><input type="number" id="__assist_stuckwarp" min="0" max="20"></div>
